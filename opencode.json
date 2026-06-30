@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "githints": {
+      "type": "local",
+      "command": ["./githints", "serve"],
+      "enabled": true
+    }
+  }
+}
