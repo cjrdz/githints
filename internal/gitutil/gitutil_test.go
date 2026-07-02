@@ -65,7 +65,11 @@ func TestChangedFiles(t *testing.T) {
 				writeFile(t, dir, "main.go", "package main\n")
 				runGit(t, dir, "add", "main.go")
 				runGit(t, dir, "commit", "-m", "initial")
-				return LastCommitHash()
+				hash, err := LastCommitHash()
+				if err != nil {
+					t.Fatalf("LastCommitHash: %v", err)
+				}
+				return hash
 			},
 			wantFile: "main.go",
 		},
@@ -78,7 +82,11 @@ func TestChangedFiles(t *testing.T) {
 				writeFile(t, dir, "auth.go", "package auth\n")
 				runGit(t, dir, "add", "auth.go")
 				runGit(t, dir, "commit", "-m", "add auth")
-				return LastCommitHash()
+				hash, err := LastCommitHash()
+				if err != nil {
+					t.Fatalf("LastCommitHash: %v", err)
+				}
+				return hash
 			},
 			wantFile: "auth.go",
 		},
@@ -178,5 +186,209 @@ func TestRepoRoot(t *testing.T) {
 	}
 	if root != dir {
 		t.Errorf("RepoRoot = %q, want %q", root, dir)
+	}
+}
+
+func TestDiffHashAtCommit(t *testing.T) {
+	dir := makeRepo(t)
+	restore := chdir(t, dir)
+	defer restore()
+
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	writeFile(t, dir, "main.go", "package main\n\nfunc Run() {}\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "add Run")
+
+	hash, err := LastCommitHash()
+	if err != nil {
+		t.Fatalf("LastCommitHash: %v", err)
+	}
+	h1, err := DiffHash(hash, "main.go")
+	if err != nil {
+		t.Fatalf("DiffHash: %v", err)
+	}
+	if h1 == "" {
+		t.Fatal("DiffHash returned empty")
+	}
+
+	h2, err := DiffHash(hash, "main.go")
+	if err != nil {
+		t.Fatalf("DiffHash second: %v", err)
+	}
+	if h1 != h2 {
+		t.Fatal("DiffHash not stable")
+	}
+}
+
+func TestDiffHashWorkingTree(t *testing.T) {
+	dir := makeRepo(t)
+	restore := chdir(t, dir)
+	defer restore()
+
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	writeFile(t, dir, "main.go", "package main\n\nfunc Run() {}\n")
+
+	h, err := WorktreeDiffHash("main.go")
+	if err != nil {
+		t.Fatalf("WorktreeDiffHash: %v", err)
+	}
+	if h == "" {
+		t.Fatal("WorktreeDiffHash returned empty")
+	}
+}
+
+func TestAddNote(t *testing.T) {
+	dir := makeRepo(t)
+	restore := chdir(t, dir)
+	defer restore()
+
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	if err := AddNote("refs/notes/githints", "githints-root: abc123"); err != nil {
+		t.Fatalf("AddNote: %v", err)
+	}
+
+	out, err := run("notes", "--ref=refs/notes/githints", "show", "HEAD")
+	if err != nil {
+		t.Fatalf("show note: %v", err)
+	}
+	if !strings.Contains(out, "abc123") {
+		t.Errorf("note missing expected content: %q", out)
+	}
+
+	// Overwriting must succeed because we use --force.
+	if err := AddNote("refs/notes/githints", "githints-root: def456"); err != nil {
+		t.Fatalf("AddNote overwrite: %v", err)
+	}
+}
+
+func TestCurrentBranch(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func(t *testing.T, dir string)
+		wantOK bool
+	}{
+		{
+			name: "branch after checkout",
+			setup: func(t *testing.T, dir string) {
+				runGit(t, dir, "checkout", "-b", "feature/x")
+			},
+			wantOK: true,
+		},
+		{
+			name: "detached head returns empty branch",
+			setup: func(t *testing.T, dir string) {
+				writeFile(t, dir, "main.go", "package main\n")
+				runGit(t, dir, "add", "main.go")
+				runGit(t, dir, "commit", "-m", "initial")
+				hash, err := LastCommitHash()
+				if err != nil {
+					t.Fatalf("LastCommitHash: %v", err)
+				}
+				runGit(t, dir, "checkout", "--detach", hash)
+			},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := makeRepo(t)
+			restore := chdir(t, dir)
+			defer restore()
+			tt.setup(t, dir)
+
+			branch, err := CurrentBranch()
+			if err != nil {
+				t.Fatalf("CurrentBranch: %v", err)
+			}
+			if tt.wantOK && branch == "" {
+				t.Fatal("expected non-empty branch, got empty")
+			}
+			if !tt.wantOK && branch != "" {
+				t.Errorf("expected empty branch in detached HEAD, got %q", branch)
+			}
+			if tt.wantOK && branch != "feature/x" {
+				t.Errorf("branch = %q, want feature/x", branch)
+			}
+		})
+	}
+}
+
+func TestStagedFiles(t *testing.T) {
+	dir := makeRepo(t)
+	restore := chdir(t, dir)
+	defer restore()
+
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	writeFile(t, dir, "a.go", "package a\n")
+	writeFile(t, dir, "b.go", "package b\n")
+	runGit(t, dir, "add", "a.go", "b.go")
+
+	staged, err := StagedFiles()
+	if err != nil {
+		t.Fatalf("StagedFiles: %v", err)
+	}
+	want := map[string]bool{"a.go": true, "b.go": true}
+	for _, f := range staged {
+		delete(want, f)
+	}
+	if len(want) != 0 {
+		t.Errorf("missing staged files: %v; got %v", want, staged)
+	}
+}
+
+func TestFileDiffWorkingTree(t *testing.T) {
+	dir := makeRepo(t)
+	restore := chdir(t, dir)
+	defer restore()
+
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "initial")
+	writeFile(t, dir, "main.go", "package main\n\nfunc Run() {}\n")
+
+	diff, err := FileDiff("", "main.go")
+	if err != nil {
+		t.Fatalf("FileDiff working tree: %v", err)
+	}
+	if !strings.Contains(diff, "func Run()") {
+		t.Errorf("working-tree diff missing added line:\n%s", diff)
+	}
+}
+
+func TestFileDiffAtCommit(t *testing.T) {
+	dir := makeRepo(t)
+	restore := chdir(t, dir)
+	defer restore()
+
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "initial")
+	writeFile(t, dir, "main.go", "package main\n\nfunc Run() {}\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "add Run")
+
+	hash, err := LastCommitHash()
+	if err != nil {
+		t.Fatalf("LastCommitHash: %v", err)
+	}
+	diff, err := FileDiff(hash, "main.go")
+	if err != nil {
+		t.Fatalf("FileDiff at commit: %v", err)
+	}
+	if !strings.Contains(diff, "func Run()") {
+		t.Errorf("commit diff missing added line:\n%s", diff)
 	}
 }

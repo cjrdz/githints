@@ -1,8 +1,11 @@
 package store
 
 import (
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,6 +39,66 @@ func TestOpenCreatesSchema(t *testing.T) {
 	}
 	if name != "changes" {
 		t.Fatalf("unexpected table name %q", name)
+	}
+
+	var meta string
+	if err := st.db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='githints_meta'").Scan(&meta); err != nil {
+		t.Fatalf("meta table not found: %v", err)
+	}
+}
+
+func TestMetaAndCounts(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	if v, err := st.MetaGet("foo"); err != nil || v != "" {
+		t.Fatalf("MetaGet missing key = %q, err %v", v, err)
+	}
+	if err := st.MetaSet("foo", "bar"); err != nil {
+		t.Fatalf("MetaSet: %v", err)
+	}
+	if v, err := st.MetaGet("foo"); err != nil || v != "bar" {
+		t.Fatalf("MetaGet = %q, err %v", v, err)
+	}
+
+	mustInsert(t, st, Change{FilePath: "a.go", Source: "agent", Summary: "x", CommitHash: "abc"})
+	mustInsert(t, st, Change{FilePath: "b.go", Source: "agent", Summary: "y"})
+
+	total, err := st.Count()
+	if err != nil || total != 2 {
+		t.Fatalf("Count = %d, err %v", total, err)
+	}
+	pending, err := st.UncommittedCount()
+	if err != nil || pending != 1 {
+		t.Fatalf("UncommittedCount = %d, err %v", pending, err)
+	}
+}
+
+func TestLastRecordedAtPersists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "store.db")
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := st.Insert(Change{FilePath: "a.go", Source: "agent", Summary: "x", RecordedAt: 12345}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	st.Close()
+
+	st2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer st2.Close()
+
+	v, err := st2.MetaGet("last_recorded_at")
+	if err != nil {
+		t.Fatalf("MetaGet: %v", err)
+	}
+	if v != "12345" {
+		t.Fatalf("last_recorded_at = %q, want 12345", v)
 	}
 }
 
@@ -233,7 +296,7 @@ func TestClaimPending(t *testing.T) {
 	mustInsert(t, st, Change{FilePath: "x.go", Source: "agent", Summary: "uncommitted edit 1"})
 	mustInsert(t, st, Change{FilePath: "x.go", Source: "agent", Summary: "uncommitted edit 2"})
 	mustInsert(t, st, Change{FilePath: "x.go", CommitHash: "old", Source: "agent", Summary: "already committed"})
-	mustInsert(t, st, Change{FilePath: "x.go", CommitHash: "", Source: "hook", Summary: "should not be claimed"})
+	mustInsert(t, st, Change{FilePath: "x.go", Source: "hook", Summary: "should not be claimed"})
 
 	n, err := st.ClaimPending("x.go", "abc123")
 	if err != nil {
@@ -317,5 +380,305 @@ func TestOpenCreatesParentDirs(t *testing.T) {
 	defer st.Close()
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("store file not created: %v", err)
+	}
+}
+
+func TestOpenSetsWALPragma(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	var mode string
+	if err := st.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		t.Errorf("journal_mode = %q, want wal", mode)
+	}
+}
+
+func TestOpenUpgradesLegacySchema(t *testing.T) {
+	// Simulate a store created before the branch column existed: open a
+	// bare sqlite db, create the old schema, close it, then let store.Open
+	// migrate it. The migration must add branch without losing rows.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "store.db")
+
+	bare, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open bare: %v", err)
+	}
+	oldSchema := `CREATE TABLE changes (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		file_path   TEXT NOT NULL,
+		commit_hash TEXT,
+		source      TEXT NOT NULL CHECK(source IN ('agent','hook')),
+		summary     TEXT NOT NULL,
+		reason      TEXT,
+		diff_stat   TEXT,
+		created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+	);`
+	if _, err := bare.Exec(oldSchema); err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	if _, err := bare.Exec(`INSERT INTO changes (file_path, source, summary) VALUES ('legacy.go', 'agent', 'pre-migration')`); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := bare.Close(); err != nil {
+		t.Fatalf("close bare: %v", err)
+	}
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy store: %v", err)
+	}
+	defer st.Close()
+
+	rows, err := st.FileHistory("legacy.go", 10)
+	if err != nil {
+		t.Fatalf("FileHistory: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (legacy row must survive migration)", len(rows))
+	}
+	if rows[0].Branch != "" {
+		t.Errorf("migrated row branch = %q, want empty default", rows[0].Branch)
+	}
+	if rows[0].Summary != "pre-migration" {
+		t.Errorf("migrated row summary = %q, want pre-migration", rows[0].Summary)
+	}
+	if rows[0].RecordedAt != 0 {
+		t.Errorf("migrated row recorded_at = %d, want 0", rows[0].RecordedAt)
+	}
+}
+
+func TestInsertPersistsRecordedAtAgentIDHMAC(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{
+		FilePath:   "auth/token.go",
+		Branch:     "feature/rotate-keys",
+		Source:     "agent",
+		Summary:    "rotate signing key",
+		AgentID:    "session-abc",
+		RecordedAt: 1234567890,
+		HMAC:       "deadbeef",
+		PrevHMAC:   "cafebabe",
+	})
+
+	rows, err := st.FileHistory("auth/token.go", 10)
+	if err != nil {
+		t.Fatalf("FileHistory: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	got := rows[0]
+	if got.Branch != "feature/rotate-keys" {
+		t.Errorf("branch = %q, want feature/rotate-keys", got.Branch)
+	}
+	if got.AgentID != "session-abc" {
+		t.Errorf("agent_id = %q, want session-abc", got.AgentID)
+	}
+	if got.RecordedAt != 1234567890 {
+		t.Errorf("recorded_at = %d, want 1234567890", got.RecordedAt)
+	}
+	if got.HMAC != "deadbeef" {
+		t.Errorf("hmac = %q, want deadbeef", got.HMAC)
+	}
+	if got.PrevHMAC != "cafebabe" {
+		t.Errorf("prev_hmac = %q, want cafebabe", got.PrevHMAC)
+	}
+}
+
+func TestOrderingByRecordedAt(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{FilePath: "a.go", Source: "agent", Summary: "older", RecordedAt: 100})
+	mustInsert(t, st, Change{FilePath: "b.go", Source: "agent", Summary: "newer", RecordedAt: 300})
+	mustInsert(t, st, Change{FilePath: "c.go", Source: "agent", Summary: "middle", RecordedAt: 200})
+
+	rows, err := st.RecentChanges(10)
+	if err != nil {
+		t.Fatalf("RecentChanges: %v", err)
+	}
+	want := []string{"newer", "middle", "older"}
+	for i, r := range rows {
+		if r.Summary != want[i] {
+			t.Errorf("row[%d].summary = %q, want %q", i, r.Summary, want[i])
+		}
+	}
+}
+
+func TestChangesInRange(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{FilePath: "a.go", Source: "agent", Summary: "early", RecordedAt: 100})
+	mustInsert(t, st, Change{FilePath: "b.go", Source: "agent", Summary: "mid", RecordedAt: 200})
+	mustInsert(t, st, Change{FilePath: "a.go", Source: "agent", Summary: "late", RecordedAt: 300})
+
+	rows, err := st.ChangesInRange(150, 350, "", 10)
+	if err != nil {
+		t.Fatalf("ChangesInRange: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if rows[0].Summary != "late" || rows[1].Summary != "mid" {
+		t.Errorf("unexpected order: %+v", rows)
+	}
+
+	rows, err = st.ChangesInRange(150, 350, "a.go", 10)
+	if err != nil {
+		t.Fatalf("ChangesInRange file filter: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Summary != "late" {
+		t.Fatalf("expected only 'late' for a.go, got %+v", rows)
+	}
+}
+
+func TestAllChangesAndFilesWithHistory(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{FilePath: "a.go", Source: "agent", Summary: "one", RecordedAt: 10})
+	mustInsert(t, st, Change{FilePath: "b.go", Source: "agent", Summary: "two", RecordedAt: 20})
+
+	all, err := st.AllChanges()
+	if err != nil {
+		t.Fatalf("AllChanges: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("got %d rows, want 2", len(all))
+	}
+	if all[0].ID >= all[1].ID {
+		t.Errorf("AllChanges not ordered by id: %d >= %d", all[0].ID, all[1].ID)
+	}
+
+	files, err := st.FilesWithHistory()
+	if err != nil {
+		t.Fatalf("FilesWithHistory: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("got %d files, want 2", len(files))
+	}
+}
+
+func TestLastHMAC(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	hmac, err := st.LastHMAC()
+	if err != nil {
+		t.Fatalf("LastHMAC empty: %v", err)
+	}
+	if hmac != "" {
+		t.Fatalf("expected empty hmac for empty store, got %q", hmac)
+	}
+
+	mustInsert(t, st, Change{FilePath: "x.go", Source: "agent", Summary: "first", HMAC: "aaa"})
+	mustInsert(t, st, Change{FilePath: "y.go", Source: "agent", Summary: "second", HMAC: "bbb"})
+
+	hmac, err = st.LastHMAC()
+	if err != nil {
+		t.Fatalf("LastHMAC: %v", err)
+	}
+	if hmac != "bbb" {
+		t.Errorf("last hmac = %q, want bbb", hmac)
+	}
+}
+
+func TestInsertFlagsClockTamper(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{FilePath: "a.go", Source: "agent", Summary: "first", RecordedAt: 100})
+	mustInsert(t, st, Change{FilePath: "b.go", Source: "agent", Summary: "second", RecordedAt: 50})
+
+	rows, err := st.AllChanges()
+	if err != nil {
+		t.Fatalf("AllChanges: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if !rows[1].ClockTamperWarning {
+		t.Errorf("expected clock_tamper_warning=1 for backward jump, got %v", rows[1].ClockTamperWarning)
+	}
+	if rows[0].ClockTamperWarning {
+		t.Errorf("expected clock_tamper_warning=0 for first row, got %v", rows[0].ClockTamperWarning)
+	}
+}
+
+func TestHasPendingAgentRecord(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{FilePath: "x.go", Source: "agent", Summary: "pending edit"})
+	mustInsert(t, st, Change{FilePath: "x.go", CommitHash: "already", Source: "agent", Summary: "claimed"})
+	mustInsert(t, st, Change{FilePath: "x.go", Source: "hook", Summary: "hook pending should not count"})
+
+	tests := []struct {
+		file string
+		want bool
+	}{
+		{"x.go", true},
+		{"y.go", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.file, func(t *testing.T) {
+			got, err := st.HasPendingAgentRecord(tt.file)
+			if err != nil {
+				t.Fatalf("HasPendingAgentRecord: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWithTxAtomicClaimAndInsert(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{FilePath: "x.go", Source: "agent", Summary: "pending"})
+
+	err := st.WithTx(func(tx *sql.Tx) error {
+		claimed, err := ClaimPendingTx(tx, "x.go", "abc123")
+		if err != nil {
+			return err
+		}
+		if claimed != 1 {
+			return fmt.Errorf("claimed %d rows, want 1", claimed)
+		}
+		rows, err := AgentRecordsForCommitTx(tx, "x.go", "abc123")
+		if err != nil {
+			return err
+		}
+		if len(rows) != 1 {
+			return fmt.Errorf("expected 1 agent row after claim, got %d", len(rows))
+		}
+		_, err = InsertTx(tx, Change{
+			FilePath:   "x.go",
+			CommitHash: "abc123",
+			Source:     "hook",
+			Summary:    "fallback",
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("WithTx: %v", err)
+	}
+
+	rows, err := st.FileHistory("x.go", 10)
+	if err != nil {
+		t.Fatalf("FileHistory: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
 	}
 }

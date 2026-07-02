@@ -5,6 +5,8 @@ package gitutil
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -27,14 +29,78 @@ func RepoRoot() (string, error) {
 	return run("rev-parse", "--show-toplevel")
 }
 
-// LastCommitHash returns the hash of HEAD, or "" if there is no commit yet
-// (e.g. called from a pre-commit-style context before any commit exists).
-func LastCommitHash() string {
+// LastCommitHash returns the hash of HEAD. It returns an error rather than
+// a silent empty string when HEAD can't be resolved, so callers can tell
+// "no commits yet" (a legitimate state in pre-commit contexts) apart from
+// "git broke". An empty hash with a nil error means there is no commit yet.
+func LastCommitHash() (string, error) {
 	hash, err := run("rev-parse", "HEAD")
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return hash
+	return hash, nil
+}
+
+// CurrentBranch returns the checked-out branch name, or "" when HEAD is
+// detached. Used to stamp each change row so history can be filtered per
+// branch — useful for incident response ("which branch introduced this?").
+func CurrentBranch() (string, error) {
+	return run("branch", "--show-current")
+}
+
+// StagedFiles lists files currently staged for commit (the union of the
+// index vs HEAD). Used by the pre-commit hook to know what an agent is
+// about to commit.
+func StagedFiles() ([]string, error) {
+	out, err := run("diff", "--cached", "--name-only")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+// FileDiff returns the unified diff for one file. If hash is empty it
+// returns the working-tree diff vs HEAD (staged + unstaged); otherwise it
+// returns the diff introduced by that commit, restricted to the file. The
+// committed form uses `git show` so it also works for a repo's first
+// commit, where `hash^` does not exist.
+func FileDiff(hash, file string) (string, error) {
+	if hash == "" {
+		return run("diff", "HEAD", "--", file)
+	}
+	return run("show", "--pretty=format:", hash, "--", file)
+}
+
+// UserEmail returns the git user.email config, or "" if not set.
+func UserEmail() (string, error) {
+	return run("config", "--get", "user.email")
+}
+
+// DiffHash returns the SHA-256 of the unified diff for one file in one
+// commit. If hash is empty it hashes the working-tree diff vs HEAD.
+// It uses git show for committed diffs so it also works for a repo's first
+// commit, where hash^ does not exist.
+func DiffHash(hash, file string) (string, error) {
+	var out string
+	var err error
+	if hash == "" {
+		out, err = run("diff", "HEAD", "--", file)
+	} else {
+		out, err = run("show", "--pretty=format:", hash, "--", file)
+	}
+	if err != nil {
+		return "", err
+	}
+	h := sha256.Sum256([]byte(out))
+	return hex.EncodeToString(h[:]), nil
+}
+
+// WorktreeDiffHash is the working-tree variant of DiffHash.
+func WorktreeDiffHash(file string) (string, error) {
+	return DiffHash("", file)
 }
 
 // CommitMessage returns the subject line of the given commit.
@@ -118,4 +184,12 @@ func parseNumstat(out string) (add, del int, ok bool) {
 		return 0, 0, false
 	}
 	return add, del, true
+}
+
+// AddNote adds a git note to HEAD. It uses --force so repeated commits or
+// amends overwrite the previous note for that ref. This is used by the
+// post-commit hook to anchor the per-commit Merkle root.
+func AddNote(ref, message string) error {
+	_, err := run("notes", "--ref="+ref, "add", "--force", "-m", message, "HEAD")
+	return err
 }

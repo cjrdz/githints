@@ -1,4 +1,0 @@
-#!/bin/sh
-# Reference copy only — `githints init` writes the real version into
-# .git/hooks/post-commit with an absolute path to the binary baked in.
-exec githints hook-run

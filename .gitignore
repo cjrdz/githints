@@ -1,1 +1,5 @@
 .githints/
+githints
+*.exe
+opencode.json
+.mcp.json
