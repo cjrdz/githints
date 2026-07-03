@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -10,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"githints/internal/config"
 	"githints/internal/gitutil"
 	"githints/internal/hint"
 	"githints/internal/integrity"
+	"githints/internal/llm"
 	"githints/internal/mcpserver"
 	"githints/internal/recorder"
 	"githints/internal/store"
@@ -177,7 +180,13 @@ func cmdServe() error {
 		return err
 	}
 	defer st.Close()
-	return mcpserver.Run(root, st)
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	return mcpserver.Run(root, st, cfg)
 }
 
 // agentCoversCommit reports whether the agent rows for a file account for
@@ -221,6 +230,32 @@ func hookSummaryFor(verifiable bool) string {
 	return "Change detected by git hook; agent coverage could not be verified (binary, first commit, or missing diff stat)."
 }
 
+// hookFallbackSummary returns the generic fallback text and provenance for a
+// hook row. It is used when Ollama is disabled, the circuit breaker is open,
+// or any LLM call fails.
+func hookFallbackSummary(verifiable bool) (string, string) {
+	return hookSummaryFor(verifiable), "fallback"
+}
+
+// summarizeViaOllama asks the local Ollama model to caption a diff. On any
+// error it returns the generic fallback and logs a one-line warning. The model
+// output is treated as untrusted text: if the shared recorder rejects it (e.g.
+// it somehow contains a secret pattern), this function falls back as well.
+func summarizeViaOllama(ctx context.Context, client *llm.Client, hash, file string, verifiable bool) (summary, source string) {
+	diff, err := gitutil.FileDiff(hash, file)
+	if err != nil || strings.TrimSpace(diff) == "" {
+		return hookFallbackSummary(verifiable)
+	}
+
+	llmSummary, err := client.SummarizeDiff(ctx, file, diff)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "githints: ollama: %v\n", err)
+		return hookFallbackSummary(verifiable)
+	}
+
+	return llmSummary, "llm"
+}
+
 // cmdHookRun is invoked by .git/hooks/post-commit. It records a low-detail
 // fallback entry only for files the agent didn't already record via
 // record_change for this exact commit. Each file's claim-check-insert
@@ -232,6 +267,19 @@ func cmdHookRun() error {
 		return err
 	}
 	defer st.Close()
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	var client *llm.Client
+	if cfg.Ollama.Enabled {
+		client, err = llm.NewClient(cfg)
+		if err != nil {
+			return fmt.Errorf("ollama client: %w", err)
+		}
+	}
 
 	hash, err := gitutil.LastCommitHash()
 	if err != nil {
@@ -251,6 +299,7 @@ func cmdHookRun() error {
 		return fmt.Errorf("integrity key: %w", err)
 	}
 
+	ctx := context.Background()
 	rendered := false
 	for _, f := range files {
 		if f == "" || strings.HasPrefix(f, ".githints/") {
@@ -294,15 +343,35 @@ func cmdHookRun() error {
 		}
 
 		diffStat := gitutil.DiffStat(hash, f)
+		summary, source := hookFallbackSummary(verifiable)
+		if client != nil {
+			summary, source = summarizeViaOllama(ctx, client, hash, f, verifiable)
+		}
+
 		err = recorder.Record(st, root, key, recorder.Input{
 			FilePath:   f,
-			Summary:    hookSummaryFor(verifiable),
-			Source:     "hook",
+			Summary:    summary,
+			Source:     source,
 			DiffStat:   diffStat,
 			CommitHash: hash,
 		})
 		if err != nil {
-			return fmt.Errorf("record %s: %w", f, err)
+			// If the LLM produced a summary that the shared recorder rejected
+			// (e.g. it matched a secret pattern), fall back to the generic text.
+			if source == "llm" {
+				fmt.Fprintf(os.Stderr, "githints: ollama summary rejected: %v; using fallback\n", err)
+				fallbackSummary, _ := hookFallbackSummary(verifiable)
+				err = recorder.Record(st, root, key, recorder.Input{
+					FilePath:   f,
+					Summary:    fallbackSummary,
+					Source:     "fallback",
+					DiffStat:   diffStat,
+					CommitHash: hash,
+				})
+			}
+			if err != nil {
+				return fmt.Errorf("record %s: %w", f, err)
+			}
 		}
 		rendered = true
 	}

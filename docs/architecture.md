@@ -34,7 +34,7 @@ Each row is one recorded change.
 | `file_path` | Repo-relative path to the changed file. |
 | `commit_hash` | Empty for pending agent rows; filled by the post-commit hook. |
 | `branch` | Branch name captured at record time. |
-| `source` | `"agent"` or `"hook"`. |
+| `source` | `"agent"`, `"llm"`, or `"fallback"`. Legacy `"hook"` rows are migrated to `"fallback"`. |
 | `summary` | Short human description of what changed. |
 | `reason` | Optional explanation of why it changed. |
 | `diff_stat` | e.g. `+5 -2`, captured for agent rows from the working tree. |
@@ -82,15 +82,18 @@ Agent rows are inserted with `commit_hash = ''` and are shown as
 
 After a commit, `githints hook-run` (the `post-commit` hook):
 
-1. Resolves HEAD and the list of files changed by that commit.
-2. For each file (skipping `.githints/`):
+1. Loads `.githints/config.json` and creates the Ollama client only if enabled.
+2. Resolves HEAD and the list of files changed by that commit.
+3. For each file (skipping `.githints/`):
    - Claims any pending agent rows for that file/hash.
    - Loads the agent rows already recorded for that file/hash.
    - Compares the sum of agent diff stats to the commit's diff stat.
    - If they match exactly, no fallback is written.
-   - Otherwise, writes a hook fallback row with the real commit hash.
-3. Re-renders markdown for any touched file.
-4. Computes a Merkle root over all rows for this commit and stores it as a
+   - Otherwise, asks the local Ollama model (when enabled) for a one-line
+     caption of the scrubbed and truncated diff. On any error, timeout, or
+     circuit-breaker-open state, it writes a generic fallback row instead.
+4. Re-renders markdown for any touched file.
+5. Computes a Merkle root over all rows for this commit and stores it as a
    `refs/notes/githints` git note.
 
 ### Pre-commit gate
@@ -113,6 +116,26 @@ regenerated at any time (`githints init` re-creates an empty changelog).
 
 Markdown rendering escapes HTML and markdown metacharacters to prevent
 injection when the files are later rendered in an MCP client's webview.
+
+## Local Ollama integration
+
+The optional `internal/llm` package provides a stdlib-only Ollama client for
+`/api/generate`. It is created only when `ollama.enabled` is true; otherwise
+`NewClient` returns `nil` and no HTTP client is allocated.
+
+Before any content leaves the process, `ScrubDiff` redacts lines from files
+matching common secret patterns (`.env`, `*.pem`, `id_rsa*`, etc.) and lines
+containing high-signal credential shapes. The scrubbed diff is then truncated
+to `max_diff_bytes` before the JSON payload is built.
+
+The client enforces a strict per-request timeout and an in-memory circuit
+breaker: after three consecutive failures or timeouts it stops calling Ollama
+for the rest of the process lifetime. Model output is sanitized (one line, no
+control characters, no shell metacharacters, bounded length) before it is
+returned. On any failure the caller falls back to the existing generic text.
+
+The MCP server exposes the integration through optional `summarize` flags on
+`get_diff` and `get_recent_changes`.
 
 ## Integrity model
 
@@ -176,9 +199,10 @@ Tools:
 - `record_change` — record one file change.
 - `record_batch` — record several file changes in one call.
 - `get_file_history` — history for one file.
-- `get_recent_changes` — recent repo-wide changes.
+- `get_recent_changes` — recent repo-wide changes; optional `summarize` flag.
 - `search_changes` — FTS search over summaries and reasons.
-- `get_diff` — unified diff for a file (committed or working tree).
+- `get_diff` — unified diff for a file (committed or working tree); optional
+  `summarize` flag.
 - `get_changes_in_range` — timeline query by `recorded_at`.
 
 The server resolves the repo root from its current working directory, so it
@@ -202,10 +226,12 @@ Commands are implemented in `main.go`:
 ```
 main.go                # CLI wiring
 internal/
+  config/              # .githints/config.json loader and env overrides
   store/               # SQLite schema, migrations, queries
   recorder/            # validation, secret scan, insert, render trigger
   hint/                # markdown rendering and markdown verification
   integrity/           # salt, key derivation, HMAC chain, Merkle root
   gitutil/             # thin git shell wrappers
+  llm/                 # local Ollama client and diff scrubbing
   mcpserver/           # MCP stdio server and tool handlers
 ```

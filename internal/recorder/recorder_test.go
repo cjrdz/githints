@@ -63,7 +63,7 @@ func TestRecordStoresHookWithHash(t *testing.T) {
 	if err := Record(st, dir, testKey, Input{
 		FilePath:   "cmd/api/main.go",
 		Summary:    "hook fallback",
-		Source:     "hook",
+		Source:     "fallback",
 		DiffStat:   "+5 -2",
 		CommitHash: "deadbeef",
 	}); err != nil {
@@ -163,6 +163,36 @@ func TestRecordRejectsInvalidSource(t *testing.T) {
 
 	if err := Record(st, dir, testKey, Input{FilePath: "x.go", Summary: "x", Source: "other"}); err == nil {
 		t.Fatal("expected error for invalid source")
+	}
+	if err := Record(st, dir, testKey, Input{FilePath: "x.go", Summary: "x", Source: "hook"}); err == nil {
+		t.Fatal("expected error for legacy 'hook' source")
+	}
+}
+
+func TestRecordAcceptsLLMAndFallbackSources(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	for _, src := range []string{"llm", "fallback"} {
+		if err := Record(st, dir, testKey, Input{
+			FilePath:   src + ".go",
+			Summary:    "summary from " + src,
+			Source:     src,
+			CommitHash: "abc",
+		}); err != nil {
+			t.Fatalf("Record source %s: %v", src, err)
+		}
+		rows, err := st.FileHistory(src+".go", 10)
+		if err != nil {
+			t.Fatalf("FileHistory: %v", err)
+		}
+		if len(rows) != 1 || rows[0].Source != src {
+			t.Errorf("source not persisted: got %+v", rows[0])
+		}
 	}
 }
 

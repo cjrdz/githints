@@ -125,7 +125,7 @@ func TestInsertAndFileHistory(t *testing.T) {
 			in: Change{
 				FilePath:   "cmd/api/main.go",
 				CommitHash: "def456",
-				Source:     "hook",
+				Source:     "fallback",
 				Summary:    "change detected by hook",
 				DiffStat:   "+3 -1",
 			},
@@ -262,7 +262,7 @@ func TestHasAgentRecordForCommit(t *testing.T) {
 	mustInsert(t, st, Change{
 		FilePath:   "x.go",
 		CommitHash: "aaa",
-		Source:     "hook",
+		Source:     "fallback",
 		Summary:    "hook fallback",
 	})
 
@@ -350,7 +350,7 @@ func TestAgentRecordsForCommit(t *testing.T) {
 	mustInsert(t, st, Change{
 		FilePath:   "x.go",
 		CommitHash: "aaa",
-		Source:     "hook",
+		Source:     "fallback",
 		Summary:    "hook fallback",
 	})
 
@@ -448,6 +448,71 @@ func TestOpenUpgradesLegacySchema(t *testing.T) {
 	}
 	if rows[0].RecordedAt != 0 {
 		t.Errorf("migrated row recorded_at = %d, want 0", rows[0].RecordedAt)
+	}
+}
+
+func TestLegacyHookSourceBecomesFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "store.db")
+
+	bare, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open bare: %v", err)
+	}
+	oldSchema := `CREATE TABLE changes (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		file_path   TEXT NOT NULL,
+		commit_hash TEXT,
+		source      TEXT NOT NULL CHECK(source IN ('agent','hook')),
+		summary     TEXT NOT NULL,
+		reason      TEXT,
+		diff_stat   TEXT,
+		created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+	);`
+	if _, err := bare.Exec(oldSchema); err != nil {
+		t.Fatalf("create old schema: %v", err)
+	}
+	if _, err := bare.Exec(`INSERT INTO changes (file_path, source, summary) VALUES ('hook.go', 'hook', 'old hook row')`); err != nil {
+		t.Fatalf("seed hook row: %v", err)
+	}
+	if err := bare.Close(); err != nil {
+		t.Fatalf("close bare: %v", err)
+	}
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy store: %v", err)
+	}
+	defer st.Close()
+
+	rows, err := st.FileHistory("hook.go", 10)
+	if err != nil {
+		t.Fatalf("FileHistory: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Source != "fallback" {
+		t.Errorf("migrated source = %q, want fallback", rows[0].Source)
+	}
+}
+
+func TestNewSourceValuesAllowed(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{FilePath: "a.go", Source: "agent", Summary: "agent"})
+	mustInsert(t, st, Change{FilePath: "b.go", Source: "llm", Summary: "llm"})
+	mustInsert(t, st, Change{FilePath: "c.go", Source: "fallback", Summary: "fallback"})
+
+	for _, f := range []string{"a.go", "b.go", "c.go"} {
+		rows, err := st.FileHistory(f, 10)
+		if err != nil {
+			t.Fatalf("FileHistory %s: %v", f, err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("expected 1 row for %s", f)
+		}
 	}
 }
 
@@ -665,7 +730,7 @@ func TestWithTxAtomicClaimAndInsert(t *testing.T) {
 		_, err = InsertTx(tx, Change{
 			FilePath:   "x.go",
 			CommitHash: "abc123",
-			Source:     "hook",
+			Source:     "fallback",
 			Summary:    "fallback",
 		})
 		return err

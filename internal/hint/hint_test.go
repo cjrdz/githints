@@ -169,7 +169,7 @@ func TestRenderChangelog(t *testing.T) {
 	if _, err := st.Insert(store.Change{
 		FilePath:   "b.go",
 		CommitHash: "abc123",
-		Source:     "hook",
+		Source:     "fallback",
 		Summary:    "second change",
 	}); err != nil {
 		t.Fatalf("Insert: %v", err)
@@ -199,7 +199,7 @@ func TestRenderChangelogGroupsByCommit(t *testing.T) {
 	for _, c := range []store.Change{
 		{FilePath: "a.go", CommitHash: "111", Source: "agent", Summary: "commit 1 a"},
 		{FilePath: "b.go", CommitHash: "222", Source: "agent", Summary: "commit 2 b"},
-		{FilePath: "c.go", CommitHash: "222", Source: "hook", Summary: "commit 2 c"},
+		{FilePath: "c.go", CommitHash: "222", Source: "fallback", Summary: "commit 2 c"},
 	} {
 		if _, err := st.Insert(c); err != nil {
 			t.Fatalf("Insert: %v", err)

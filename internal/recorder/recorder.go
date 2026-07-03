@@ -23,7 +23,7 @@ type Input struct {
 	FilePath   string
 	Summary    string
 	Reason     string
-	Source     string // "agent" or "hook"
+	Source     string // "agent", "llm", or "fallback"
 	DiffStat   string // optional, hook fills this in; empty for agent calls
 	DiffHash   string // optional override; auto-computed from git diff if empty
 	CommitHash string // leave empty for agent calls — record_change fires
@@ -33,6 +33,14 @@ type Input struct {
 	Branch     string // optional override; auto-populated from CurrentBranch when empty
 	AgentID    string
 	RecordedAt int64
+}
+
+// validSources are the allowed provenance values. The integrity chain treats
+// every source the same way: source is audit metadata, not a trust signal.
+var validSources = map[string]bool{
+	"agent":    true,
+	"llm":      true,
+	"fallback": true,
 }
 
 // secretPatterns are the high-signal credential shapes githints refuses to
@@ -125,8 +133,8 @@ func record(st *store.Store, root string, key []byte, in Input, render bool) (st
 	if err := ValidateFilePath(in.FilePath); err != nil {
 		return store.Change{}, err
 	}
-	if in.Source != "agent" && in.Source != "hook" {
-		return store.Change{}, fmt.Errorf("source must be \"agent\" or \"hook\", got %q", in.Source)
+	if !validSources[in.Source] {
+		return store.Change{}, fmt.Errorf("source must be one of agent/llm/fallback, got %q", in.Source)
 	}
 
 	// Defense-in-depth: never let an agent or hook persist a row whose

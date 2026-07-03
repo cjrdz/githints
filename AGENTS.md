@@ -39,13 +39,34 @@ If a recorded summary doesn't match what you see in the file, call
 Call `get_recent_changes(limit=20)` early in a session to see what
 happened since you were last here, especially if changes may have come
 from another agent, a teammate, or a manual git commit (those show up
-with `source: hook` and a generic summary instead of `source: agent`).
+with `source: fallback` and a generic summary instead of `source: agent`).
 
 For targeted forensics, use:
 
 - `search_changes(query="...")` — full-text search over summaries/reasons.
 - `get_changes_in_range(since="...", until="...", file="...")` — timeline
   query by recorded timestamp.
+
+## Optional local Ollama summarization
+
+githints can ask a local Ollama model to caption hook-fallback rows and to
+compress diffs on demand. It is **opt-in and off by default**. To enable it,
+create `.githints/config.json`:
+
+    {
+      "ollama": {
+        "enabled": true,
+        "endpoint": "http://127.0.0.1:11434",
+        "model": "qwen2.5:3b-instruct",
+        "timeout_ms": 3000,
+        "max_diff_bytes": 4096
+      }
+    }
+
+The endpoint must resolve to a loopback address unless you set
+`GITHINTS_OLLAMA_ALLOW_NON_LOOPBACK=1`. If Ollama is unreachable, times out,
+or returns garbage, the hook silently falls back to the generic text and the
+commit never hangs.
 
 ## What you do NOT need to do
 

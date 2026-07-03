@@ -26,6 +26,9 @@ Then wire `githints serve` into your project-scoped MCP config. See
   labeled **uncommitted** until the post-commit hook claims them.
 - **Hook-driven fallback**: the `post-commit` hook claims pending rows and adds
   a generic fallback entry for any file the agent did not fully describe.
+- **Optional local Ollama summarization**: when enabled in `.githints/config.json`,
+  fallback diffs are sent to a local Ollama model for a one-line caption. It is
+  opt-in, timeout-bound, and never blocks a commit.
 - **Pre-commit gate**: warns (or blocks with `GITHINTS_PRECOMMIT_BLOCK=1`) when
   staged files lack a pending record.
 - **Tamper-evident log**: each row is HMAC-chained, `recorded_at` is

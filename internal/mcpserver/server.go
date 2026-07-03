@@ -7,6 +7,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -14,14 +15,25 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"githints/internal/config"
 	"githints/internal/gitutil"
 	"githints/internal/integrity"
+	"githints/internal/llm"
 	"githints/internal/recorder"
 	"githints/internal/store"
 )
 
 // Run starts the stdio MCP server. Blocks until the client disconnects.
-func Run(root string, st *store.Store) error {
+func Run(root string, st *store.Store, cfg config.Config) error {
+	var client *llm.Client
+	if cfg.Ollama.Enabled {
+		var err error
+		client, err = llm.NewClient(cfg)
+		if err != nil {
+			return fmt.Errorf("ollama client: %w", err)
+		}
+	}
+
 	s := server.NewMCPServer(
 		"githints",
 		"0.1.0",
@@ -59,10 +71,13 @@ func Run(root string, st *store.Store) error {
 	s.AddTool(
 		mcp.NewTool("get_recent_changes",
 			mcp.WithDescription("Get the most recent changes across the whole repo, newest first. "+
-				"Use this to catch up on what happened since your last session."),
+				"Use this to catch up on what happened since your last session. With summarize=true, "+
+				"Ollama compresses the list into one or two sentences."),
 			mcp.WithNumber("limit", mcp.Description("Max entries to return (default 20)")),
+			mcp.WithBoolean("summarize",
+				mcp.Description("If true and Ollama is enabled, return a compressed summary instead of the full list.")),
 		),
-		handleRecentChanges(st),
+		handleRecentChanges(st, client),
 	)
 
 	s.AddTool(
@@ -79,13 +94,15 @@ func Run(root string, st *store.Store) error {
 			mcp.WithDescription("Show the full unified diff for one file, either from a specific "+
 				"commit or from the current working tree vs HEAD. Use this to verify what actually "+
 				"changed before trusting a recorded summary — closes the audit loop a summary alone "+
-				"can't."),
+				"can't. With summarize=true, Ollama returns a one-sentence compression instead of the raw diff."),
 			mcp.WithString("file", mcp.Required(),
 				mcp.Description("Repo-relative path to the file")),
 			mcp.WithString("hash",
 				mcp.Description("Commit hash to diff within. Omit (or empty) for the working-tree diff vs HEAD.")),
+			mcp.WithBoolean("summarize",
+				mcp.Description("If true and Ollama is enabled, return a one-sentence summary instead of the full diff.")),
 		),
-		handleGetDiff(),
+		handleGetDiff(client),
 	)
 
 	s.AddTool(
@@ -177,14 +194,25 @@ func handleFileHistory(st *store.Store) server.ToolHandlerFunc {
 	}
 }
 
-func handleRecentChanges(st *store.Store) server.ToolHandlerFunc {
+func handleRecentChanges(st *store.Store, client *llm.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		limit := optionalInt(req, "limit", 20)
 		changes, err := st.RecentChanges(limit)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(formatChanges(changes)), nil
+
+		text := formatChanges(changes)
+		if !optionalBool(req, "summarize") || client == nil {
+			return mcp.NewToolResultText(text), nil
+		}
+
+		summary, err := client.SummarizeText(ctx, text)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "githints: ollama summarize recent changes: %v\n", err)
+			return mcp.NewToolResultText(text), nil
+		}
+		return mcp.NewToolResultText(summary), nil
 	}
 }
 
@@ -204,7 +232,7 @@ func handleSearch(st *store.Store) server.ToolHandlerFunc {
 	}
 }
 
-func handleGetDiff() server.ToolHandlerFunc {
+func handleGetDiff(client *llm.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		file, err := requireString(req, "file")
 		if err != nil {
@@ -219,7 +247,17 @@ func handleGetDiff() server.ToolHandlerFunc {
 		if strings.TrimSpace(diff) == "" {
 			return mcp.NewToolResultText("no changes"), nil
 		}
-		return mcp.NewToolResultText(diff), nil
+
+		if !optionalBool(req, "summarize") || client == nil {
+			return mcp.NewToolResultText(diff), nil
+		}
+
+		summary, err := client.SummarizeDiff(ctx, file, diff)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "githints: ollama summarize diff: %v\n", err)
+			return mcp.NewToolResultText(diff), nil
+		}
+		return mcp.NewToolResultText(summary), nil
 	}
 }
 
@@ -417,4 +455,18 @@ func optionalInt(req mcp.CallToolRequest, key string, def int) int {
 		return def
 	}
 	return int(f)
+}
+
+// optionalBool reads a non-required boolean arg (MCP sends booleans as
+// bool), returning false if absent.
+func optionalBool(req mcp.CallToolRequest, key string) bool {
+	v, ok := req.Params.Arguments[key]
+	if !ok {
+		return false
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return false
+	}
+	return b
 }

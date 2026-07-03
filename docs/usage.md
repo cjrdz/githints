@@ -83,6 +83,48 @@ If the binary is not on your `PATH`, use `"command": ["./githints", "serve"]`.
 If you commit without recording, the hook writes a generic fallback entry so
 nothing is silently lost.
 
+## Optional local Ollama summarization
+
+githints can ask a local Ollama model to caption hook fallback rows and to
+compress read-path output. It is **disabled by default** and requires explicit
+configuration.
+
+Create or edit `.githints/config.json`:
+
+```json
+{
+  "ollama": {
+    "enabled": true,
+    "endpoint": "http://127.0.0.1:11434",
+    "model": "qwen2.5:3b-instruct",
+    "timeout_ms": 3000,
+    "max_diff_bytes": 4096
+  }
+}
+```
+
+Settings can also be overridden with environment variables:
+
+- `GITHINTS_OLLAMA_ENABLED`
+- `GITHINTS_OLLAMA_ENDPOINT`
+- `GITHINTS_OLLAMA_MODEL`
+- `GITHINTS_OLLAMA_TIMEOUT_MS`
+- `GITHINTS_OLLAMA_MAX_DIFF_BYTES`
+
+The endpoint must resolve to a loopback address. To point it at a non-loopback
+address, set `GITHINTS_OLLAMA_ALLOW_NON_LOOPBACK=1`.
+
+When enabled:
+
+- The `post-commit` hook sends each fallback diff through a secret-scrubbing
+  filter, truncates it to `max_diff_bytes`, and asks Ollama for a one-line
+  caption. If Ollama is down, times out, or returns unusable output, the hook
+  falls back to the generic text immediately.
+- `get_diff(file=..., summarize=true)` returns a one-sentence summary instead
+  of the full unified diff.
+- `get_recent_changes(limit=..., summarize=true)` returns a compressed
+  overview instead of the full list.
+
 ## CLI reference
 
 ```sh

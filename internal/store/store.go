@@ -42,7 +42,7 @@ type Change struct {
 	FilePath           string
 	CommitHash         string
 	Branch             string
-	Source             string // "agent" or "hook"
+	Source             string // "agent", "llm", or "fallback"
 	Summary            string
 	Reason             string
 	DiffStat           string
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS changes (
 	file_path              TEXT NOT NULL,
 	commit_hash            TEXT,
 	branch                 TEXT NOT NULL DEFAULT '',
-	source                 TEXT NOT NULL CHECK(source IN ('agent','hook')),
+	source                 TEXT NOT NULL,
 	summary                TEXT NOT NULL,
 	reason                 TEXT,
 	diff_stat              TEXT,
@@ -107,6 +107,10 @@ CREATE INDEX IF NOT EXISTS idx_changes_recorded ON changes(recorded_at);
 ALTER TABLE changes ADD COLUMN diff_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE changes ADD COLUMN clock_tamper_warning INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS githints_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+ALTER TABLE changes ADD COLUMN source_new TEXT NOT NULL DEFAULT 'fallback';
+UPDATE changes SET source_new = CASE WHEN source = 'hook' THEN 'fallback' ELSE source END;
+ALTER TABLE changes DROP COLUMN source;
+ALTER TABLE changes RENAME COLUMN source_new TO source;
 `
 
 // pragma sets the connection-level options that make SQLite safe for the

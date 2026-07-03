@@ -31,6 +31,7 @@ what tests expect.
 ## Project layout
 
 - `main.go` — CLI entry point and command wiring.
+- `internal/config` — `.githints/config.json` loader and env overrides.
 - `internal/store` — SQLite schema, migrations, and queries.
 - `internal/recorder` — write path: validation, secret scanning, insert,
   render trigger.
@@ -38,6 +39,7 @@ what tests expect.
 - `internal/integrity` — salt, key derivation, HMAC chain, Merkle root,
   `rotate-salt`.
 - `internal/gitutil` — thin wrappers around `git` commands.
+- `internal/llm` — local Ollama client and diff scrubbing.
 - `internal/mcpserver` — MCP stdio server and tool handlers.
 
 ## Code style
