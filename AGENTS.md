@@ -23,6 +23,11 @@ Right after you finish editing a file, call:
         {"file": "b.go", "summary": "..."}
       ])
 
+If the MCP tools are not available in your environment, use the equivalent
+CLI command from the repo root:
+
+    ./githints record -file="<repo-relative path>" -summary="<what changed>" [-reason="..."]
+
 ## Rule: check history before editing unfamiliar files
 
 Before making non-trivial changes to a file you haven't touched this
@@ -68,10 +73,21 @@ The endpoint must resolve to a loopback address unless you set
 or returns garbage, the hook silently falls back to the generic text and the
 commit never hangs.
 
+## Regenerating markdown
+
+If the rendered markdown diverges from the store (for example, after resolving
+a merge conflict or switching shared-history modes), run:
+
+    githints render
+
+This re-renders every per-file hint and `CHANGES.md` from the current store.
+
 ## What you do NOT need to do
 
 - Don't edit anything under `.githints/` directly — it's fully
   regenerated from `record_change` calls and the git hook. Manual edits
   will be overwritten.
-- Don't commit `.githints/` — it is gitignored. The SQLite store and the
-  rendered markdown can always be regenerated locally.
+- Don't commit `.githints/` unless the repo was initialized with
+  `githints init -share`. In the default private mode it is fully gitignored.
+  In shared mode only the state files (`store.db`, `.salt`, `config.json`)
+  are ignored; the rendered markdown is meant to be committed and shared.
