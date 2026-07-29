@@ -132,10 +132,53 @@ func TestRenderCommand(t *testing.T) {
 		t.Fatalf("remove CHANGES.md: %v", err)
 	}
 
-	if err := cmdRender(); err != nil {
-		t.Fatalf("cmdRender: %v", err)
+	// Dispatch through the command table rather than calling cmdRender
+	// directly, so this test also proves `githints render` is reachable from
+	// the CLI. Calling cmdRender() directly is what let the missing dispatch
+	// entry go unnoticed.
+	render, ok := commands["render"]
+	if !ok {
+		t.Fatal("render is not registered in the command table")
+	}
+	if err := render(nil); err != nil {
+		t.Fatalf("render: %v", err)
 	}
 	if _, err := os.Stat(changesPath); err != nil {
 		t.Fatalf("CHANGES.md not rendered after render command: %v", err)
+	}
+}
+
+// TestUsageMatchesCommandTable enforces that every command advertised in
+// usageText is dispatchable and every dispatchable command is advertised.
+// `githints render` shipped broken because usage() promised a command the
+// dispatch switch never handled.
+func TestUsageMatchesCommandTable(t *testing.T) {
+	advertised := map[string]bool{}
+	for _, line := range strings.Split(usageText, "\n") {
+		// Command lines look like "  githints <name> ...". Continuation
+		// lines are indented further and carry no command name.
+		if !strings.HasPrefix(line, "  githints ") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimPrefix(line, "  githints "))
+		if len(fields) == 0 {
+			continue
+		}
+		advertised[fields[0]] = true
+	}
+
+	if len(advertised) == 0 {
+		t.Fatal("parsed no commands out of usageText; the parser or the text changed shape")
+	}
+
+	for name := range advertised {
+		if _, ok := commands[name]; !ok {
+			t.Errorf("usage advertises %q but it is not in the command table", name)
+		}
+	}
+	for name := range commands {
+		if !advertised[name] {
+			t.Errorf("command %q is dispatchable but missing from usage", name)
+		}
 	}
 }

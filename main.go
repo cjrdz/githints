@@ -21,41 +21,49 @@ import (
 	"github.com/cjrdz/githints/internal/store"
 )
 
+// commands maps every subcommand name to its handler. It is the single source
+// of dispatch: a command that exists as a cmdX function but is missing here is
+// unreachable from the CLI, which is how `githints render` stayed broken while
+// being advertised in usage(). TestUsageMatchesCommandTable keeps this table
+// and usageText in sync so the mismatch cannot recur silently.
+var commands = map[string]func(args []string) error{
+	"init":           cmdInit,
+	"serve":          noArgs(cmdServe),
+	"hook-run":       noArgs(cmdHookRun),
+	"hook-precommit": noArgs(cmdPreCommit),
+	"record":         cmdRecord,
+	"verify":         noArgs(cmdVerify),
+	"changes":        cmdChanges,
+	"rotate-salt":    cmdRotateSalt,
+	"status":         noArgs(cmdStatus),
+	"render":         noArgs(cmdRender),
+	"version":        noArgs(cmdVersion),
+}
+
+// noArgs adapts a flagless command to the table's handler signature.
+func noArgs(fn func() error) func([]string) error {
+	return func([]string) error { return fn() }
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(1)
 	}
 
-	switch os.Args[1] {
-	case "init":
-		mustRun(func() error { return cmdInit(os.Args[2:]) })
-	case "serve":
-		mustRun(cmdServe)
-	case "hook-run":
-		mustRun(cmdHookRun)
-	case "hook-precommit":
-		mustRun(cmdPreCommit)
-	case "record":
-		mustRun(func() error { return cmdRecord(os.Args[2:]) })
-	case "verify":
-		mustRun(cmdVerify)
-	case "changes":
-		mustRun(func() error { return cmdChanges(os.Args[2:]) })
-	case "rotate-salt":
-		mustRun(func() error { return cmdRotateSalt(os.Args[2:]) })
-	case "status":
-		mustRun(cmdStatus)
-	case "version":
-		mustRun(cmdVersion)
-	default:
+	cmd, ok := commands[os.Args[1]]
+	if !ok {
 		usage()
 		os.Exit(1)
 	}
+	mustRun(func() error { return cmd(os.Args[2:]) })
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `githints — lightweight change tracking for AI coding agents
+	fmt.Fprintln(os.Stderr, usageText)
+}
+
+const usageText = `githints — lightweight change tracking for AI coding agents
 
 Usage:
   githints init [-force] [-share] set up .githints/ + install the git hooks
@@ -70,8 +78,7 @@ Usage:
   githints rotate-salt [-force]   generate a new integrity salt and re-sign the chain
   githints status                 show store health and pending records
   githints render                 re-render all markdown from the store
-  githints version                print the githints version`)
-}
+  githints version                print the githints version`
 
 func cmdVersion() error {
 	fmt.Println(version)
