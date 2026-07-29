@@ -16,7 +16,11 @@ import (
 // FullScan walks the repository under opts.Root, parses every supported file,
 // and writes the result to db. It is idempotent: it clears the existing index
 // first, then re-parses every file.
-func FullScan(db *Store, opts lang.ScanOptions) error {
+//
+// If force is false, the scan refuses to overwrite a larger existing index with
+// a smaller one (partial-write guard) and refuses to write data that would exceed
+// maxBytes. Use force to override either guard.
+func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error {
 	registry := lang.NewRegistry()
 	parsers, err := registry.ResolveLanguages(opts.Languages)
 	if err != nil {
@@ -115,6 +119,10 @@ func FullScan(db *Store, opts lang.ScanOptions) error {
 		return fmt.Errorf("walk: %w", err)
 	}
 
+	if err := guardWrite(db, allSymbols, allImports, force, maxBytes); err != nil {
+		return err
+	}
+
 	if err := db.Clear(); err != nil {
 		return err
 	}
@@ -134,6 +142,46 @@ func FullScan(db *Store, opts lang.ScanOptions) error {
 	}
 
 	return RenderNotes(db, opts.Root, false)
+}
+
+// guardWrite enforces the Phase 5 safety checks before mutating the index.
+// It returns an error if the new scan would be a partial write (fewer rows than
+// the existing index) or would exceed the configured size cap, unless force is true.
+func guardWrite(db *Store, symbols []lang.Symbol, imports []lang.Import, force bool, maxBytes int) error {
+	existingSymbols, err := db.SymbolCount()
+	if err != nil {
+		return fmt.Errorf("check existing symbol count: %w", err)
+	}
+	existingImports, err := db.ImportCount()
+	if err != nil {
+		return fmt.Errorf("check existing import count: %w", err)
+	}
+	existingRows := existingSymbols + existingImports
+	newRows := len(symbols) + len(imports)
+
+	if !force && newRows < existingRows {
+		return fmt.Errorf("partial write detected: %d new rows vs %d existing; use --force to overwrite", newRows, existingRows)
+	}
+
+	if maxBytes > 0 {
+		var estimated int64
+		if size := db.Size(); size > 0 {
+			estimated = size
+		}
+		const symbolOverhead = 64
+		for _, sym := range symbols {
+			estimated += int64(len(sym.Name) + len(string(sym.Kind)) + len(sym.FilePath) + len(sym.Signature) + symbolOverhead)
+		}
+		const importOverhead = 32
+		for _, imp := range imports {
+			estimated += int64(len(imp.FilePath) + len(imp.ImportedPath) + importOverhead)
+		}
+		if !force && estimated > int64(maxBytes) {
+			return fmt.Errorf("index would exceed max_bytes (%d): estimated %d bytes; use --force to overwrite", maxBytes, estimated)
+		}
+	}
+
+	return nil
 }
 
 func shouldSkipFile(path string, info os.FileInfo) bool {

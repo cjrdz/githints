@@ -198,7 +198,7 @@ func (a *App) Run() error { return nil }
 		t.Fatalf("mkdir refs: %v", err)
 	}
 
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}); err != nil {
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)
 	}
 
@@ -228,7 +228,7 @@ func (a *App) Run() error { return nil }
 	}
 
 	// Verify idempotency: run again and check the symbol count is the same.
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}); err != nil {
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
 		t.Fatalf("FullScan second run: %v", err)
 	}
 	if n, err := st.SymbolCount(); err != nil || n != 3 {
@@ -248,7 +248,7 @@ func TestFullScanSkipsIgnoredFiles(t *testing.T) {
 		t.Fatalf("write .gitignore: %v", err)
 	}
 
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}); err != nil {
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)
 	}
 
@@ -273,7 +273,7 @@ func TestFullScanRespectsGithintsignore(t *testing.T) {
 		t.Fatalf("write .githintsignore: %v", err)
 	}
 
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}); err != nil {
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)
 	}
 
@@ -302,7 +302,7 @@ func TestFullScanGithintsignoreCannotReincludeGitignored(t *testing.T) {
 		t.Fatalf("write .githintsignore: %v", err)
 	}
 
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}); err != nil {
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)
 	}
 
@@ -323,7 +323,7 @@ func TestFullScanSkipsSymlink(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}); err != nil {
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)
 	}
 	if n, err := st.SymbolCount(); err != nil || n != 1 {
@@ -341,7 +341,7 @@ func TestFullScanMaxFileSize(t *testing.T) {
 	big := "package main\n" + strings.Repeat("// big\n", 1000) + "func Big() {}\n"
 	writeGo(t, root, "big.go", big)
 
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 64, ParseTimeout: 5 * time.Second}); err != nil {
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 64, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)
 	}
 	if n, err := st.SymbolCount(); err != nil || n != 1 {
@@ -354,6 +354,64 @@ func TestFullScanMaxFileSize(t *testing.T) {
 	meta, _ := st.Meta()
 	if meta.SkippedCount != 1 {
 		t.Errorf("SkippedCount = %d", meta.SkippedCount)
+	}
+}
+
+func TestFullScanPartialWriteGuard(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\nfunc B() {}\n")
+	writeGo(t, root, "b.go", "package main\nfunc C() {}\n")
+
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
+		t.Fatalf("initial FullScan: %v", err)
+	}
+	if n, err := st.SymbolCount(); err != nil || n != 3 {
+		t.Fatalf("initial SymbolCount = %d, %v", n, err)
+	}
+
+	// Delete one file, then refuse to overwrite without force.
+	if err := os.Remove(filepath.Join(root, "b.go")); err != nil {
+		t.Fatalf("remove b.go: %v", err)
+	}
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err == nil {
+		t.Fatal("expected partial-write error")
+	}
+	if n, err := st.SymbolCount(); err != nil || n != 3 {
+		t.Fatalf("SymbolCount after refused scan = %d, %v", n, err)
+	}
+
+	// Force overwrites.
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, true, 0); err != nil {
+		t.Fatalf("forced FullScan: %v", err)
+	}
+	if n, err := st.SymbolCount(); err != nil || n != 2 {
+		t.Fatalf("SymbolCount after forced scan = %d, %v", n, err)
+	}
+}
+
+func TestFullScanMaxBytesGuard(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+
+	// A tiny maxBytes always refuses because the empty SQLite file is larger than
+	// the allowance, unless force overrides it.
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 100); err == nil {
+		t.Fatal("expected max_bytes error")
+	}
+
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, true, 100); err != nil {
+		t.Fatalf("forced FullScan: %v", err)
+	}
+	if n, err := st.SymbolCount(); err != nil || n != 1 {
+		t.Fatalf("SymbolCount = %d, %v", n, err)
 	}
 }
 
