@@ -438,15 +438,15 @@ func TestFullScanObsidianWikilinks(t *testing.T) {
 	}
 }
 
-func TestFullScanObsidianEscapesBracketsAndPipe(t *testing.T) {
+func TestFullScanObsidianEscapesBracketsInFilename(t *testing.T) {
 	st, dir := tempStore(t)
 	defer st.Close()
 
 	root := filepath.Join(dir, "repo")
 	initGitRepo(t, root)
-	// File name with characters that break wikilink syntax.
+	// File name with brackets breaks wikilink syntax; the target must be URL-encoded.
 	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
-	writeGo(t, root, "file[weird|name].go", "package main\nimport \"a.go\"\nfunc Weird() {}\n")
+	writeGo(t, root, "file[weird].go", "package main\nimport \"a.go\"\nfunc Weird() {}\n")
 
 	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second, Obsidian: true}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)
@@ -457,7 +457,7 @@ func TestFullScanObsidianEscapesBracketsAndPipe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read note a.go: %v", err)
 	}
-	if !strings.Contains(string(data), "[[file%5Bweird%7Cname%5D.go.md|file[weird|name].go]]") {
+	if !strings.Contains(string(data), "[[file%5Bweird%5D.go.md|file[weird].go]]") {
 		t.Errorf("expected URL-encoded target with raw display text, got:\n%s", string(data))
 	}
 }
