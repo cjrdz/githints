@@ -41,7 +41,31 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		server.WithRecovery(),
 	)
 
-	s.AddTool(
+	session := NewSessionTracker(st)
+
+	// addTool registers a tool and marks it as used whenever it runs. Taking
+	// the name from the tool itself means a new tool cannot be registered
+	// without being tracked, and no name literal is repeated.
+	addTool := func(tool mcp.Tool, h server.ToolHandlerFunc) {
+		name := tool.Name
+		s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			defer session.MarkToolCalled(name)
+			return h(ctx, req)
+		})
+	}
+
+	addTool(
+		mcp.NewTool("get_session_context",
+			mcp.WithDescription("Orient yourself at the START of a session, before reading files or "+
+				"making edits. Returns when this session began, which githints tools have already been "+
+				"used this session, how much history this repo has recorded, and which tools to call "+
+				"next. Prefer the suggested history tools over raw file reads — they explain why the "+
+				"code is shaped the way it is, so you don't re-litigate settled decisions."),
+		),
+		handleGetSessionContext(session),
+	)
+
+	addTool(
 		mcp.NewTool("record_change",
 			mcp.WithDescription("Record what changed in a file and why, right after editing it. "+
 				"This is the primary way changes get tracked — call it once per file you modify, "+
@@ -58,7 +82,7 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		handleRecordChange(root, st),
 	)
 
-	s.AddTool(
+	addTool(
 		mcp.NewTool("get_file_history",
 			mcp.WithDescription("Get the recorded change history for one file, newest first."),
 			mcp.WithString("file", mcp.Required(),
@@ -68,7 +92,7 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		handleFileHistory(st),
 	)
 
-	s.AddTool(
+	addTool(
 		mcp.NewTool("get_recent_changes",
 			mcp.WithDescription("Get the most recent changes across the whole repo, newest first. "+
 				"Use this to catch up on what happened since your last session. With summarize=true, "+
@@ -80,7 +104,7 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		handleRecentChanges(st, client),
 	)
 
-	s.AddTool(
+	addTool(
 		mcp.NewTool("search_changes",
 			mcp.WithDescription("Full-text search over recorded change summaries and reasons."),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Search text")),
@@ -89,7 +113,7 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		handleSearch(st),
 	)
 
-	s.AddTool(
+	addTool(
 		mcp.NewTool("get_diff",
 			mcp.WithDescription("Show the full unified diff for one file, either from a specific "+
 				"commit or from the current working tree vs HEAD. Use this to verify what actually "+
@@ -105,7 +129,7 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		handleGetDiff(client),
 	)
 
-	s.AddTool(
+	addTool(
 		mcp.NewTool("get_changes_in_range",
 			mcp.WithDescription("Timeline forensics: list changes whose recorded_at timestamp falls "+
 				"between since and until (inclusive). Timestamps can be Unix seconds or RFC3339. "+
@@ -118,7 +142,7 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		handleChangesInRange(st),
 	)
 
-	s.AddTool(
+	addTool(
 		mcp.NewTool("record_batch",
 			mcp.WithDescription("Record multiple file changes in one call. Use this when several "+
 				"files were edited in the same conceptual step so the changelog reflects a single batch."),
@@ -141,6 +165,12 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 	)
 
 	return server.ServeStdio(s)
+}
+
+func handleGetSessionContext(session *SessionTracker) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText(session.ContextReport()), nil
+	}
 }
 
 func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {

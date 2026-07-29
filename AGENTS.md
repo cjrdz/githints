@@ -4,6 +4,21 @@ This repo has a local MCP server called `githints` for tracking what
 changed and why, on a per-file basis. It's already running for you if
 your MCP config includes it.
 
+## Rule: start every session with `get_session_context`
+
+Before reading any file or making any edit, call:
+
+    get_session_context()
+
+It returns when this session started, how much history this repo has
+recorded, which githints tools you have already used this session, and
+suggested next steps tailored to what you haven't done yet.
+
+Do the suggested history calls before reading files directly — the recorded
+history explains why the code is shaped the way it is, which saves you from
+re-litigating settled decisions. Session state is per-process: if the MCP
+server restarts, the session resets, and that is expected.
+
 ## Rule: record changes after editing
 
 Right after you finish editing a file, call:
@@ -41,10 +56,11 @@ If a recorded summary doesn't match what you see in the file, call
 
 ## Catching up at the start of a session
 
-Call `get_recent_changes(limit=20)` early in a session to see what
-happened since you were last here, especially if changes may have come
-from another agent, a teammate, or a manual git commit (those show up
-with `source: fallback` and a generic summary instead of `source: agent`).
+Start with `get_session_context()` (see the first rule), then call
+`get_recent_changes(limit=20)` to see what happened since you were last
+here, especially if changes may have come from another agent, a teammate,
+or a manual git commit (those show up with `source: fallback` and a
+generic summary instead of `source: agent`).
 
 For targeted forensics, use:
 
