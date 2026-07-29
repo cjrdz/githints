@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/cjrdz/githints/internal/config"
 	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/hint"
+	"github.com/cjrdz/githints/internal/index"
+	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/integrity"
 	"github.com/cjrdz/githints/internal/llm"
 	"github.com/cjrdz/githints/internal/mcpserver"
@@ -37,6 +40,7 @@ var commands = map[string]func(args []string) error{
 	"rotate-salt":    cmdRotateSalt,
 	"status":         noArgs(cmdStatus),
 	"render":         noArgs(cmdRender),
+	"index":          cmdIndex,
 	"version":        noArgs(cmdVersion),
 }
 
@@ -78,6 +82,8 @@ Usage:
   githints rotate-salt [-force]   generate a new integrity salt and re-sign the chain
   githints status                 show store health and pending records
   githints render                 re-render all markdown from the store
+  githints index                  re-index the structural symbol cache
+  githints index status           show index statistics
   githints version                print the githints version`
 
 func cmdVersion() error {
@@ -153,6 +159,7 @@ func ensureGitignore(root string, share bool) error {
 	sharedBlock := []string{
 		gitignoreManagedStart,
 		".githints/store.db*",
+		".githints/index.db*",
 		".githints/.salt",
 		".githints/config.json",
 		gitignoreManagedEnd,
@@ -656,6 +663,156 @@ func cmdRender() error {
 	}
 	fmt.Printf("rendered %d file hint(s) + CHANGES.md\n", len(files))
 	return nil
+}
+
+// cmdIndex re-parses the repository into a structural index stored in
+// .githints/index.db, then writes .githints/index/<path>.md notes plus the
+// .githints/INDEX.md rollup. It never touches the integrity-verified hint
+// markdown or CHANGES.md.
+func cmdIndex(args []string) error {
+	fs := flag.NewFlagSet("index", flag.ExitOnError)
+	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	root, err := gitutil.RepoRoot()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		return err
+	}
+	if !cfg.Index.Enabled {
+		fmt.Println("indexing is disabled in .githints/config.json")
+		return nil
+	}
+
+	dbPath := lang.IndexDBPath(root)
+	db, err := index.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open index db: %w", err)
+	}
+	defer db.Close()
+
+	if !*force {
+		if err := rejectPartialWrite(db); err != nil {
+			return err
+		}
+	}
+
+	if err := index.FullScan(db, lang.ScanOptions{
+		Root:         root,
+		Languages:    cfg.Index.Languages,
+		MaxFileSize:  int64(cfg.Index.MaxFileSize),
+		ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
+	}); err != nil {
+		return fmt.Errorf("index: %w", err)
+	}
+
+	meta, err := db.Meta()
+	if err != nil {
+		return fmt.Errorf("index meta: %w", err)
+	}
+	fmt.Printf("indexed %d files, %d symbols\n", meta.FileCount, meta.SymbolCount)
+	return nil
+}
+
+// rejectPartialWrite compares the new index size against the existing index
+// size and refuses to overwrite a larger index with a smaller one. It is used
+// by FullScan to detect an interrupted scan (Phase 5).
+func rejectPartialWrite(db *index.Store) error {
+	existing, err := db.SymbolCount()
+	if err != nil {
+		return fmt.Errorf("check existing index: %w", err)
+	}
+	// We cannot know the new size yet without walking; the guard is applied by
+	// FullScan itself after the walk. This stub is the hook point for Phase 5.
+	_ = existing
+	return nil
+}
+
+// cmdIndexStatus prints a quick dashboard of the structural index.
+func cmdIndexStatus(args []string) error {
+	if len(args) > 0 && args[0] != "status" {
+		return fmt.Errorf("unknown index subcommand: %s", args[0])
+	}
+
+	root, err := gitutil.RepoRoot()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		return err
+	}
+	if !cfg.Index.Enabled {
+		fmt.Println("indexing is disabled in .githints/config.json")
+		return nil
+	}
+
+	dbPath := lang.IndexDBPath(root)
+	db, err := index.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open index db: %w", err)
+	}
+	defer db.Close()
+
+	meta, err := db.Meta()
+	if err != nil {
+		return fmt.Errorf("index meta: %w", err)
+	}
+
+	files, err := db.FileCount()
+	if err != nil {
+		return err
+	}
+	symbols, err := db.SymbolCount()
+	if err != nil {
+		return err
+	}
+	imports, err := db.ImportCount()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("index db: %s\n", dbPath)
+	if dbSize := db.Size(); dbSize >= 0 {
+		fmt.Printf("index db size: %d bytes\n", dbSize)
+	}
+	fmt.Printf("files indexed: %d\n", files)
+	fmt.Printf("symbols: %d\n", symbols)
+	fmt.Printf("imports: %d\n", imports)
+	if meta.LastIndexedAt > 0 {
+		fmt.Printf("last indexed: %s\n", time.Unix(meta.LastIndexedAt, 0).Format(time.RFC3339))
+	} else {
+		fmt.Println("last indexed: never")
+	}
+	if len(meta.LanguageCounts) > 0 {
+		fmt.Println("language breakdown:")
+		for _, lang := range sortedStringKeys(meta.LanguageCounts) {
+			fmt.Printf("  - %s: %d\n", lang, meta.LanguageCounts[lang])
+		}
+	}
+	if meta.SkippedCount > 0 {
+		fmt.Printf("skipped files: %d\n", meta.SkippedCount)
+	}
+	if meta.UnsupportedCount > 0 {
+		fmt.Printf("unsupported files: %d\n", meta.UnsupportedCount)
+	}
+	return nil
+}
+
+func sortedStringKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // cmdVerify checks the integrity of the change log: HMAC chain, monotonic

@@ -254,4 +254,11 @@ internal/
   gitutil/             # thin git shell wrappers
   llm/                 # local Ollama client and diff scrubbing
   mcpserver/           # MCP stdio server and tool handlers
+    server.go          #   tool registration and handlers
+    session.go         #   per-process session tracking
+  index/               # structural symbol + import cache
+    lang/              #   language-specific parsers and registry
+    store.go           #   index.db schema and queries
+    scan.go            #   full and incremental scans
+    render.go          #   index notes (.githints/index/) + INDEX.md
 ```
