@@ -254,14 +254,14 @@ func IsIndexPath(root, p string) bool {
 // A collision is a serious error because the index note path would overlap with
 // a hint file under .githints/index/whatever.go.md, which is integrity-verified.
 func IndexNotePath(root, srcPath string) (string, bool, error) {
-	if filepath.IsAbs(srcPath) {
-		return "", false, fmt.Errorf("source path must be repo-relative, got absolute: %s", srcPath)
-	}
 	if srcPath == "" {
 		return "", false, fmt.Errorf("source path is empty")
 	}
 	if srcPath == "." {
 		return "", false, fmt.Errorf("source path is '.'")
+	}
+	if filepath.IsAbs(srcPath) || !filepath.IsLocal(srcPath) {
+		return "", false, fmt.Errorf("source path must be repo-relative and local, got: %s", srcPath)
 	}
 	if srcPath == "index" || strings.HasPrefix(filepath.ToSlash(srcPath), "index/") {
 		return "", true, fmt.Errorf("index note path collides with the index notes directory: %s", srcPath)
