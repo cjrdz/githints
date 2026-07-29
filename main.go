@@ -484,6 +484,25 @@ func cmdHookRun() error {
 		}
 	}
 
+	if cfg.Index.Enabled {
+		idxDB, err := index.Open(lang.IndexDBPath(root))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "githints: could not open index db: %v\n", err)
+		} else {
+			defer idxDB.Close()
+			if err := index.IncrementalScan(idxDB, lang.ScanOptions{
+				Root:         root,
+				Languages:    cfg.Index.Languages,
+				MaxFileSize:  int64(cfg.Index.MaxFileSize),
+				ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
+			}, files); err != nil {
+				fmt.Fprintf(os.Stderr, "githints: incremental index scan: %v\n", err)
+			}
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "githints: indexing disabled in config; skipping incremental index update\n")
+	}
+
 	commitRows, err := st.ChangesForCommit(hash)
 	if err != nil {
 		return fmt.Errorf("load commit rows: %w", err)
