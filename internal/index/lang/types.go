@@ -6,6 +6,7 @@ package lang
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -171,6 +172,43 @@ type ScanOptions struct {
 	Languages    []string
 	MaxFileSize  int64
 	ParseTimeout time.Duration
+}
+
+// LocalImportPath returns the in-repo import path for a source file. For Go
+// files this is the module path from go.mod joined with the file's directory.
+// If the file is not under a Go module or the language cannot be determined,
+// it returns an error. This is used by the get_dependents MCP tool to map a
+// repo-relative file path back to the import path other files use to import it.
+func LocalImportPath(root, file string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(file))
+	switch ext {
+	case ".go":
+		module, err := readModulePath(root)
+		if err != nil {
+			return "", fmt.Errorf("read module path: %w", err)
+		}
+		dir := filepath.ToSlash(filepath.Dir(file))
+		if dir == "." || dir == "" {
+			return module, nil
+		}
+		return module + "/" + dir, nil
+	}
+	return "", fmt.Errorf("unsupported language for import path resolution: %s", ext)
+}
+
+func readModulePath(root string) (string, error) {
+	path := filepath.Join(root, "go.mod")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return fields[1], nil
+		}
+	}
+	return "", fmt.Errorf("no module directive found in %s", path)
 }
 
 // IndexMeta is metadata about the most recent scan.
