@@ -166,12 +166,13 @@ func SelectParser(extMap map[string]LanguageParser, path string) LanguageParser 
 	return extMap[ExtensionOf(path)]
 }
 
-// ScanOptions bundles the per-file guard limits.
+// ScanOptions bundles the per-file guard limits and rendering options.
 type ScanOptions struct {
 	Root         string
 	Languages    []string
 	MaxFileSize  int64
 	ParseTimeout time.Duration
+	Obsidian     bool
 }
 
 // LocalImportPath returns the in-repo import path for a source file. For Go
@@ -329,11 +330,18 @@ func EscapeMarkdown(s string) string {
 }
 
 // FileLink returns either a markdown link or an Obsidian wikilink.
+//
+// In Obsidian mode the target is the note filename (src + ".md") with
+// URL-encoded [, ], and | characters so the wikilink boundary stays intact.
+// Pipe syntax is always used so the display text is the raw repo-relative path.
 func FileLink(root, src string, obsidian bool) string {
 	if obsidian {
-		// Phase 6 will implement pipe-syntax with URL-encoded targets for files
-		// containing [, ], or |. For Phase 1 we emit the simple form.
-		return fmt.Sprintf("[[%s]]", src)
+		target := src + ".md"
+		// URL-encode only the characters that break wikilink syntax.
+		target = strings.ReplaceAll(target, "[", "%5B")
+		target = strings.ReplaceAll(target, "]", "%5D")
+		target = strings.ReplaceAll(target, "|", "%7C")
+		return fmt.Sprintf("[[%s|%s]]", target, src)
 	}
 	return fmt.Sprintf("[%s](%s)", src, filepath.ToSlash(src))
 }

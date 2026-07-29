@@ -48,11 +48,12 @@ const (
 // so the index is built incrementally on every commit; the flag exists as an
 // opt-out for unusually large repos or unusual workflows.
 type Index struct {
-	Enabled        bool     `json:"enabled"`
-	Languages      []string `json:"languages"`
-	MaxBytes       int      `json:"max_bytes"`
-	MaxFileSize    int      `json:"max_file_size"`
-	ParseTimeoutMS int      `json:"parse_timeout_ms"`
+	Enabled           bool     `json:"enabled"`
+	Languages         []string `json:"languages"`
+	MaxBytes          int      `json:"max_bytes"`
+	MaxFileSize       int      `json:"max_file_size"`
+	ParseTimeoutMS    int      `json:"parse_timeout_ms"`
+	ObsidianWikilinks bool     `json:"obsidian_wikilinks"`
 }
 
 func Default() Config {
@@ -65,11 +66,12 @@ func Default() Config {
 			MaxDiffBytes: defaultMaxDiffBytes,
 		},
 		Index: Index{
-			Enabled:        true,
-			Languages:      []string{"go"},
-			MaxBytes:       defaultIndexMaxBytes,
-			MaxFileSize:    defaultIndexMaxFileSize,
-			ParseTimeoutMS: defaultIndexParseTimeoutMS,
+			Enabled:           true,
+			Languages:         []string{"go"},
+			MaxBytes:          defaultIndexMaxBytes,
+			MaxFileSize:       defaultIndexMaxFileSize,
+			ParseTimeoutMS:    defaultIndexParseTimeoutMS,
+			ObsidianWikilinks: false,
 		},
 	}
 }
@@ -143,6 +145,9 @@ func applyEnvOverrides(cfg *Config) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Index.ParseTimeoutMS = n
 		}
+	}
+	if v := os.Getenv("GITHINTS_INDEX_OBSIDIAN_WIKILINKS"); v != "" {
+		cfg.Index.ObsidianWikilinks = truthy(v)
 	}
 }
 

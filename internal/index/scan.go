@@ -141,7 +141,7 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 		fmt.Fprintf(os.Stderr, "githints: index vacuum: %v\n", err)
 	}
 
-	return RenderNotes(db, opts.Root, false)
+	return RenderNotes(db, opts.Root, opts.Obsidian)
 }
 
 // guardWrite enforces the Phase 5 safety checks before mutating the index.

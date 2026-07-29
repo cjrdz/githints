@@ -415,6 +415,77 @@ func TestFullScanMaxBytesGuard(t *testing.T) {
 	}
 }
 
+func TestFullScanObsidianWikilinks(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+	writeGo(t, root, "b.go", "package main\nimport \"a.go\"\nfunc B() {}\n")
+
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second, Obsidian: true}, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	noteA := lang.NotePath(root, "a.go")
+	data, err := os.ReadFile(noteA)
+	if err != nil {
+		t.Fatalf("read note a.go: %v", err)
+	}
+	if !strings.Contains(string(data), "[[b.go.md|b.go]]") {
+		t.Errorf("expected Obsidian wikilink to b.go, got:\n%s", string(data))
+	}
+}
+
+func TestFullScanObsidianEscapesBracketsAndPipe(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	// File name with characters that break wikilink syntax.
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+	writeGo(t, root, "file[weird|name].go", "package main\nimport \"a.go\"\nfunc Weird() {}\n")
+
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second, Obsidian: true}, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	noteA := lang.NotePath(root, "a.go")
+	data, err := os.ReadFile(noteA)
+	if err != nil {
+		t.Fatalf("read note a.go: %v", err)
+	}
+	if !strings.Contains(string(data), "[[file%5Bweird%7Cname%5D.go.md|file[weird|name].go]]") {
+		t.Errorf("expected URL-encoded target with raw display text, got:\n%s", string(data))
+	}
+}
+
+func TestFileLinkDefaultIsMarkdown(t *testing.T) {
+	got := lang.FileLink("/repo", "cmd/main.go", false)
+	want := "[cmd/main.go](cmd/main.go)"
+	if got != want {
+		t.Errorf("FileLink default = %q, want %q", got, want)
+	}
+}
+
+func TestFileLinkObsidianWikilink(t *testing.T) {
+	got := lang.FileLink("/repo", "cmd/main.go", true)
+	want := "[[cmd/main.go.md|cmd/main.go]]"
+	if got != want {
+		t.Errorf("FileLink obsidian = %q, want %q", got, want)
+	}
+}
+
+func TestFileLinkObsidianEscapesBracketsAndPipe(t *testing.T) {
+	got := lang.FileLink("/repo", "file[weird|name].go", true)
+	want := "[[file%5Bweird%7Cname%5D.go.md|file[weird|name].go]]"
+	if got != want {
+		t.Errorf("FileLink obsidian escape = %q, want %q", got, want)
+	}
+}
+
 func initGitRepo(t *testing.T, root string) {
 	t.Helper()
 	cmd := exec.Command("git", "init", "-q", root)

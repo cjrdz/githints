@@ -495,6 +495,7 @@ func cmdHookRun() error {
 				Languages:    cfg.Index.Languages,
 				MaxFileSize:  int64(cfg.Index.MaxFileSize),
 				ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
+				Obsidian:     cfg.Index.ObsidianWikilinks,
 			}, files); err != nil {
 				fmt.Fprintf(os.Stderr, "githints: incremental index scan: %v\n", err)
 			}
@@ -691,6 +692,7 @@ func cmdRender() error {
 func cmdIndex(args []string) error {
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
+	obsidian := fs.Bool("obsidian", false, "render Obsidian wikilinks in index notes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -721,6 +723,7 @@ func cmdIndex(args []string) error {
 		Languages:    cfg.Index.Languages,
 		MaxFileSize:  int64(cfg.Index.MaxFileSize),
 		ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
+		Obsidian:     *obsidian || cfg.Index.ObsidianWikilinks,
 	}, *force, cfg.Index.MaxBytes); err != nil {
 		return fmt.Errorf("index: %w", err)
 	}
