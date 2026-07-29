@@ -212,6 +212,9 @@ unless `-force` is passed.
 
 Tools:
 
+- `get_session_context` — session orientation: when the session started, how
+  much history exists, which tools have been used this session, and suggested
+  next steps. Intended as the first call of a session.
 - `record_change` — record one file change.
 - `record_batch` — record several file changes in one call.
 - `get_file_history` — history for one file.
@@ -223,6 +226,20 @@ Tools:
 
 The server resolves the repo root from its current working directory, so it
 should be launched with `cwd = project root` (project-scoped MCP configs).
+
+### Session tracking
+
+`internal/mcpserver/session.go` holds a `SessionTracker`: the session start
+time, the set of tools called so far, and the change count sampled when the
+session began. Tools are marked as used by the registration wrapper in `Run()`,
+which reads the name off the `mcp.Tool` it registers — so a tool cannot be
+exposed without being tracked, and no tool name is written twice.
+
+`get_session_context` renders that state as text, suggesting only tools that
+have not been called yet. State is in-memory and per-process: a server restart
+is a new session. The stdio transport is single-session by construction, so two
+agents sharing one stdio would share the state; that is a property of the
+transport rather than something the tracker can resolve.
 
 `githints` uses `mark3labs/mcp-go`, the de facto Go MCP SDK. It is currently
 pre-1.0, so keep an eye on upstream releases for breaking API changes when
@@ -254,4 +271,6 @@ internal/
   gitutil/             # thin git shell wrappers
   llm/                 # local Ollama client and diff scrubbing
   mcpserver/           # MCP stdio server and tool handlers
+    server.go          #   tool registration and handlers
+    session.go         #   per-process session tracking
 ```
