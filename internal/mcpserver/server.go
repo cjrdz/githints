@@ -17,6 +17,8 @@ import (
 
 	"github.com/cjrdz/githints/internal/config"
 	"github.com/cjrdz/githints/internal/gitutil"
+	"github.com/cjrdz/githints/internal/index"
+	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/integrity"
 	"github.com/cjrdz/githints/internal/llm"
 	"github.com/cjrdz/githints/internal/recorder"
@@ -164,7 +166,69 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		handleRecordBatch(root, st),
 	)
 
-	return server.ServeStdio(s)
+	idxDB := openIndexDB(root, cfg)
+	if idxDB != nil {
+		session.SetIndexDB(idxDB)
+	}
+
+	addTool(
+		mcp.NewTool("list_symbols",
+			mcp.WithDescription("List the symbols defined in a source file. Use this to orient "+
+				"yourself before editing a file you have not touched this session."),
+			mcp.WithString("file", mcp.Required(),
+				mcp.Description("Repo-relative path to the source file, e.g. internal/store/store.go")),
+			mcp.WithNumber("limit", mcp.Description("Max symbols to return (default 50, cap 500)")),
+		),
+		handleListSymbols(idxDB),
+	)
+
+	addTool(
+		mcp.NewTool("find_symbol",
+			mcp.WithDescription("Find a symbol by exact or prefix name across the whole repo. "+
+				"Returns the file, line, and kind for each match."),
+			mcp.WithString("name", mcp.Required(),
+				mcp.Description("Symbol name to search for (exact or prefix)")),
+			mcp.WithNumber("limit", mcp.Description("Max matches to return (default 20, cap 500)")),
+		),
+		handleFindSymbol(idxDB),
+	)
+
+	addTool(
+		mcp.NewTool("get_dependents",
+			mcp.WithDescription("Reverse import lookup: which files import this one. This is your "+
+				"'blast radius' check before refactoring or deleting a file."),
+			mcp.WithString("file", mcp.Required(),
+				mcp.Description("Repo-relative path to the source file, e.g. internal/store/store.go")),
+		),
+		handleGetDependents(root, idxDB),
+	)
+
+	addTool(
+		mcp.NewTool("get_index_summary",
+			mcp.WithDescription("Return the structural index summary: total files, total symbols, "+
+				"last indexed time, language breakdown, and the most imported (hub) files."),
+			mcp.WithNumber("limit", mcp.Description("Max hub files to return (default 10, cap 100)")),
+		),
+		handleGetIndexSummary(idxDB),
+	)
+
+	err := server.ServeStdio(s)
+	if idxDB != nil {
+		_ = idxDB.Close()
+	}
+	return err
+}
+
+func openIndexDB(root string, cfg config.Config) *index.Store {
+	if !cfg.Index.Enabled {
+		return nil
+	}
+	db, err := index.Open(lang.IndexDBPath(root))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "githints: could not open index db for MCP tools: %v\n", err)
+		return nil
+	}
+	return db
 }
 
 func handleGetSessionContext(session *SessionTracker) server.ToolHandlerFunc {
@@ -517,4 +581,181 @@ func clampLimit(n, def, max int) int {
 		return max
 	}
 	return n
+}
+
+// Index MCP tool handlers.
+//
+// These are kept alongside the existing handlers in server.go because the tool
+// registration wiring lives here, and the handlers are thin wrappers over the
+// index.Store. They follow the same conventions: validate inputs, return
+// mcp.NewToolResultError(err.Error()) with a nil Go error, and include
+// last_indexed_at in every response.
+
+func handleListSymbols(db *index.Store) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if db == nil {
+			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+		}
+		file, err := requireString(req, "file")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if err := recorder.ValidateFilePath(file); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		limit := clampLimit(optionalInt(req, "limit", 50), 50, 500)
+
+		symbols, err := db.SymbolsForFile(file)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		lastIndexedAt, _ := db.LastIndexedAt()
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Symbols in %s (last indexed: %s)\n\n", file, formatIndexTime(lastIndexedAt))
+		if len(symbols) == 0 {
+			b.WriteString("_no symbols recorded for this file_\n")
+			return mcp.NewToolResultText(b.String()), nil
+		}
+		if len(symbols) > limit {
+			fmt.Fprintf(&b, "_showing %d of %d symbols_\n\n", limit, len(symbols))
+			symbols = symbols[:limit]
+		}
+		for _, sym := range symbols {
+			fmt.Fprintf(&b, "- `%s` (%s) lines %d-%d", sym.Name, sym.Kind, sym.LineStart, sym.LineEnd)
+			if sym.Signature != "" {
+				fmt.Fprintf(&b, " — `%s`", sym.Signature)
+			}
+			b.WriteString("\n")
+		}
+		return mcp.NewToolResultText(b.String()), nil
+	}
+}
+
+func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if db == nil {
+			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+		}
+		name, err := requireString(req, "name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		limit := clampLimit(optionalInt(req, "limit", 20), 20, 500)
+
+		matches, err := db.FindSymbolsByName(name)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		lastIndexedAt, _ := db.LastIndexedAt()
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Symbol matches for %q (last indexed: %s)\n\n", name, formatIndexTime(lastIndexedAt))
+		if len(matches) == 0 {
+			b.WriteString("_no matches found_\n")
+			return mcp.NewToolResultText(b.String()), nil
+		}
+		if len(matches) > limit {
+			fmt.Fprintf(&b, "_showing %d of %d matches_\n\n", limit, len(matches))
+			matches = matches[:limit]
+		}
+		for _, sym := range matches {
+			fmt.Fprintf(&b, "- `%s` (%s) in %s:%d\n", sym.Name, sym.Kind, sym.FilePath, sym.LineStart)
+		}
+		return mcp.NewToolResultText(b.String()), nil
+	}
+}
+
+func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if db == nil {
+			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+		}
+		file, err := requireString(req, "file")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if err := recorder.ValidateFilePath(file); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		importPath, err := lang.LocalImportPath(root, file)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("could not resolve import path for %s: %v", file, err)), nil
+		}
+
+		imports, err := db.FilesImporting(importPath)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		lastIndexedAt, _ := db.LastIndexedAt()
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Dependents of %s (resolved import path: %s, last indexed: %s)\n\n",
+			file, importPath, formatIndexTime(lastIndexedAt))
+		if len(imports) == 0 {
+			b.WriteString("_no files import this one in the current index_\n")
+			return mcp.NewToolResultText(b.String()), nil
+		}
+		for _, imp := range imports {
+			fmt.Fprintf(&b, "- %s imports `%s`\n", imp.FilePath, imp.ImportedPath)
+		}
+		return mcp.NewToolResultText(b.String()), nil
+	}
+}
+
+func handleGetIndexSummary(db *index.Store) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if db == nil {
+			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+		}
+		limit := clampLimit(optionalInt(req, "limit", 10), 10, 100)
+
+		meta, err := db.Meta()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		files, err := db.FileCount()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		symbols, err := db.SymbolCount()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		imports, err := db.ImportCount()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		hubs, err := db.TopFilesByInDegree(limit)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Structural index summary (last indexed: %s)\n\n", formatIndexTime(meta.LastIndexedAt))
+		fmt.Fprintf(&b, "- files indexed: %d\n", files)
+		fmt.Fprintf(&b, "- symbols: %d\n", symbols)
+		fmt.Fprintf(&b, "- imports recorded: %d\n", imports)
+		if len(meta.LanguageCounts) > 0 {
+			b.WriteString("- languages:\n")
+			for _, langName := range lang.SortedKeys(meta.LanguageCounts) {
+				fmt.Fprintf(&b, "  - %s: %d files\n", langName, meta.LanguageCounts[langName])
+			}
+		}
+		if len(hubs) > 0 {
+			b.WriteString("\nMost imported files (hubs):\n")
+			for _, h := range hubs {
+				fmt.Fprintf(&b, "- %d import(s): %s\n", h.Dependents, h.File)
+			}
+		}
+		return mcp.NewToolResultText(b.String()), nil
+	}
+}
+
+func formatIndexTime(ts int64) string {
+	if ts == 0 {
+		return "never"
+	}
+	return time.Unix(ts, 0).Format(time.RFC3339)
 }

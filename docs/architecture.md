@@ -223,6 +223,16 @@ Tools:
 - `get_diff` — unified diff for a file (committed or working tree); optional
   `summarize` flag.
 - `get_changes_in_range` — timeline query by `recorded_at`.
+- `list_symbols` — symbols defined in a source file, including line ranges and
+  signatures; includes `last_indexed_at` so the agent can assess freshness.
+- `find_symbol` — exact and prefix symbol search across the repo.
+- `get_dependents` — reverse import lookup: which files import a given one.
+- `get_index_summary` — structural index totals and top hub files by import
+  in-degree.
+
+Every structural index tool response includes the timestamp of the last full
+or incremental index scan so the agent can decide whether the data is fresh
+enough to trust or whether it should re-index or read the file directly.
 
 The server resolves the repo root from its current working directory, so it
 should be launched with `cwd = project root` (project-scoped MCP configs).
