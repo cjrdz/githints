@@ -237,12 +237,6 @@ func handleGetSessionContext(session *SessionTracker) server.ToolHandlerFunc {
 	}
 }
 
-func handleGetSessionContext(session *SessionTracker) server.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText(session.ContextReport()), nil
-	}
-}
-
 func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		file, err := requireString(req, "file")
