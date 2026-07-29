@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalize line endings
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git rm --cached -r .
+          git reset --hard
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: gofmt
+        shell: bash
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "gofmt would reformat the following files:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test -race
+        run: go test -race ./...
+
+      - name: go build
+        run: go build ./...
