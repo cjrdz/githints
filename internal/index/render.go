@@ -24,7 +24,7 @@ func RenderNotes(db *Store, root string, obsidian bool) error {
 		}
 	}
 
-	if err := RenderRollup(db, root, obsidian); err != nil {
+	if err := renderIndexRollup(db, root, obsidian); err != nil {
 		return fmt.Errorf("render index rollup: %w", err)
 	}
 
@@ -82,8 +82,7 @@ func renderFileNote(db *Store, root, src string, obsidian bool) error {
 	return os.WriteFile(notePath, []byte(b.String()), 0o644)
 }
 
-// RenderRollup writes the root .githints/INDEX.md from the current index state.
-func RenderRollup(db *Store, root string, obsidian bool) error {
+func renderIndexRollup(db *Store, root string, obsidian bool) error {
 	meta, err := db.Meta()
 	if err != nil {
 		return fmt.Errorf("load meta: %w", err)
