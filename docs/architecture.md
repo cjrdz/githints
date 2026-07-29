@@ -223,6 +223,16 @@ Tools:
 - `get_diff` — unified diff for a file (committed or working tree); optional
   `summarize` flag.
 - `get_changes_in_range` — timeline query by `recorded_at`.
+- `list_symbols` — symbols defined in a source file, including line ranges and
+  signatures; includes `last_indexed_at` so the agent can assess freshness.
+- `find_symbol` — exact and prefix symbol search across the repo.
+- `get_dependents` — reverse import lookup: which files import a given one.
+- `get_index_summary` — structural index totals and top hub files by import
+  in-degree.
+
+Every structural index tool response includes the timestamp of the last full
+or incremental index scan so the agent can decide whether the data is fresh
+enough to trust or whether it should re-index or read the file directly.
 
 The server resolves the repo root from its current working directory, so it
 should be launched with `cwd = project root` (project-scoped MCP configs).
@@ -230,10 +240,11 @@ should be launched with `cwd = project root` (project-scoped MCP configs).
 ### Session tracking
 
 `internal/mcpserver/session.go` holds a `SessionTracker`: the session start
-time, the set of tools called so far, and the change count sampled when the
-session began. Tools are marked as used by the registration wrapper in `Run()`,
-which reads the name off the `mcp.Tool` it registers — so a tool cannot be
-exposed without being tracked, and no tool name is written twice.
+time, the set of tools called so far, the change count sampled when the session
+began, and the structural index freshness if the index is enabled. Tools are
+marked as used by the registration wrapper in `Run()`, which reads the name off
+the `mcp.Tool` it registers — so a tool cannot be exposed without being tracked,
+and no tool name is written twice.
 
 `get_session_context` renders that state as text, suggesting only tools that
 have not been called yet. State is in-memory and per-process: a server restart
