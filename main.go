@@ -716,18 +716,12 @@ func cmdIndex(args []string) error {
 	}
 	defer db.Close()
 
-	if !*force {
-		if err := rejectPartialWrite(db); err != nil {
-			return err
-		}
-	}
-
 	if err := index.FullScan(db, lang.ScanOptions{
 		Root:         root,
 		Languages:    cfg.Index.Languages,
 		MaxFileSize:  int64(cfg.Index.MaxFileSize),
 		ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
-	}); err != nil {
+	}, *force, cfg.Index.MaxBytes); err != nil {
 		return fmt.Errorf("index: %w", err)
 	}
 
@@ -736,20 +730,6 @@ func cmdIndex(args []string) error {
 		return fmt.Errorf("index meta: %w", err)
 	}
 	fmt.Printf("indexed %d files, %d symbols\n", meta.FileCount, meta.SymbolCount)
-	return nil
-}
-
-// rejectPartialWrite compares the new index size against the existing index
-// size and refuses to overwrite a larger index with a smaller one. It is used
-// by FullScan to detect an interrupted scan (Phase 5).
-func rejectPartialWrite(db *index.Store) error {
-	existing, err := db.SymbolCount()
-	if err != nil {
-		return fmt.Errorf("check existing index: %w", err)
-	}
-	// We cannot know the new size yet without walking; the guard is applied by
-	// FullScan itself after the walk. This stub is the hook point for Phase 5.
-	_ = existing
 	return nil
 }
 
