@@ -49,3 +49,13 @@ func TestIndexNotePathAbsoluteRejected(t *testing.T) {
 		t.Fatal("expected collision=false for absolute path")
 	}
 }
+
+func TestIndexNotePathTraversalRejected(t *testing.T) {
+	_, collision, err := lang.IndexNotePath("/repo", "../escape.go")
+	if err == nil {
+		t.Fatal("expected error for traversal path")
+	}
+	if collision {
+		t.Fatal("expected collision=false for traversal path")
+	}
+}
