@@ -19,20 +19,6 @@ history explains why the code is shaped the way it is, which saves you from
 re-litigating settled decisions. Session state is per-process: if the MCP
 server restarts, the session resets, and that is expected.
 
-## Rule: use the structural index before editing unfamiliar files
-
-Before making non-trivial changes to a file you haven't touched this session,
-call:
-
-    list_symbols(file="...")
-
-to see what's defined in it. If you're considering refactoring or deleting a
-file, call:
-
-    get_dependents(file="...")
-
-to check what depends on it first — this is your "blast radius" check.
-
 ## Rule: record changes after editing
 
 Right after you finish editing a file, call:

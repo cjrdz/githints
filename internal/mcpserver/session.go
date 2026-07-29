@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cjrdz/githints/internal/index"
 	"github.com/cjrdz/githints/internal/store"
 )
 
@@ -59,25 +58,6 @@ type SessionTracker struct {
 	// It answers "is there any history worth consulting?" without re-querying
 	// on every get_session_context call.
 	changeCount int
-
-	// indexDB is the optional structural index database. When present, the
-	// session context can tell the agent whether the index is fresh and how
-	// many symbols it covers.
-	indexDB *index.Store
-
-	// indexDBPath is the on-disk path for indexDB, reported in the context so
-	// the agent knows where the derived cache lives.
-	indexDBPath string
-
-	// indexMeta is sampled at the time the index is attached.
-	indexMeta   indexMetaSnapshot
-	indexLoaded bool
-}
-
-type indexMetaSnapshot struct {
-	lastIndexedAt int64
-	fileCount     int
-	symbolCount   int
 }
 
 // NewSessionTracker starts a session and samples the store so the first
@@ -100,25 +80,6 @@ func NewSessionTracker(st *store.Store) *SessionTracker {
 		}
 	}
 	return t
-}
-
-// SetIndexDB attaches the structural index database so the session context can
-// report index freshness and coverage. The session tracker does not own the
-// connection; the caller is responsible for closing it.
-func (t *SessionTracker) SetIndexDB(db *index.Store) {
-	if t == nil || db == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.indexDB = db
-	t.indexDBPath = db.DBPath()
-	if meta, err := db.Meta(); err == nil {
-		t.indexMeta.lastIndexedAt = meta.LastIndexedAt
-		t.indexMeta.fileCount = meta.FileCount
-		t.indexMeta.symbolCount = meta.SymbolCount
-		t.indexLoaded = true
-	}
 }
 
 // MarkToolCalled records that a tool ran during this session. A nil receiver
@@ -204,22 +165,6 @@ func (t *SessionTracker) ContextReport() string {
 	if shown == 0 {
 		b.WriteString("- you have used every githints tool this session; " +
 			"keep calling record_change after each edit so the history stays complete\n")
-	}
-
-	// Append index availability after the suggestions so it does not drown
-	// the primary orientation.
-	b.WriteString("\nStructural index:\n")
-	if !t.indexLoaded {
-		b.WriteString("- index: not loaded (indexing may be disabled or the index db is not present)\n")
-	} else {
-		if t.indexMeta.lastIndexedAt == 0 {
-			b.WriteString("- index: loaded, but not yet indexed\n")
-		} else {
-			fmt.Fprintf(&b, "- index: %d files, %d symbols, last indexed %s (%s ago)\n",
-				t.indexMeta.fileCount, t.indexMeta.symbolCount,
-				time.Unix(t.indexMeta.lastIndexedAt, 0).Format(time.RFC3339),
-				time.Since(time.Unix(t.indexMeta.lastIndexedAt, 0)).Round(time.Second))
-		}
 	}
 
 	return b.String()

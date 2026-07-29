@@ -240,11 +240,10 @@ should be launched with `cwd = project root` (project-scoped MCP configs).
 ### Session tracking
 
 `internal/mcpserver/session.go` holds a `SessionTracker`: the session start
-time, the set of tools called so far, the change count sampled when the session
-began, and the structural index freshness if the index is enabled. Tools are
-marked as used by the registration wrapper in `Run()`, which reads the name off
-the `mcp.Tool` it registers — so a tool cannot be exposed without being tracked,
-and no tool name is written twice.
+time, the set of tools called so far, and the change count sampled when the
+session began. Tools are marked as used by the registration wrapper in `Run()`,
+which reads the name off the `mcp.Tool` it registers — so a tool cannot be
+exposed without being tracked, and no tool name is written twice.
 
 `get_session_context` renders that state as text, suggesting only tools that
 have not been called yet. State is in-memory and per-process: a server restart
@@ -284,9 +283,4 @@ internal/
   mcpserver/           # MCP stdio server and tool handlers
     server.go          #   tool registration and handlers
     session.go         #   per-process session tracking
-  index/               # structural symbol + import cache
-    lang/              #   language-specific parsers and registry
-    store.go           #   index.db schema and queries
-    scan.go            #   full and incremental scans
-    render.go          #   index notes (.githints/index/) + INDEX.md
 ```
