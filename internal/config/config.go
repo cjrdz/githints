@@ -26,6 +26,7 @@ type Ollama struct {
 
 type Config struct {
 	Ollama Ollama `json:"ollama"`
+	Index  Index  `json:"index"`
 }
 
 const (
@@ -34,10 +35,25 @@ const (
 	defaultTimeoutMS    = 3000
 	defaultMaxDiffBytes = 4096
 
+	defaultIndexMaxBytes       = 200 * 1024 * 1024
+	defaultIndexMaxFileSize    = 1024 * 1024
+	defaultIndexParseTimeoutMS = 5000
+
 	// Escape hatch for non-loopback endpoints. Checked at config load time so
 	// validation fails closed by default.
 	allowNonLoopbackEnv = "GITHINTS_OLLAMA_ALLOW_NON_LOOPBACK"
 )
+
+// Index controls the optional structural code index. Enabled defaults to true
+// so the index is built incrementally on every commit; the flag exists as an
+// opt-out for unusually large repos or unusual workflows.
+type Index struct {
+	Enabled        bool     `json:"enabled"`
+	Languages      []string `json:"languages"`
+	MaxBytes       int      `json:"max_bytes"`
+	MaxFileSize    int      `json:"max_file_size"`
+	ParseTimeoutMS int      `json:"parse_timeout_ms"`
+}
 
 func Default() Config {
 	return Config{
@@ -48,13 +64,20 @@ func Default() Config {
 			TimeoutMS:    defaultTimeoutMS,
 			MaxDiffBytes: defaultMaxDiffBytes,
 		},
+		Index: Index{
+			Enabled:        true,
+			Languages:      []string{"go"},
+			MaxBytes:       defaultIndexMaxBytes,
+			MaxFileSize:    defaultIndexMaxFileSize,
+			ParseTimeoutMS: defaultIndexParseTimeoutMS,
+		},
 	}
 }
 
 // Load reads .githints/config.json from root (if present), applies
-// GITHINTS_OLLAMA_* environment overrides, and validates the result.
+// GITHINTS_* environment overrides, and validates the result.
 // Validation is fail-closed: a non-loopback endpoint with no override is an
-// error, but an entirely disabled Ollama block is accepted silently.
+// error, and index settings are validated only when the index is enabled.
 func Load(root string) (Config, error) {
 	cfg := Default()
 
@@ -71,6 +94,11 @@ func Load(root string) (Config, error) {
 
 	if cfg.Ollama.Enabled {
 		if err := validateOllama(cfg.Ollama); err != nil {
+			return Config{}, err
+		}
+	}
+	if cfg.Index.Enabled {
+		if err := validateIndex(cfg.Index); err != nil {
 			return Config{}, err
 		}
 	}
@@ -98,6 +126,24 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Ollama.MaxDiffBytes = n
 		}
 	}
+	if v := os.Getenv("GITHINTS_INDEX_ENABLED"); v != "" {
+		cfg.Index.Enabled = truthy(v)
+	}
+	if v := os.Getenv("GITHINTS_INDEX_MAX_BYTES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Index.MaxBytes = n
+		}
+	}
+	if v := os.Getenv("GITHINTS_INDEX_MAX_FILE_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Index.MaxFileSize = n
+		}
+	}
+	if v := os.Getenv("GITHINTS_INDEX_PARSE_TIMEOUT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Index.ParseTimeoutMS = n
+		}
+	}
 }
 
 func truthy(s string) bool {
@@ -106,6 +152,24 @@ func truthy(s string) bool {
 		return true
 	}
 	return false
+}
+
+// validateIndex enforces the minimums that keep the indexer from
+// misbehaving. It is only called when index.enabled is true.
+func validateIndex(i Index) error {
+	if len(i.Languages) == 0 {
+		return fmt.Errorf("index.languages is empty; add at least one supported language")
+	}
+	if i.MaxBytes <= 0 {
+		return fmt.Errorf("index.max_bytes must be positive, got %d", i.MaxBytes)
+	}
+	if i.MaxFileSize <= 0 {
+		return fmt.Errorf("index.max_file_size must be positive, got %d", i.MaxFileSize)
+	}
+	if i.ParseTimeoutMS <= 0 {
+		return fmt.Errorf("index.parse_timeout_ms must be positive, got %d", i.ParseTimeoutMS)
+	}
+	return nil
 }
 
 // validateOllama enforces the local-only security boundary. It rejects
