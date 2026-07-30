@@ -239,19 +239,19 @@ func handleGetSessionContext(session *SessionTracker) server.ToolHandlerFunc {
 
 func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		file, err := requireString(req, "file")
+		file, err := req.RequireString("file")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if err := recorder.ValidateFilePath(file); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		summary, err := requireString(req, "summary")
+		summary, err := req.RequireString("summary")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		reason := optionalString(req, "reason")
-		agentID := optionalString(req, "agent_id")
+		reason := req.GetString("reason", "")
+		agentID := req.GetString("agent_id", "")
 
 		key, err := integrity.KeyFromRepo(root)
 		if err != nil {
@@ -274,14 +274,14 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 
 func handleFileHistory(st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		file, err := requireString(req, "file")
+		file, err := req.RequireString("file")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if err := recorder.ValidateFilePath(file); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		limit := clampLimit(optionalInt(req, "limit", 10), 10, 500)
+		limit := clampLimit(req.GetInt("limit", 10), 10, 500)
 
 		changes, err := st.FileHistory(file, limit)
 		if err != nil {
@@ -293,14 +293,14 @@ func handleFileHistory(st *store.Store) server.ToolHandlerFunc {
 
 func handleRecentChanges(st *store.Store, client *llm.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		limit := clampLimit(optionalInt(req, "limit", 20), 20, 500)
+		limit := clampLimit(req.GetInt("limit", 20), 20, 500)
 		changes, err := st.RecentChanges(limit)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		text := formatChanges(changes)
-		if !optionalBool(req, "summarize") || client == nil {
+		if !req.GetBool("summarize", false) || client == nil {
 			return mcp.NewToolResultText(text), nil
 		}
 
@@ -315,11 +315,11 @@ func handleRecentChanges(st *store.Store, client *llm.Client) server.ToolHandler
 
 func handleSearch(st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query, err := requireString(req, "query")
+		query, err := req.RequireString("query")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		limit := clampLimit(optionalInt(req, "limit", 20), 20, 500)
+		limit := clampLimit(req.GetInt("limit", 20), 20, 500)
 
 		changes, err := st.Search(query, limit)
 		if err != nil {
@@ -331,14 +331,14 @@ func handleSearch(st *store.Store) server.ToolHandlerFunc {
 
 func handleGetDiff(client *llm.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		file, err := requireString(req, "file")
+		file, err := req.RequireString("file")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if err := recorder.ValidateFilePath(file); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		hash := optionalString(req, "hash")
+		hash := req.GetString("hash", "")
 
 		diff, err := gitutil.FileDiff(hash, file)
 		if err != nil {
@@ -348,7 +348,7 @@ func handleGetDiff(client *llm.Client) server.ToolHandlerFunc {
 			return mcp.NewToolResultText("no changes"), nil
 		}
 
-		if !optionalBool(req, "summarize") || client == nil {
+		if !req.GetBool("summarize", false) || client == nil {
 			return mcp.NewToolResultText(diff), nil
 		}
 
@@ -363,16 +363,16 @@ func handleGetDiff(client *llm.Client) server.ToolHandlerFunc {
 
 func handleChangesInRange(st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		sinceStr, err := requireString(req, "since")
+		sinceStr, err := req.RequireString("since")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		untilStr, err := requireString(req, "until")
+		untilStr, err := req.RequireString("until")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		file := optionalString(req, "file")
-		limit := clampLimit(optionalInt(req, "limit", 50), 50, 500)
+		file := req.GetString("file", "")
+		limit := clampLimit(req.GetInt("limit", 50), 50, 500)
 
 		since, err := parseTimestamp(sinceStr)
 		if err != nil {
@@ -398,7 +398,7 @@ func handleChangesInRange(st *store.Store) server.ToolHandlerFunc {
 
 func handleRecordBatch(root string, st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		raw, ok := req.Params.Arguments["changes"]
+		raw, ok := req.GetArguments()["changes"]
 		if !ok {
 			return mcp.NewToolResultError("missing required argument: changes"), nil
 		}
@@ -414,7 +414,7 @@ func handleRecordBatch(root string, st *store.Store) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		agentID := optionalString(req, "agent_id")
+		agentID := req.GetString("agent_id", "")
 
 		inputs := make([]recorder.Input, 0, len(arr))
 		for i, item := range arr {
@@ -520,57 +520,6 @@ func shortHash(h string) string {
 	return h
 }
 
-// requireString reads a required string argument from the tool call.
-func requireString(req mcp.CallToolRequest, key string) (string, error) {
-	v, ok := req.Params.Arguments[key]
-	if !ok {
-		return "", fmt.Errorf("missing required argument: %s", key)
-	}
-	s, ok := v.(string)
-	if !ok {
-		return "", fmt.Errorf("argument %s must be a string", key)
-	}
-	return s, nil
-}
-
-// optionalString reads a non-required string arg, returning "" if absent.
-func optionalString(req mcp.CallToolRequest, key string) string {
-	v, ok := req.Params.Arguments[key]
-	if !ok {
-		return ""
-	}
-	s, _ := v.(string)
-	return s
-}
-
-// optionalInt reads a non-required numeric arg (MCP sends numbers as
-// float64), returning def if absent.
-func optionalInt(req mcp.CallToolRequest, key string, def int) int {
-	v, ok := req.Params.Arguments[key]
-	if !ok {
-		return def
-	}
-	f, ok := v.(float64)
-	if !ok {
-		return def
-	}
-	return int(f)
-}
-
-// optionalBool reads a non-required boolean arg (MCP sends booleans as
-// bool), returning false if absent.
-func optionalBool(req mcp.CallToolRequest, key string) bool {
-	v, ok := req.Params.Arguments[key]
-	if !ok {
-		return false
-	}
-	b, ok := v.(bool)
-	if !ok {
-		return false
-	}
-	return b
-}
-
 // clampLimit clamps a user-supplied limit to a sane range. Non-positive
 // values fall back to def; anything above max is capped at max.
 func clampLimit(n, def, max int) int {
@@ -596,14 +545,14 @@ func handleListSymbols(db *index.Store) server.ToolHandlerFunc {
 		if db == nil {
 			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
 		}
-		file, err := requireString(req, "file")
+		file, err := req.RequireString("file")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if err := recorder.ValidateFilePath(file); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		limit := clampLimit(optionalInt(req, "limit", 50), 50, 500)
+		limit := clampLimit(req.GetInt("limit", 50), 50, 500)
 
 		symbols, err := db.SymbolsForFile(file)
 		if err != nil {
@@ -637,11 +586,11 @@ func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 		if db == nil {
 			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
 		}
-		name, err := requireString(req, "name")
+		name, err := req.RequireString("name")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		limit := clampLimit(optionalInt(req, "limit", 20), 20, 500)
+		limit := clampLimit(req.GetInt("limit", 20), 20, 500)
 
 		matches, err := db.FindSymbolsByName(name)
 		if err != nil {
@@ -671,7 +620,7 @@ func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
 		if db == nil {
 			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
 		}
-		file, err := requireString(req, "file")
+		file, err := req.RequireString("file")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -709,7 +658,7 @@ func handleGetIndexSummary(db *index.Store) server.ToolHandlerFunc {
 		if db == nil {
 			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
 		}
-		limit := clampLimit(optionalInt(req, "limit", 10), 10, 100)
+		limit := clampLimit(req.GetInt("limit", 10), 10, 100)
 
 		meta, err := db.Meta()
 		if err != nil {
