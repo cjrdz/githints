@@ -48,9 +48,17 @@ func renderFileNote(db *Store, root, src string, obsidian bool) error {
 		return fmt.Errorf("load symbols: %w", err)
 	}
 
-	imports, err := db.FilesImporting(src)
-	if err != nil {
-		return fmt.Errorf("load dependents: %w", err)
+	// Dependents are stored by import path (Go module path, or the
+	// normalized TS-family file key), not by file path, so resolve before
+	// querying — the same lookup the get_dependents MCP tool does. When the
+	// path cannot be resolved (e.g. a Go file outside a module) no importer
+	// could reference it either, so the section is simply omitted.
+	var imports []lang.Import
+	if importPath, err := lang.LocalImportPath(root, src); err == nil {
+		imports, err = db.FilesImporting(importPath)
+		if err != nil {
+			return fmt.Errorf("load dependents: %w", err)
+		}
 	}
 
 	var b strings.Builder
