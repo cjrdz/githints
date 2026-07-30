@@ -320,8 +320,21 @@ func newTSSymbol(name string, kind SymbolKind, file, line string, idx, baseLine 
 // line: trimmed, cut at the opening brace, and capped in length.
 func tsSignature(line string) string {
 	sig := strings.TrimSpace(line)
-	if i := strings.Index(sig, "{"); i >= 0 {
+	// Cut at the block-opening brace, but ignore the '{' of a ${ template
+	// expression — cleaned template literals keep their delimiters balanced
+	// and cutting there would leave a dangling '$'.
+	for off := 0; ; {
+		i := strings.Index(sig[off:], "{")
+		if i < 0 {
+			break
+		}
+		i += off
+		if i > 0 && sig[i-1] == '$' {
+			off = i + 1
+			continue
+		}
 		sig = strings.TrimSpace(sig[:i])
+		break
 	}
 	sig = strings.Join(strings.Fields(sig), " ")
 	const maxSig = 200
@@ -499,6 +512,10 @@ func cleanTSLines(src []byte) []string {
 			if c == '\\' && i+1 < len(raw) {
 				i++ // skip escaped byte
 			} else if c == quote {
+				// Write the closing delimiter so cleaned lines keep strings
+				// balanced ("" rather than a dangling quote); contents stay
+				// blanked either way.
+				b.WriteByte(c)
 				state = tsStCode
 				prevSignificant = quote
 			}
@@ -506,6 +523,7 @@ func cleanTSLines(src []byte) []string {
 			if c == '\\' && i+1 < len(raw) {
 				i++
 			} else if c == '`' {
+				b.WriteByte(c) // keep the pair balanced, like quotes
 				state = tsStCode
 				prevSignificant = '`'
 			} else if c == '$' && i+1 < len(raw) && raw[i+1] == '{' {

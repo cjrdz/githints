@@ -79,7 +79,7 @@ func renderFileNote(db *Store, root, src string, obsidian bool) error {
 	if len(imports) > 0 {
 		b.WriteString("## Imported by\n\n")
 		for _, imp := range imports {
-			fmt.Fprintf(&b, "- %s\n", lang.FileLink(root, imp.FilePath, obsidian))
+			fmt.Fprintf(&b, "- %s\n", lang.NoteLink(indexDirOf(src), imp.FilePath, imp.FilePath, obsidian))
 		}
 		b.WriteString("\n")
 	}
@@ -133,8 +133,16 @@ func renderIndexRollup(db *Store, root string, obsidian bool) error {
 
 	if len(hubs) > 0 {
 		b.WriteString("\n## Most imported files (hubs)\n\n")
+		importToFile := resolveImportPaths(db, root)
 		for _, h := range hubs {
-			fmt.Fprintf(&b, "- %d import(s): %s\n", h.Dependents, lang.FileLink(root, h.File, obsidian))
+			if file, ok := importToFile[h.File]; ok {
+				// Hub entries are import paths; link them to the file's note.
+				fmt.Fprintf(&b, "- %d import(s): %s\n", h.Dependents, lang.NoteLink(".", h.File, file, obsidian))
+			} else {
+				// Stdlib packages, external modules, and unresolvable path
+				// aliases have no note to link to.
+				fmt.Fprintf(&b, "- %d import(s): `%s`\n", h.Dependents, h.File)
+			}
 		}
 	}
 
@@ -143,4 +151,35 @@ func renderIndexRollup(db *Store, root string, obsidian bool) error {
 		return fmt.Errorf("mkdir rollup dir: %w", err)
 	}
 	return os.WriteFile(roll, []byte(b.String()), 0o644)
+}
+
+// indexDirOf returns the directory, relative to .githints/, containing the
+// note for a repo-relative source file: "index" for root-level files,
+// "index/pkg/lib" for pkg/lib/lib.go. It is the fromDir for links rendered
+// in that note.
+func indexDirOf(src string) string {
+	return filepath.Join("index", filepath.Dir(src))
+}
+
+// resolveImportPaths maps the import path importers use (Go module path,
+// normalized TS file key) back to the indexed file providing it, so hub
+// entries — which are import paths, not files — can be linked to the file's
+// note. Files whose import path cannot be resolved are skipped; on
+// collisions the first file wins.
+func resolveImportPaths(db *Store, root string) map[string]string {
+	files, err := db.AllIndexedFiles()
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(files))
+	for _, f := range files {
+		importPath, err := lang.LocalImportPath(root, f)
+		if err != nil {
+			continue
+		}
+		if _, taken := m[importPath]; !taken {
+			m[importPath] = f
+		}
+	}
+	return m
 }

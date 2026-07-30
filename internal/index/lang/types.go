@@ -343,16 +343,50 @@ func EscapeMarkdown(s string) string {
 // In Obsidian mode the target is the note filename (src + ".md") with
 // URL-encoded [, ], and | characters so the wikilink boundary stays intact.
 // Pipe syntax is always used so the display text is the raw repo-relative path.
+//
+// New code should use NoteLink: its default-mode targets are relative to the
+// linking document and include the .md suffix, so they resolve to the actual
+// note file — this default-mode target resolves to nothing on disk.
 func FileLink(root, src string, obsidian bool) string {
 	if obsidian {
-		target := src + ".md"
-		// URL-encode only the characters that break wikilink syntax.
-		target = strings.ReplaceAll(target, "[", "%5B")
-		target = strings.ReplaceAll(target, "]", "%5D")
-		target = strings.ReplaceAll(target, "|", "%7C")
-		return fmt.Sprintf("[[%s|%s]]", target, src)
+		return NoteLink("", src, src, true)
 	}
 	return fmt.Sprintf("[%s](%s)", src, filepath.ToSlash(src))
+}
+
+// NoteLink returns a link, labeled display, to the index note for target (a
+// repo-relative source file). fromDir is the directory of the linking
+// document relative to .githints/ — "index/<dir of the note's source>" for
+// per-file notes, "." for the INDEX.md rollup — so the default markdown
+// target resolves to the real note file (e.g. "../../cmd/main.go.md").
+// Obsidian wikilinks are location-independent; fromDir is ignored there.
+func NoteLink(fromDir, display, target string, obsidian bool) string {
+	if obsidian {
+		t := target + ".md"
+		// URL-encode only the characters that break wikilink syntax.
+		t = strings.ReplaceAll(t, "[", "%5B")
+		t = strings.ReplaceAll(t, "]", "%5D")
+		t = strings.ReplaceAll(t, "|", "%7C")
+		return fmt.Sprintf("[[%s|%s]]", t, display)
+	}
+	rel, err := filepath.Rel(fromDir, filepath.Join("index", target+".md"))
+	if err != nil {
+		rel = filepath.Join("index", target+".md")
+	}
+	return fmt.Sprintf("[%s](%s)", display, encodeMarkdownTarget(filepath.ToSlash(rel)))
+}
+
+// encodeMarkdownTarget percent-encodes the characters that break markdown
+// inline-link targets: spaces, brackets, and parentheses.
+func encodeMarkdownTarget(s string) string {
+	r := strings.NewReplacer(
+		" ", "%20",
+		"[", "%5B",
+		"]", "%5D",
+		"(", "%28",
+		")", "%29",
+	)
+	return r.Replace(s)
 }
 
 // encodeLanguageCounts serializes a map to a comma-separated string.
