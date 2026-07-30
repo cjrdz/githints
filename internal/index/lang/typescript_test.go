@@ -355,3 +355,24 @@ func TestLocalImportPathTypeScript(t *testing.T) {
 		t.Error("expected error for .css")
 	}
 }
+
+// TestTypeScriptSignatureBlanksStringContents pins the signature-rendering
+// contract: string and template literal contents are blanked (no source
+// strings leak into the index), but delimiters stay balanced — signatures
+// must not dangle a quote or a '${'.
+func TestTypeScriptSignatureBlanksStringContents(t *testing.T) {
+	src := "export const VERSION = \"1.0\";\nconst tpl = `hi ${name} there`;\n"
+	p := TypeScriptParser{}
+	symbols, _, err := p.Parse("src/version.ts", []byte(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	version := findSymbol(t, symbols, "VERSION", KindConst)
+	if want := `export const VERSION = "";`; version.Signature != want {
+		t.Errorf("VERSION signature = %q, want %q", version.Signature, want)
+	}
+	tpl := findSymbol(t, symbols, "tpl", KindConst)
+	if want := "const tpl = `${name}`;"; tpl.Signature != want {
+		t.Errorf("tpl signature = %q, want %q", tpl.Signature, want)
+	}
+}

@@ -204,3 +204,35 @@ func TestEscapeLike(t *testing.T) {
 		t.Errorf("EscapeLike(foo_bar) = %q", got)
 	}
 }
+
+// TestNoteLinkDefaultResolvesToNoteFile pins the default-mode contract: the
+// link target is relative to the linking document and points at the actual
+// note file on disk (with .md suffix).
+func TestNoteLinkDefaultResolvesToNoteFile(t *testing.T) {
+	cases := []struct{ fromDir, display, target, want string }{
+		{"index/pkg/lib", "cmd/main.go", "cmd/main.go", "[cmd/main.go](../../cmd/main.go.md)"},
+		{"index/src", "src/main.ts", "src/main.ts", "[src/main.ts](main.ts.md)"},
+		{"index", "a.go", "a.go", "[a.go](a.go.md)"},
+		{".", "example.com/m/pkg/lib", "pkg/lib/lib.go", "[example.com/m/pkg/lib](index/pkg/lib/lib.go.md)"},
+	}
+	for _, tc := range cases {
+		if got := NoteLink(tc.fromDir, tc.display, tc.target, false); got != tc.want {
+			t.Errorf("NoteLink(%q, %q, %q) = %q, want %q", tc.fromDir, tc.display, tc.target, got, tc.want)
+		}
+	}
+}
+
+func TestNoteLinkDefaultEncodesTarget(t *testing.T) {
+	got := NoteLink("index", "file[weird].go", "file[weird].go", false)
+	want := "[file[weird].go](file%5Bweird%5D.go.md)"
+	if got != want {
+		t.Errorf("NoteLink = %q, want %q", got, want)
+	}
+}
+
+func TestNoteLinkObsidianIgnoresFromDir(t *testing.T) {
+	got := NoteLink("index/pkg", "label", "dir/b.go", true)
+	if want := "[[dir/b.go.md|label]]"; got != want {
+		t.Errorf("NoteLink = %q, want %q", got, want)
+	}
+}

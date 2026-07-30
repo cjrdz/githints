@@ -258,7 +258,7 @@ func TestFullScanRendersImportedBy(t *testing.T) {
 	}
 	write("go.mod", "module example.com/m\n\ngo 1.23\n")
 	write("pkg/lib/lib.go", "package lib\n\nfunc Helper() {}\n")
-	write("cmd/main.go", "package main\n\nimport \"example.com/m/pkg/lib\"\n\nfunc main() { lib.Helper() }\n")
+	write("cmd/main.go", "package main\n\nimport (\n\t\"fmt\"\n\t\"example.com/m/pkg/lib\"\n)\n\nfunc main() { fmt.Println(lib.Helper) }\n")
 	write("src/helper.ts", "export function helper(name: string): string {\n  return name;\n}\n")
 	write("src/main.ts", "import { helper } from \"./helper\";\n\nexport const msg = helper(\"x\");\n")
 	// Minimal .git so check-ignore works (same fixture as TestFullScanIndexesGo).
@@ -288,9 +288,35 @@ func TestFullScanRendersImportedBy(t *testing.T) {
 	if !strings.Contains(goNote, "## Imported by") || !strings.Contains(goNote, "cmd/main.go") {
 		t.Errorf("Go note missing Imported by section:\n%s", goNote)
 	}
+	if !strings.Contains(goNote, "](../../cmd/main.go.md)") {
+		t.Errorf("Go note Imported by link does not resolve to the note file:\n%s", goNote)
+	}
 	tsNote := read("src/helper.ts")
 	if !strings.Contains(tsNote, "## Imported by") || !strings.Contains(tsNote, "src/main.ts") {
 		t.Errorf("TS note missing Imported by section:\n%s", tsNote)
+	}
+	if !strings.Contains(tsNote, "](main.ts.md)") {
+		t.Errorf("TS note Imported by link does not resolve to the note file:\n%s", tsNote)
+	}
+
+	// The rollup links hubs that map to an indexed file to that file's note,
+	// and renders hubs with no file (stdlib, external packages) as plain text.
+	rollData, err := os.ReadFile(lang.IndexRollupPath(root))
+	if err != nil {
+		t.Fatalf("read rollup: %v", err)
+	}
+	roll := string(rollData)
+	for _, want := range []string{
+		"[example.com/m/pkg/lib](index/pkg/lib/lib.go.md)",
+		"[src/helper](index/src/helper.ts.md)",
+		"`fmt`",
+	} {
+		if !strings.Contains(roll, want) {
+			t.Errorf("rollup missing %q:\n%s", want, roll)
+		}
+	}
+	if strings.Contains(roll, "[fmt]") {
+		t.Errorf("stdlib hub should not be a link:\n%s", roll)
 	}
 }
 

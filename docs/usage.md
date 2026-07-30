@@ -279,6 +279,16 @@ TypeScript-family notes:
   relative-import edges.
 - Function-body locals are intentionally skipped to keep test files out of
   the index.
+- String, template, and regex contents are blanked in stored signatures, so
+  source strings never leak into the index; delimiters stay balanced for
+  readability.
+
+Note links: in default mode, links in the per-file notes and the `INDEX.md`
+rollup point at the note files themselves (`.md` targets, relative to the
+linking document). Hubs that have no corresponding indexed file — stdlib
+packages, external modules, unresolvable path aliases — render as plain
+text. With `obsidian_wikilinks` enabled, links render as `[[wikilinks]]`
+instead.
 
 Environment overrides: `GITHINTS_INDEX_ENABLED`,
 `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
