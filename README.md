@@ -14,7 +14,7 @@ without special tooling.
 ## Quick start
 
 ```sh
-# Install (requires Go 1.23+)
+# Install (requires Go 1.25.5+)
 go install github.com/cjrdz/githints@latest
 
 # Or build from source

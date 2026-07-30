@@ -4,7 +4,7 @@ How to install, set up, and use githints day-to-day.
 
 ## Install
 
-Requires Go 1.23+. Supported platforms: Linux, macOS, Windows.
+Requires Go 1.25.5+. Supported platforms: Linux, macOS, Windows.
 
 ```sh
 # One-command install

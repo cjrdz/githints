@@ -14,7 +14,7 @@ codebase is still taking shape.
 ### Dependency risk tracking
 
 `mark3labs/mcp-go` is the de facto Go MCP SDK but is currently pre-1.0
-(v0.27.0). Track its releases and be ready for API changes when upgrading.
+(v0.57.0). Track its releases and be ready for API changes when upgrading.
 
 ## Medium term
 
