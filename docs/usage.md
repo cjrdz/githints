@@ -179,7 +179,7 @@ githints rotate-salt
 ## Structural index and the Obsidian graph view
 
 githints maintains a **structural index** alongside the change log: a derived,
-regenerable SQLite cache (`.githints/index.db`) of every Go symbol and import
+regenerable SQLite cache (`.githints/index.db`) of every symbol and import
 in the repo, plus one markdown note per file under `.githints/index/` and a
 rollup at `.githints/INDEX.md`.
 
@@ -250,7 +250,7 @@ The `index` section of `.githints/config.json` controls indexing:
 {
   "index": {
     "enabled": true,
-    "languages": ["go"],
+    "languages": ["go", "typescript", "svelte", "astro"],
     "max_bytes": 209715200,
     "max_file_size": 1048576,
     "parse_timeout_ms": 5000,
@@ -258,6 +258,27 @@ The `index` section of `.githints/config.json` controls indexing:
   }
 }
 ```
+
+`languages` defaults to `["go"]` and can only select from the parsers compiled
+into the binary:
+
+| Language | Extensions | Parser |
+|----------|-----------|--------|
+| `go` | `.go` | stdlib `go/parser` (exact) |
+| `typescript` | `.ts` `.tsx` `.mts` `.cts` `.js` `.jsx` `.mjs` `.cjs` | heuristic, stdlib-only |
+| `svelte` | `.svelte` (`<script>` blocks) | heuristic, via the TypeScript parser |
+| `astro` | `.astro` (frontmatter + `<script>` blocks) | heuristic, via the TypeScript parser |
+
+TypeScript-family notes:
+
+- Relative imports (`./x`, `../x`) are resolved to repo-relative file keys —
+  extension and trailing `/index` stripped — so `get_dependents(file=...)` and
+  the "Imported by" note sections work across `.ts`/`.svelte`/`.astro` files.
+- Package specifiers (`svelte`, `astro`) and tsconfig path aliases (`@core/x`)
+  are stored raw and never resolve to files, so `get_dependents` only sees
+  relative-import edges.
+- Function-body locals are intentionally skipped to keep test files out of
+  the index.
 
 Environment overrides: `GITHINTS_INDEX_ENABLED`,
 `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,

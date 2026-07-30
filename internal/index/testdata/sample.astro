@@ -1,0 +1,31 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { getProducts } from "@features/catalog/lib/api";
+import type { Product } from "../types/product";
+
+export interface PageProps {
+	title: string;
+}
+
+const { title } = Astro.props;
+
+const products: Product[] = await getProducts();
+
+export function formatTitle(raw: string): string {
+	return `${raw} — Ishos`;
+}
+---
+
+<BaseLayout title={formatTitle(title)}>
+	<ul>
+		{products.map((p) => <li>{p.name}</li>)}
+	</ul>
+</BaseLayout>
+
+<script>
+	import { trackView } from "../lib/analytics";
+
+	const page = document.title;
+
+	trackView(page);
+</script>

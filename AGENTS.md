@@ -120,6 +120,15 @@ rebuild it at any time.
 The index is updated automatically by the post-commit hook when indexing is
 enabled (default) in `.githints/config.json`.
 
+Supported languages: `go` (exact, via `go/parser`), `typescript` (also covers
+`.js`/`.jsx`/`.mts`/`.cts` variants), `svelte`, and `astro` (heuristic,
+stdlib-only parsers). A repo selects from these via `index.languages` in
+`.githints/config.json` (default `["go"]`). Adding a language means one new
+file under `internal/index/lang/` implementing `LanguageParser`, registered in
+`NewRegistry()`; TypeScript-family import resolution lives in
+`typescript.go` (`tsFileKey`, `resolveTSImport`) and `LocalImportPath` in
+`types.go`.
+
 ## Regenerating markdown
 
 If the rendered markdown diverges from the store (for example, after resolving

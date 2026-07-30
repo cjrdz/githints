@@ -41,8 +41,10 @@ Then wire `githints serve` into your project-scoped MCP config. See
   staged files lack a pending record.
 - **Tamper-evident log**: each row is HMAC-chained, `recorded_at` is
   monotonically checked, and a per-commit Merkle root is stored as a git note.
-- **Structural index**: a separate, regenerable cache of Go symbols and imports
-  (`.githints/index.db`) refreshed incrementally on every commit. MCP tools
+- **Structural index**: a separate, regenerable cache of symbols and imports
+  (`.githints/index.db`) refreshed incrementally on every commit. Supported
+  languages: Go (via `go/parser`), plus TypeScript/JavaScript, Svelte, and
+  Astro (via built-in heuristic parsers). MCP tools
   (`list_symbols`, `find_symbol`, `get_dependents`, `get_index_summary`) answer
   "what's in this file?" and "what breaks if I change it?" — and
   `githints index --obsidian` renders file-level wikilinks you can open as an
