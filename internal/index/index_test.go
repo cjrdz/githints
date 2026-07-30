@@ -236,6 +236,64 @@ func (a *App) Run() error { return nil }
 	}
 }
 
+// TestFullScanRendersImportedBy proves the per-file note's "Imported by"
+// section reflects real importers. Dependents are stored by import path (Go
+// module path, normalized TS file key), not by file path; the renderer used
+// to query by raw file path, which silently matched nothing, so the section
+// never appeared for any language.
+func TestFullScanRendersImportedBy(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("go.mod", "module example.com/m\n\ngo 1.23\n")
+	write("pkg/lib/lib.go", "package lib\n\nfunc Helper() {}\n")
+	write("cmd/main.go", "package main\n\nimport \"example.com/m/pkg/lib\"\n\nfunc main() { lib.Helper() }\n")
+	write("src/helper.ts", "export function helper(name: string): string {\n  return name;\n}\n")
+	write("src/main.ts", "import { helper } from \"./helper\";\n\nexport const msg = helper(\"x\");\n")
+	// Minimal .git so check-ignore works (same fixture as TestFullScanIndexesGo).
+	write(".git/HEAD", "ref: refs/heads/main\n")
+	write(".git/config", "[core]\n\trepositoryformatversion = 0\n")
+	if err := os.MkdirAll(filepath.Join(root, ".git", "objects"), 0o755); err != nil {
+		t.Fatalf("mkdir objects: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git", "refs"), 0o755); err != nil {
+		t.Fatalf("mkdir refs: %v", err)
+	}
+
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go", "typescript"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	read := func(rel string) string {
+		t.Helper()
+		data, err := os.ReadFile(lang.NotePath(root, rel))
+		if err != nil {
+			t.Fatalf("read note %s: %v", rel, err)
+		}
+		return string(data)
+	}
+
+	goNote := read("pkg/lib/lib.go")
+	if !strings.Contains(goNote, "## Imported by") || !strings.Contains(goNote, "cmd/main.go") {
+		t.Errorf("Go note missing Imported by section:\n%s", goNote)
+	}
+	tsNote := read("src/helper.ts")
+	if !strings.Contains(tsNote, "## Imported by") || !strings.Contains(tsNote, "src/main.ts") {
+		t.Errorf("TS note missing Imported by section:\n%s", tsNote)
+	}
+}
+
 func TestFullScanSkipsIgnoredFiles(t *testing.T) {
 	st, dir := tempStore(t)
 	defer st.Close()
@@ -421,8 +479,11 @@ func TestFullScanObsidianWikilinks(t *testing.T) {
 
 	root := filepath.Join(dir, "repo")
 	initGitRepo(t, root)
+	// The renderer resolves a file to its module import path before looking up
+	// dependents, so the fixture needs a go.mod and a real module-path import.
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.23\n")
 	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
-	writeGo(t, root, "b.go", "package main\nimport \"a.go\"\nfunc B() {}\n")
+	writeGo(t, root, "b.go", "package main\nimport \"example.com/m\"\nfunc B() {}\n")
 
 	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second, Obsidian: true}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)
@@ -445,8 +506,9 @@ func TestFullScanObsidianEscapesBracketsInFilename(t *testing.T) {
 	root := filepath.Join(dir, "repo")
 	initGitRepo(t, root)
 	// File name with brackets breaks wikilink syntax; the target must be URL-encoded.
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.23\n")
 	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
-	writeGo(t, root, "file[weird].go", "package main\nimport \"a.go\"\nfunc Weird() {}\n")
+	writeGo(t, root, "file[weird].go", "package main\nimport \"example.com/m\"\nfunc Weird() {}\n")
 
 	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second, Obsidian: true}, false, 0); err != nil {
 		t.Fatalf("FullScan: %v", err)

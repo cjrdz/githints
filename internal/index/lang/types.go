@@ -70,6 +70,9 @@ func NewRegistry() *Registry {
 		byExt:   make(map[string]LanguageParser),
 	}
 	r.register(GoParser{})
+	r.register(TypeScriptParser{})
+	r.register(SvelteParser{})
+	r.register(AstroParser{})
 	return r
 }
 
@@ -177,13 +180,17 @@ type ScanOptions struct {
 
 // LocalImportPath returns the in-repo import path for a source file. For Go
 // files this is the module path from go.mod joined with the file's directory.
-// If the file is not under a Go module or the language cannot be determined,
-// it returns an error. This is used by the get_dependents MCP tool to map a
-// repo-relative file path back to the import path other files use to import it.
+// For TypeScript-family files (.ts/.tsx/.js/.../.svelte/.astro) it is the
+// normalized file key that importers resolve to: the repo-relative path with
+// the code extension and a trailing "/index" stripped, matching how the
+// TypeScript parser stores relative import specifiers. If the language cannot
+// be determined, it returns an error. This is used by the get_dependents MCP
+// tool to map a repo-relative file path back to the import path other files
+// use to import it.
 func LocalImportPath(root, file string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(file))
-	switch ext {
-	case ".go":
+	switch {
+	case ext == ".go":
 		module, err := readModulePath(root)
 		if err != nil {
 			return "", fmt.Errorf("read module path: %w", err)
@@ -193,6 +200,8 @@ func LocalImportPath(root, file string) (string, error) {
 			return module, nil
 		}
 		return module + "/" + dir, nil
+	case isTSCodeExtension(ext):
+		return tsFileKey(filepath.ToSlash(file)), nil
 	}
 	return "", fmt.Errorf("unsupported language for import path resolution: %s", ext)
 }

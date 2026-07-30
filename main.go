@@ -690,6 +690,9 @@ func cmdRender() error {
 // .githints/INDEX.md rollup. It never touches the integrity-verified hint
 // markdown or CHANGES.md.
 func cmdIndex(args []string) error {
+	if len(args) > 0 && args[0] == "status" {
+		return cmdIndexStatus(args[1:])
+	}
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
 	obsidian := fs.Bool("obsidian", false, "render Obsidian wikilinks in index notes")

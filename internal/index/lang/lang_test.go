@@ -107,20 +107,29 @@ func TestGoParserHandlesEmptyFile(t *testing.T) {
 
 func TestRegistry(t *testing.T) {
 	r := NewRegistry()
-	if got := r.Languages(); len(got) != 1 || got[0] != "go" {
-		t.Errorf("Languages = %v", got)
+	got := r.Languages()
+	if len(got) != 4 {
+		t.Errorf("Languages = %v, want 4 languages", got)
 	}
-	if p := r.ForLanguage("go"); p == nil {
-		t.Error("ForLanguage(go) = nil")
-	}
-	if p := r.ForLanguage("typescript"); p != nil {
-		t.Error("ForLanguage(typescript) should be nil")
+	for _, name := range []string{"go", "typescript", "svelte", "astro"} {
+		if p := r.ForLanguage(name); p == nil {
+			t.Errorf("ForLanguage(%s) = nil", name)
+		}
 	}
 	if p := r.ForPath("foo.go"); p == nil {
 		t.Error("ForPath(foo.go) = nil")
 	}
-	if p := r.ForPath("foo.ts"); p != nil {
-		t.Error("ForPath(foo.ts) should be nil")
+	if p := r.ForPath("foo.ts"); p == nil {
+		t.Error("ForPath(foo.ts) = nil")
+	}
+	if p := r.ForPath("foo.svelte"); p == nil {
+		t.Error("ForPath(foo.svelte) = nil")
+	}
+	if p := r.ForPath("foo.astro"); p == nil {
+		t.Error("ForPath(foo.astro) = nil")
+	}
+	if p := r.ForLanguage("rust"); p != nil {
+		t.Error("ForLanguage(rust) should be nil")
 	}
 
 	parsers, err := r.ResolveLanguages([]string{"go"})
@@ -130,7 +139,14 @@ func TestRegistry(t *testing.T) {
 	if len(parsers) != 1 {
 		t.Fatalf("parsers = %d", len(parsers))
 	}
-	if _, err := r.ResolveLanguages([]string{"go", "typescript"}); err == nil {
+	parsers, err = r.ResolveLanguages([]string{"typescript", "svelte", "astro"})
+	if err != nil {
+		t.Fatalf("ResolveLanguages: %v", err)
+	}
+	if len(parsers) != 3 {
+		t.Fatalf("parsers = %d", len(parsers))
+	}
+	if _, err := r.ResolveLanguages([]string{"go", "rust"}); err == nil {
 		t.Error("expected unsupported language error")
 	}
 }
