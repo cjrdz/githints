@@ -1,0 +1,10 @@
+.githints/
+githints
+*.exe
+opencode.json
+.mcp.json
+
+
+# >>> githints (managed)
+.githints/
+# <<< githints (managed)

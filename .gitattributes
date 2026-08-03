@@ -1,0 +1,17 @@
+# Force LF line endings for source and config files so that gofmt and other
+# tooling behave the same on Linux, macOS, and Windows.
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.sh text eol=lf
+
+# Binary files should never be normalized.
+*.db binary
+*.salt binary
+*.exe binary
+*.tar.gz binary
+*.zip binary
