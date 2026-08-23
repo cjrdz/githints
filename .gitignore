@@ -4,6 +4,9 @@ githints
 opencode.json
 .mcp.json
 
+# goreleaser build output, written by a local `goreleaser release --snapshot`
+dist/
+
 
 # >>> githints (managed)
 .githints/
