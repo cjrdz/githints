@@ -4,7 +4,7 @@ How to install, set up, and use githints day-to-day.
 
 ## Install
 
-Requires Go 1.25.5+. Supported platforms: Linux, macOS, Windows.
+Requires Go 1.25.14+. Supported platforms: Linux, macOS, Windows.
 
 ```sh
 # One-command install
@@ -40,10 +40,32 @@ Add `.githints/` to `.gitignore`:
 The generated `.md` files are useful to read, but they can always be
 regenerated from `store.db`, so they do not need to be committed.
 
+## Agent instruction files
+
+Registering the MCP server makes the tools *available*; it does not tell the
+agent to use them. That comes from the repo's instruction file, and different
+clients read different filenames:
+
+| File | Read by |
+| --- | --- |
+| `AGENTS.md` | opencode, Codex CLI, Gemini CLI, Cursor |
+| `CLAUDE.md` | Claude Code (it does **not** read `AGENTS.md`) |
+
+`githints init` writes a managed block into both, bracketed by
+`<!-- >>> githints (managed) -->` and `<!-- <<< githints (managed) -->`. The
+`CLAUDE.md` block is just `@AGENTS.md`, so the rules live in one place. Content
+outside the markers is never touched, and re-running `init` updates the block in
+place.
+
+The server also sends a condensed form of the same rules in the MCP
+`instructions` field, which reaches any compliant client at connect time. That
+is a backstop — clients surface `instructions` inconsistently, so the files are
+what you should rely on.
+
 ## Agent integration
 
-`githints serve` is a stdio MCP server. It resolves the repo root from its
-current working directory, so use a **project-scoped** MCP config.
+`githints serve` is a stdio MCP server. By default it resolves the repo root
+from its working directory, so a **project-scoped** config is simplest.
 
 ### Claude Code
 
@@ -77,6 +99,48 @@ Create `opencode.json` in the repo root:
 ```
 
 If the binary is not on your `PATH`, use `"command": ["./githints", "serve"]`.
+
+### Codex CLI
+
+Codex's config is global (`~/.codex/config.toml`), not per-project, so pin the
+repo explicitly. The quickest route:
+
+```sh
+codex mcp add githints -- githints serve -root=/path/to/your/repo
+```
+
+Or write the table yourself:
+
+```toml
+[mcp_servers.githints]
+command = "githints"
+args = ["serve"]
+cwd = "/path/to/your/repo"
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+```
+
+Verify with `codex mcp list`.
+
+### Pinning the repo root
+
+Any client that launches the server from somewhere other than the repo needs
+the root pinned, either way round:
+
+```sh
+githints serve -root=/path/to/repo             # flag
+GITHINTS_ROOT=/path/to/repo githints serve     # environment
+```
+
+Precedence is flag, then environment, then working directory.
+
+### Other MCP clients
+
+Anything that speaks MCP over stdio works — Gemini CLI (`.gemini/settings.json`),
+Cursor (`.cursor/mcp.json`), Cline, Zed, and so on. All of them need the same
+two things: a `command`/`args` pair pointing at `githints serve`, and a root that
+resolves to your repo. Nothing is written to stdout except JSON-RPC, so no client
+needs special handling.
 
 ## Daily workflow
 
@@ -119,7 +183,14 @@ Settings can also be overridden with environment variables:
 - `GITHINTS_OLLAMA_MAX_DIFF_BYTES`
 
 The endpoint must resolve to a loopback address. To point it at a non-loopback
-address, set `GITHINTS_OLLAMA_ALLOW_NON_LOOPBACK=1`.
+address, set `GITHINTS_OLLAMA_ALLOW_NON_LOOPBACK=1`. The check runs twice: once
+when the config loads, and again on the address actually dialed, so a hostname
+that changes its answer between those two moments cannot slip past.
+
+Because `config.json` lives in the repository, it can arrive in a clone. If a
+repo-supplied config enables Ollama, githints says so on stderr — the local-only
+boundary still holds, but a hostile repo could otherwise choose which localhost
+port receives your diffs.
 
 When enabled:
 

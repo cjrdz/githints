@@ -33,6 +33,11 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# One SBOM per archive, so consumers can see the dependency set a binary was
+# built from without reconstructing it from go.mod.
+sboms:
+  - artifacts: archive
+
 snapshot:
   name_template: "{{ .Tag }}-next"
 

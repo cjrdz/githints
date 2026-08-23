@@ -120,13 +120,9 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 			meta.LanguageCounts[parser.Language()]++
 			meta.FileCount++
 			meta.SymbolCount += len(symbols)
-			for i := range symbols {
-				allSymbols = append(allSymbols, symbols[i])
-			}
+			allSymbols = append(allSymbols, symbols...)
 		}
-		for i := range imports {
-			allImports = append(allImports, imports[i])
-		}
+		allImports = append(allImports, imports...)
 
 		return nil
 	})

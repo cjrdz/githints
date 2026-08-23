@@ -13,6 +13,40 @@ import (
 	"github.com/cjrdz/githints/internal/config"
 )
 
+// config.Load validates the endpoint at load time, but the request resolves it
+// again at dial time. The dialer is the last point before the packet leaves, so
+// the loopback rule is enforced there too. Literal IPs need no DNS, which keeps
+// this test offline and deterministic.
+func TestLoopbackDialerRefusesRoutableAddresses(t *testing.T) {
+	dial := loopbackDialer(false)
+
+	if _, err := dial(context.Background(), "tcp", "93.184.216.34:80"); err == nil {
+		t.Error("dialer allowed a routable address")
+	} else if !strings.Contains(err.Error(), "non-loopback") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// The documented override must still work.
+	allowed := loopbackDialer(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // do not actually leave the machine
+	if _, err := allowed(ctx, "tcp", "93.184.216.34:80"); err == nil {
+		t.Error("expected the cancelled context to stop the dial")
+	} else if strings.Contains(err.Error(), "non-loopback") {
+		t.Errorf("override did not bypass the loopback check: %v", err)
+	}
+}
+
+func TestLoopbackDialerAllowsLoopback(t *testing.T) {
+	// A closed loopback port still proves the check passed: the error must be
+	// a connection failure, not a refusal.
+	if _, err := loopbackDialer(false)(context.Background(), "tcp", "127.0.0.1:1"); err != nil {
+		if strings.Contains(err.Error(), "non-loopback") {
+			t.Errorf("loopback address was refused: %v", err)
+		}
+	}
+}
+
 func TestNewClientReturnsNilWhenDisabled(t *testing.T) {
 	cfg := config.Default()
 	client, err := NewClient(cfg)

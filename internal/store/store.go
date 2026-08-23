@@ -210,23 +210,52 @@ func applyMigrations(db *sql.DB) error {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// Insert records one change row and returns its id. It also checks for a
-// backward recorded_at jump and sets clock_tamper_warning if one is found.
-func (s *Store) Insert(c Change) (int64, error) {
+// CheckClockTamper reports whether recordedAt is a suspicious backward jump
+// from the highest timestamp seen so far, and advances that high-water mark.
+//
+// This used to live inside Insert, which meant the flag was decided *after*
+// the caller had already computed the row's HMAC — so clock_tamper_warning was
+// never covered by the integrity chain and flipping it to 0 in the database
+// erased the evidence while `githints verify` still reported a clean chain.
+// Callers must now call this before signing, and pass the result through as
+// Change.ClockTamperWarning so the flag is part of the signed payload.
+func (s *Store) CheckClockTamper(recordedAt int64) bool {
 	s.mu.Lock()
-	warning := c.RecordedAt != 0 && s.lastRecordedAt != 0 && c.RecordedAt < s.lastRecordedAt-ClockSkewTolerance
-	if c.RecordedAt > s.lastRecordedAt {
-		s.lastRecordedAt = c.RecordedAt
+	warning := recordedAt != 0 && s.lastRecordedAt != 0 && recordedAt < s.lastRecordedAt-ClockSkewTolerance
+	// Snapshot the delta inside the critical section; reading lastRecordedAt
+	// after unlocking was a data race and could report the wrong number.
+	delta := s.lastRecordedAt - recordedAt
+	if recordedAt > s.lastRecordedAt {
+		s.lastRecordedAt = recordedAt
 	}
 	s.mu.Unlock()
 
 	if warning {
 		fmt.Fprintf(os.Stderr,
 			"githints: WARNING: recorded_at jumped backward by %d seconds — possible clock tamper; row flagged\n",
-			s.lastRecordedAt-c.RecordedAt)
+			delta)
 	}
+	return warning
+}
 
-	if err := metaSet(s.db, "last_recorded_at", strconv.FormatInt(s.lastRecordedAt, 10)); err != nil {
+// advanceClock raises the high-water timestamp to recordedAt if it is newer,
+// and returns the resulting value. It is monotonic, so calling it after
+// CheckClockTamper has already advanced the mark is a no-op — which is what
+// lets Insert stay correct whether or not the caller ran the tamper check.
+func (s *Store) advanceClock(recordedAt int64) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if recordedAt > s.lastRecordedAt {
+		s.lastRecordedAt = recordedAt
+	}
+	return s.lastRecordedAt
+}
+
+// Insert records one change row and returns its id. c.ClockTamperWarning is
+// persisted as given — callers determine it via CheckClockTamper before
+// computing the row's HMAC, so the flag is signed.
+func (s *Store) Insert(c Change) (int64, error) {
+	if err := metaSet(s.db, "last_recorded_at", strconv.FormatInt(s.advanceClock(c.RecordedAt), 10)); err != nil {
 		return 0, fmt.Errorf("update meta: %w", err)
 	}
 
@@ -234,7 +263,7 @@ func (s *Store) Insert(c Change) (int64, error) {
 		`INSERT INTO changes (file_path, commit_hash, branch, source, summary, reason, diff_stat, diff_hash, agent_id, recorded_at, hmac, prev_hmac, clock_tamper_warning)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.FilePath, c.CommitHash, c.Branch, c.Source, c.Summary, c.Reason, c.DiffStat, c.DiffHash,
-		c.AgentID, c.RecordedAt, c.HMAC, c.PrevHMAC, boolToInt(warning),
+		c.AgentID, c.RecordedAt, c.HMAC, c.PrevHMAC, boolToInt(c.ClockTamperWarning),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert change: %w", err)
@@ -319,29 +348,6 @@ func (s *Store) AllChanges() ([]Change, error) {
 	)
 }
 
-// HasAgentRecordForCommit reports whether an agent already recorded this
-// file for this commit, so the post-commit hook can skip it and avoid a
-// duplicate, lower-quality "hook" entry.
-func (s *Store) HasAgentRecordForCommit(filePath, commitHash string) (bool, error) {
-	var n int
-	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM changes WHERE file_path = ? AND commit_hash = ? AND source = 'agent'`,
-		filePath, commitHash,
-	).Scan(&n)
-	return n > 0, err
-}
-
-// AgentRecordsForCommit returns the agent-recorded rows for one file in one
-// commit. The hook uses these to compare aggregated diff stats and decide
-// whether a manual tweak happened after the agent's record_change call.
-func (s *Store) AgentRecordsForCommit(filePath, commitHash string) ([]Change, error) {
-	return s.query(
-		`SELECT id, file_path, COALESCE(commit_hash,''), COALESCE(branch,''), source, summary, COALESCE(reason,''), COALESCE(diff_stat,''), COALESCE(diff_hash,''), COALESCE(agent_id,''), recorded_at, COALESCE(hmac,''), COALESCE(prev_hmac,''), clock_tamper_warning, created_at
-		 FROM changes WHERE file_path = ? AND commit_hash = ? AND source = 'agent'`,
-		filePath, commitHash,
-	)
-}
-
 // HasPendingAgentRecord reports whether there is at least one agent-recorded
 // row for filePath that is still pending (commit_hash empty). The pre-commit
 // hook uses this to flag staged files the agent forgot to record_change.
@@ -354,24 +360,6 @@ func (s *Store) HasPendingAgentRecord(filePath string) (bool, error) {
 		filePath,
 	).Scan(&n)
 	return n > 0, err
-}
-
-// ClaimPending assigns commitHash to any agent-recorded rows for filePath
-// that are still "pending" (recorded before any commit existed for them,
-// commit_hash = ”). Call this for every changed file as the first step
-// of the post-commit hook, before checking HasAgentRecordForCommit — it's
-// what lets a record_change call made pre-commit still match up with the
-// commit that ends up containing it.
-func (s *Store) ClaimPending(filePath, commitHash string) (int64, error) {
-	res, err := s.db.Exec(
-		`UPDATE changes SET commit_hash = ?
-		 WHERE file_path = ? AND source = 'agent' AND (commit_hash = '' OR commit_hash IS NULL)`,
-		commitHash, filePath,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("claim pending rows for %s: %w", filePath, err)
-	}
-	return res.RowsAffected()
 }
 
 func (s *Store) query(q string, args ...any) ([]Change, error) {

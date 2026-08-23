@@ -5,19 +5,32 @@
 package recorder
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"time"
 
 	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/hint"
 	"github.com/cjrdz/githints/internal/integrity"
+	"github.com/cjrdz/githints/internal/secrets"
 	"github.com/cjrdz/githints/internal/store"
 )
 
 const HistoryLimitPerFile = 20
 const ChangelogLimit = 100
+
+// Caps on agent-supplied text and batch size. Nothing between an MCP argument
+// and SQLite bounded these before: an oversized summary is stored, re-rendered
+// into the per-file hint on every subsequent record for that file, echoed into
+// CHANGES.md, and re-read whole by the markdown verifier — unbounded write
+// amplification from one string. Enforced here, in the shared write path, so
+// the same limit covers the MCP tools and the CLI.
+const (
+	MaxSummaryLen = 4000
+	MaxReasonLen  = 4000
+	MaxBatchSize  = 100
+)
 
 type Input struct {
 	FilePath   string
@@ -29,7 +42,7 @@ type Input struct {
 	CommitHash string // leave empty for agent calls — record_change fires
 	// before the commit exists. The row stays "pending" (shown as
 	// "uncommitted") until the post-commit hook claims it via
-	// store.ClaimPending. Hook calls pass the real, already-known hash.
+	// store.ClaimPendingTx. Hook calls pass the real, already-known hash.
 	Branch     string // optional override; auto-populated from CurrentBranch when empty
 	AgentID    string
 	RecordedAt int64
@@ -43,22 +56,9 @@ var validSources = map[string]bool{
 	"fallback": true,
 }
 
-// secretPatterns are the high-signal credential shapes githints refuses to
-// record verbatim. They intentionally err on the side of few, well-known
-// shapes: false positives would block legitimate summaries, while the goal
-// is just to stop the obvious leak vectors (AWS keys, GitHub PATs, private
-// keys, JWTs). The check is a defense-in-depth backstop — it is not a
-// substitute for proper secret management.
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),          // AWS access key id
-	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{36}`), // GitHub PAT / fine-grained / app / refresh
-	regexp.MustCompile(`-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----`),
-	regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.`), // JWT header.payload.
-}
-
 // SecretScanResult describes whether text matched a known secret pattern
-// and, if so, which kind. Returned by HasSecrets so callers can surface a
-// useful message instead of just "rejected".
+// and, if so, which kind, so callers can surface a useful message instead of
+// just "rejected".
 type SecretScanResult struct {
 	Matched bool
 	Pattern string
@@ -66,13 +66,11 @@ type SecretScanResult struct {
 
 // ScanSecrets checks text against the known secret patterns. The pattern
 // field is the regex source of the first match, or "" when nothing matched.
+// The pattern list lives in internal/secrets so this check and the diff
+// scrubber in internal/llm cannot drift apart.
 func ScanSecrets(text string) SecretScanResult {
-	for _, p := range secretPatterns {
-		if p.MatchString(text) {
-			return SecretScanResult{Matched: true, Pattern: p.String()}
-		}
-	}
-	return SecretScanResult{}
+	pattern, matched := secrets.Scan(text)
+	return SecretScanResult{Matched: matched, Pattern: pattern}
 }
 
 // ValidateFilePath rejects paths that could escape the repo root via .. or
@@ -104,15 +102,55 @@ func Record(st *store.Store, root string, key []byte, in Input) error {
 // BatchRecord inserts multiple changes and renders each affected file and
 // the changelog exactly once. Use this from the record_batch MCP tool to
 // avoid N redundant render passes.
+//
+// All rows land or none do. Previously a failure at item K left items 0..K-1
+// committed and returned an error, so the caller had no way to know what had
+// actually been recorded.
 func BatchRecord(st *store.Store, root string, key []byte, inputs []Input) error {
-	files := make(map[string]struct{})
-	for _, in := range inputs {
-		c, err := record(st, root, key, in, false)
+	if len(inputs) == 0 {
+		return fmt.Errorf("no changes to record")
+	}
+	if len(inputs) > MaxBatchSize {
+		return fmt.Errorf("batch too large: %d changes (max %d)", len(inputs), MaxBatchSize)
+	}
+
+	// Validate and enrich every row before opening the transaction: prepare
+	// shells out to git, which has no business running with a write lock held.
+	rows := make([]store.Change, len(inputs))
+	files := make(map[string]struct{}, len(inputs))
+	for i, in := range inputs {
+		c, err := prepare(st, in)
 		if err != nil {
-			return err
+			return fmt.Errorf("changes[%d]: %w", i, err)
 		}
+		rows[i] = c
 		files[c.FilePath] = struct{}{}
 	}
+
+	if err := st.WithTx(func(tx *sql.Tx) error {
+		prev, err := store.LastHMACTx(tx)
+		if err != nil {
+			return fmt.Errorf("last hmac: %w", err)
+		}
+		for i := range rows {
+			if key != nil {
+				rows[i].PrevHMAC = prev
+				h, err := integrity.ComputeHMAC(key, rows[i])
+				if err != nil {
+					return err
+				}
+				rows[i].HMAC = h
+				prev = h
+			}
+			if _, err := store.InsertTx(tx, rows[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("insert batch: %w", err)
+	}
+
 	for f := range files {
 		if err := hint.RenderFile(st, root, f, HistoryLimitPerFile); err != nil {
 			return fmt.Errorf("render file hint for %s: %w", f, err)
@@ -124,9 +162,16 @@ func BatchRecord(st *store.Store, root string, key []byte, inputs []Input) error
 	return nil
 }
 
-// record is the shared implementation. When render is false it skips the
-// markdown rendering so callers can batch render themselves.
-func record(st *store.Store, root string, key []byte, in Input, render bool) (store.Change, error) {
+// prepare validates an Input and builds the row to insert, including the
+// working-tree diff stat, diff hash, branch stamp, timestamp, and the
+// clock-tamper flag. It does not sign or insert.
+//
+// The tamper flag is decided here, before signing, so it ends up inside the
+// HMAC payload. Note that the flag's high-water mark is process-global and
+// therefore not rolled back if the surrounding transaction aborts; the mark is
+// monotonic, so the only effect is that later checks stay slightly more
+// conservative.
+func prepare(st *store.Store, in Input) (store.Change, error) {
 	if in.FilePath == "" || in.Summary == "" {
 		return store.Change{}, fmt.Errorf("file and summary are required")
 	}
@@ -135,6 +180,12 @@ func record(st *store.Store, root string, key []byte, in Input, render bool) (st
 	}
 	if !validSources[in.Source] {
 		return store.Change{}, fmt.Errorf("source must be one of agent/llm/fallback, got %q", in.Source)
+	}
+	if len(in.Summary) > MaxSummaryLen {
+		return store.Change{}, fmt.Errorf("summary too long: %d bytes (max %d)", len(in.Summary), MaxSummaryLen)
+	}
+	if len(in.Reason) > MaxReasonLen {
+		return store.Change{}, fmt.Errorf("reason too long: %d bytes (max %d)", len(in.Reason), MaxReasonLen)
 	}
 
 	// Defense-in-depth: never let an agent or hook persist a row whose
@@ -177,17 +228,27 @@ func record(st *store.Store, root string, key []byte, in Input, render bool) (st
 		in.RecordedAt = time.Now().Unix()
 	}
 
-	c := store.Change{
-		FilePath:   in.FilePath,
-		CommitHash: in.CommitHash,
-		Branch:     in.Branch,
-		Source:     in.Source,
-		Summary:    in.Summary,
-		Reason:     in.Reason,
-		DiffStat:   in.DiffStat,
-		DiffHash:   in.DiffHash,
-		AgentID:    in.AgentID,
-		RecordedAt: in.RecordedAt,
+	return store.Change{
+		FilePath:           in.FilePath,
+		CommitHash:         in.CommitHash,
+		Branch:             in.Branch,
+		Source:             in.Source,
+		Summary:            in.Summary,
+		Reason:             in.Reason,
+		DiffStat:           in.DiffStat,
+		DiffHash:           in.DiffHash,
+		AgentID:            in.AgentID,
+		RecordedAt:         in.RecordedAt,
+		ClockTamperWarning: st.CheckClockTamper(in.RecordedAt),
+	}, nil
+}
+
+// record is the shared implementation. When render is false it skips the
+// markdown rendering so callers can batch render themselves.
+func record(st *store.Store, root string, key []byte, in Input, render bool) (store.Change, error) {
+	c, err := prepare(st, in)
+	if err != nil {
+		return store.Change{}, err
 	}
 
 	if key != nil {
@@ -196,11 +257,13 @@ func record(st *store.Store, root string, key []byte, in Input, render bool) (st
 			return store.Change{}, fmt.Errorf("last hmac: %w", err)
 		}
 		c.PrevHMAC = prev
-		c.HMAC = integrity.ComputeHMAC(key, c)
+		c.HMAC, err = integrity.ComputeHMAC(key, c)
+		if err != nil {
+			return store.Change{}, err
+		}
 	}
 
-	_, err := st.Insert(c)
-	if err != nil {
+	if _, err := st.Insert(c); err != nil {
 		return store.Change{}, fmt.Errorf("insert: %w", err)
 	}
 

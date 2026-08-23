@@ -41,10 +41,51 @@ func escape(s string) string {
 	return replacer.Replace(s)
 }
 
+// codeSpan renders a string safe for inclusion inside a `backtick` span.
+// escape() is wrong here: its backslashes would render literally inside a code
+// span. A backtick or newline in the value is what would break out of the
+// span, so those are simply dropped.
+func codeSpan(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '`', '\n', '\r':
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // FilePath returns where the hint file for a repo-relative source path
 // would live, e.g. "cmd/api/main.go" -> "<root>/.githints/cmd/api/main.go.md".
 func FilePath(root, srcPath string) string {
 	return filepath.Join(root, dirName, srcPath+".md")
+}
+
+// writeUnder writes data to a path relative to root, refusing to follow any
+// symlink out of root.
+//
+// recorder.ValidateFilePath already rejects "..", absolute paths, and Windows
+// device names, but that is a lexical check: MkdirAll and WriteFile happily
+// follow a symlink. In shared mode the contents of .githints/ are committed, so
+// a repository can ship .githints/x -> ../../.ssh and a record_change for
+// "x/authorized_keys" would have written outside the tree. os.Root resolves
+// every component against the root and fails on escape.
+func writeUnder(root, rel string, data []byte) error {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open repo root: %w", err)
+	}
+	defer r.Close()
+
+	if dir := filepath.Dir(rel); dir != "." {
+		if err := r.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create %s: %w", dir, err)
+		}
+	}
+	if err := r.WriteFile(rel, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", rel, err)
+	}
+	return nil
 }
 
 // RenderFile rewrites the per-file hint markdown for one source file.
@@ -53,37 +94,31 @@ func RenderFile(st *store.Store, root, srcPath string, limit int) error {
 	if err != nil {
 		return fmt.Errorf("load history for %s: %w", srcPath, err)
 	}
-
-	out := FilePath(root, srcPath)
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(out, renderFileContent(changes, srcPath), 0o644)
+	return writeUnder(root, filepath.Join(dirName, srcPath+".md"), renderFileContent(changes, srcPath))
 }
 
 func renderFileContent(changes []store.Change, srcPath string) []byte {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\n", srcPath)
+	fmt.Fprintf(&b, "# %s\n\n", escape(srcPath))
 	if len(changes) == 0 {
 		b.WriteString("_no recorded changes yet_\n")
 	}
 	for _, c := range changes {
 		fmt.Fprintf(&b, "## %s\n", formatRecordedAt(c.RecordedAt, c.CreatedAt))
-		fmt.Fprintf(&b, "- source: %s", c.Source)
+		fmt.Fprintf(&b, "- source: %s", escape(c.Source))
 		if c.AgentID != "" {
-			fmt.Fprintf(&b, " · agent: `%s`", c.AgentID)
+			fmt.Fprintf(&b, " · agent: `%s`", codeSpan(c.AgentID))
 		}
 		if c.Branch != "" {
-			fmt.Fprintf(&b, " · branch: `%s`", c.Branch)
+			fmt.Fprintf(&b, " · branch: `%s`", codeSpan(c.Branch))
 		}
 		if c.CommitHash != "" {
-			fmt.Fprintf(&b, " · commit: `%s`", shortHash(c.CommitHash))
+			fmt.Fprintf(&b, " · commit: `%s`", codeSpan(shortHash(c.CommitHash)))
 		} else {
 			fmt.Fprintf(&b, " · uncommitted")
 		}
 		if c.DiffStat != "" {
-			fmt.Fprintf(&b, " · diff: %s", c.DiffStat)
+			fmt.Fprintf(&b, " · diff: %s", escape(c.DiffStat))
 		}
 		if c.ClockTamperWarning {
 			fmt.Fprintf(&b, " · **CLOCK TAMPER WARNING**")
@@ -107,12 +142,7 @@ func RenderChangelog(st *store.Store, root string, limit int) error {
 		return fmt.Errorf("load recent changes: %w", err)
 	}
 
-	out := filepath.Join(root, dirName, "CHANGES.md")
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(out, renderChangelogContent(changes), 0o644)
+	return writeUnder(root, filepath.Join(dirName, "CHANGES.md"), renderChangelogContent(changes))
 }
 
 func renderChangelogContent(changes []store.Change) []byte {
@@ -126,14 +156,17 @@ func renderChangelogContent(changes []store.Change) []byte {
 			fmt.Fprintf(&b, "## %s\n\n", headingFor(c))
 			lastCommit = c.CommitHash
 		}
-		fmt.Fprintf(&b, "- `%s` (%s", c.FilePath, c.Source)
+		// Escape everything agent-supplied. CHANGES.md is the file shared
+		// mode commits and clients render in a webview, so it needs the same
+		// treatment renderFileContent already gives the per-file hints.
+		fmt.Fprintf(&b, "- `%s` (%s", codeSpan(c.FilePath), escape(c.Source))
 		if c.AgentID != "" {
-			fmt.Fprintf(&b, ", %s", c.AgentID)
+			fmt.Fprintf(&b, ", %s", escape(c.AgentID))
 		}
 		if c.ClockTamperWarning {
 			fmt.Fprintf(&b, " [CLOCK TAMPER WARNING]")
 		}
-		fmt.Fprintf(&b, "): %s\n", c.Summary)
+		fmt.Fprintf(&b, "): %s\n", escape(c.Summary))
 	}
 
 	return []byte(b.String())
@@ -153,7 +186,7 @@ func headingFor(c store.Change) string {
 	if c.CommitHash == "" {
 		return when + " · uncommitted"
 	}
-	return fmt.Sprintf("%s · `%s`", when, shortHash(c.CommitHash))
+	return fmt.Sprintf("%s · `%s`", when, codeSpan(shortHash(c.CommitHash)))
 }
 
 func shortHash(h string) string {
