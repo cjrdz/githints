@@ -1,8 +1,11 @@
 package hint
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -17,6 +20,96 @@ func setup(t *testing.T) (*store.Store, string, func()) {
 		t.Fatalf("Open store: %v", err)
 	}
 	return st, root, func() { st.Close() }
+}
+
+// CHANGES.md is the file shared mode commits and clients render in a webview,
+// but it was the one renderer that interpolated agent text raw.
+func TestRenderChangelogEscapesAgentText(t *testing.T) {
+	st, root, cleanup := setup(t)
+	defer cleanup()
+
+	if _, err := st.Insert(store.Change{
+		FilePath: "xss.go",
+		Source:   "agent",
+		Summary:  "<script>alert('xss')</script> **bold** [click](http://evil)",
+		AgentID:  "agent-<img src=x onerror=alert(1)>",
+	}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := RenderChangelog(st, root, 10); err != nil {
+		t.Fatalf("RenderChangelog: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(root, dirName, "CHANGES.md"))
+	if err != nil {
+		t.Fatalf("read CHANGES.md: %v", err)
+	}
+	body := string(got)
+
+	for _, dangerous := range []string{"<script>", "**bold**", "[click](http://evil)", "<img src=x"} {
+		if strings.Contains(body, dangerous) {
+			t.Errorf("CHANGES.md contains unescaped %q:\n%s", dangerous, body)
+		}
+	}
+	if !strings.Contains(body, "&lt;script&gt;") {
+		t.Errorf("escaped text missing from CHANGES.md:\n%s", body)
+	}
+}
+
+// A backtick in a value must not break out of the `code span` that wraps it.
+func TestCodeSpanStripsDelimiters(t *testing.T) {
+	if got := codeSpan("abc`def\nghi"); got != "abcdefghi" {
+		t.Errorf("codeSpan = %q, want %q", got, "abcdefghi")
+	}
+}
+
+// linkDir points link at target. os.Symlink needs Developer Mode or elevation
+// on Windows, but a junction (mklink /J) does not — which makes the Windows
+// case the more exposed one, so it is worth testing rather than skipping.
+func linkDir(t *testing.T, target, link string) error {
+	t.Helper()
+	if err := os.Symlink(target, link); err == nil {
+		return nil
+	} else if runtime.GOOS != "windows" {
+		return err
+	}
+	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("mklink /J: %v: %s", err, out)
+	}
+	return nil
+}
+
+// Path validation is lexical, so it cannot see a symlink or junction. os.Root
+// resolves every component against the repo root and refuses to traverse out.
+func TestRenderFileCannotEscapeRootViaSymlink(t *testing.T) {
+	st, root, cleanup := setup(t)
+	defer cleanup()
+
+	outside := t.TempDir()
+	link := filepath.Join(root, dirName, "escape")
+	if err := os.MkdirAll(filepath.Join(root, dirName), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := linkDir(t, outside, link); err != nil {
+		t.Skipf("cannot create a directory link on this platform: %v", err)
+	}
+
+	if _, err := st.Insert(store.Change{
+		FilePath: "escape/pwned.go",
+		Source:   "agent",
+		Summary:  "should never land outside the repo",
+	}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	// Either the write is refused, or it lands inside the root — never in the
+	// symlink target.
+	_ = RenderFile(st, root, "escape/pwned.go", 10)
+
+	if _, err := os.Lstat(filepath.Join(outside, "pwned.go.md")); err == nil {
+		t.Fatal("render escaped the repo root through a symlink")
+	}
 }
 
 func TestFilePath(t *testing.T) {
@@ -274,22 +367,24 @@ func TestRenderShowsClockTamperWarning(t *testing.T) {
 	st, root, cleanup := setup(t)
 	defer cleanup()
 
-	if _, err := st.Insert(store.Change{
-		FilePath:   "a.go",
-		Source:     "agent",
-		Summary:    "first",
-		RecordedAt: 100,
-	}); err != nil {
-		t.Fatalf("Insert first: %v", err)
+	// The tamper flag is decided before the row is built so it can be covered
+	// by the row's HMAC, so the caller passes it in rather than Insert
+	// inferring it. Mirror what recorder.prepare does.
+	insert := func(summary string, recordedAt int64) {
+		t.Helper()
+		c := store.Change{
+			FilePath:   "a.go",
+			Source:     "agent",
+			Summary:    summary,
+			RecordedAt: recordedAt,
+		}
+		c.ClockTamperWarning = st.CheckClockTamper(recordedAt)
+		if _, err := st.Insert(c); err != nil {
+			t.Fatalf("Insert %s: %v", summary, err)
+		}
 	}
-	if _, err := st.Insert(store.Change{
-		FilePath:   "a.go",
-		Source:     "agent",
-		Summary:    "second",
-		RecordedAt: 10,
-	}); err != nil {
-		t.Fatalf("Insert second: %v", err)
-	}
+	insert("first", 100)
+	insert("second", 10)
 
 	if err := RenderFile(st, root, "a.go", 10); err != nil {
 		t.Fatalf("RenderFile: %v", err)

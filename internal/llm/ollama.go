@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -89,8 +90,43 @@ func NewClient(cfg config.Config) (*Client, error) {
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
+			Transport: &http.Transport{DialContext: loopbackDialer(config.AllowNonLoopback())},
 		},
 	}, nil
+}
+
+// loopbackDialer enforces the local-only boundary on the address actually
+// connected to, not the one validated earlier.
+//
+// config.Load resolves the endpoint hostname at load time, but the request
+// resolves it again at dial time. A name that answers 127.0.0.1 on the first
+// lookup and a routable address on the second would pass validation and then
+// egress off-box. Checking here closes that window, since this is the last
+// point before the packet leaves.
+func loopbackDialer(allowNonLoopback bool) func(context.Context, string, string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 5 * time.Second}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if allowNonLoopback {
+			return d.DialContext(ctx, network, addr)
+		}
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("parse dial address %q: %w", addr, err)
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s: %w", host, err)
+		}
+		// Every candidate must be loopback: dialing picks one of them, so a
+		// single routable answer is enough to make this unsafe.
+		for _, ip := range ips {
+			if !ip.IP.IsLoopback() {
+				return nil, fmt.Errorf("refusing to dial non-loopback address %s for %s "+
+					"(set GITHINTS_OLLAMA_ALLOW_NON_LOOPBACK=1 to allow)", ip.IP, host)
+			}
+		}
+		return d.DialContext(ctx, network, addr)
+	}
 }
 
 // SummarizeDiff returns a one-line caption for a git diff. The diff is scrubbed

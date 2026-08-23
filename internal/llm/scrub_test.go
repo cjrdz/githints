@@ -87,6 +87,86 @@ func TestScrubDiffRedactsEmbeddedSecretValue(t *testing.T) {
 	}
 }
 
+// git does not quote paths containing spaces in diff headers. Splitting the
+// header on whitespace classified "config/private data.txt" as "data.txt",
+// which matched no secret glob and cleared protection for the whole hunk.
+func TestScrubDiffHandlesPathsWithSpaces(t *testing.T) {
+	diff := `diff --git a/config/private data.txt b/config/private data.txt
+--- a/config/private data.txt
++++ b/config/private data.txt
+@@ -1 +1 @@
+-OLD
++DB_PASS=super_secret
+`
+	got := ScrubDiff(diff)
+	if strings.Contains(got, "super_secret") {
+		t.Errorf("secret leaked from a path containing a space:\n%s", got)
+	}
+	if !strings.Contains(got, secretLineMarker) {
+		t.Errorf("expected redaction marker, got:\n%s", got)
+	}
+}
+
+// A header we cannot parse must fail closed rather than emitting content we
+// were unable to classify.
+func TestScrubDiffFailsClosedOnMalformedHeader(t *testing.T) {
+	diff := `diff --git mangled
+@@ -1 +1 @@
++DB_PASS=super_secret
+`
+	got := ScrubDiff(diff)
+	if strings.Contains(got, "super_secret") {
+		t.Errorf("content leaked past an unparseable header:\n%s", got)
+	}
+}
+
+// A deleted line whose text starts with "--" renders as "--- ..." in the diff.
+// Parsing that as a file header re-classified the file mid-hunk and cleared
+// protection while still inside a secret file.
+func TestScrubDiffIgnoresHeaderLookalikesInsideHunks(t *testing.T) {
+	diff := `diff --git a/.env b/.env
+--- a/.env
++++ b/.env
+@@ -1,4 +1,4 @@
+--- not a header, just a deleted line
++++ not a header either
+-DB_PASS=old
++DB_PASS=super_secret
+`
+	got := ScrubDiff(diff)
+	if strings.Contains(got, "super_secret") {
+		t.Errorf("secret leaked after a header lookalike inside the hunk:\n%s", got)
+	}
+}
+
+func TestFilePathFromHeader(t *testing.T) {
+	tests := []struct {
+		line     string
+		wantPath string
+		wantOK   bool
+	}{
+		// The git header is never trusted for classification; the ---/+++
+		// lines that follow it are.
+		{"diff --git a/main.go b/main.go", unparseableHeader, true},
+		{"diff --git a/private data.txt b/private data.txt", unparseableHeader, true},
+		{"diff --git mangled", unparseableHeader, true},
+		{"--- a/main.go", "main.go", true},
+		{"+++ b/config/.env", "config/.env", true},
+		{"+++ /dev/null", "", false},
+		{" some content line", "", false},
+		{"@@ -1 +1 @@", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			got, ok := filePathFromHeader(tt.line)
+			if got != tt.wantPath || ok != tt.wantOK {
+				t.Errorf("filePathFromHeader(%q) = (%q, %v), want (%q, %v)",
+					tt.line, got, ok, tt.wantPath, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestScrubDiffHeadersPreserved(t *testing.T) {
 	diff := `diff --git a/.env b/.env
 --- a/.env

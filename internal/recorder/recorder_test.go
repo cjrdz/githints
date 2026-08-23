@@ -1,6 +1,7 @@
 package recorder
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cjrdz/githints/internal/integrity"
 	"github.com/cjrdz/githints/internal/store"
 )
 
@@ -331,6 +333,149 @@ func TestRecordRejectsSecretInReason(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when reason contains a secret, got nil")
+	}
+}
+
+// Nothing between the MCP argument and SQLite bounded these before, so a
+// multi-megabyte summary was stored and then re-rendered on every subsequent
+// record for that file.
+func TestRecordRejectsOversizedText(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	cases := []struct {
+		name string
+		in   Input
+	}{
+		{"summary", Input{FilePath: "a.go", Summary: strings.Repeat("x", MaxSummaryLen+1), Source: "agent"}},
+		{"reason", Input{FilePath: "a.go", Summary: "ok", Reason: strings.Repeat("x", MaxReasonLen+1), Source: "agent"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Record(st, dir, testKey, tc.in)
+			if err == nil {
+				t.Fatal("expected rejection, got nil")
+			}
+			if !strings.Contains(err.Error(), "too long") {
+				t.Errorf("error should mention length, got: %v", err)
+			}
+		})
+	}
+
+	// A summary exactly at the limit is allowed.
+	if err := Record(st, dir, testKey, Input{
+		FilePath: "a.go", Summary: strings.Repeat("x", MaxSummaryLen), Source: "agent",
+	}); err != nil {
+		t.Errorf("summary at the limit was rejected: %v", err)
+	}
+}
+
+func TestBatchRecordRejectsOversizedBatch(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	inputs := make([]Input, MaxBatchSize+1)
+	for i := range inputs {
+		inputs[i] = Input{FilePath: fmt.Sprintf("f%d.go", i), Summary: "x", Source: "agent"}
+	}
+	if err := BatchRecord(st, dir, testKey, inputs); err == nil {
+		t.Fatal("expected oversized batch to be rejected")
+	}
+
+	count, err := st.Count()
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("rejected batch wrote %d rows", count)
+	}
+}
+
+// The batch is one transaction: a row that fails validation must not leave
+// earlier rows committed.
+func TestBatchRecordRollsBackOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	err = BatchRecord(st, dir, testKey, []Input{
+		{FilePath: "good.go", Summary: "fine", Source: "agent"},
+		{FilePath: "bad.go", Summary: "leaks AKIAIOSFODNN7EXAMPLE", Source: "agent"},
+	})
+	if err == nil {
+		t.Fatal("expected batch to fail")
+	}
+
+	count, err := st.Count()
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("partial batch landed: %d rows, want 0", count)
+	}
+}
+
+// The clock-tamper flag must be signed, so it has to be decided before the
+// row's HMAC is computed.
+func TestRecordSignsClockTamperFlag(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	if err := Record(st, dir, testKey, Input{
+		FilePath: "a.go", Summary: "first", Source: "agent", RecordedAt: 100_000,
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	// Far enough back to exceed ClockSkewTolerance.
+	if err := Record(st, dir, testKey, Input{
+		FilePath: "b.go", Summary: "second", Source: "agent", RecordedAt: 1_000,
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	rows, err := st.AllChanges()
+	if err != nil {
+		t.Fatalf("AllChanges: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if !rows[1].ClockTamperWarning {
+		t.Fatal("expected the backward-jumping row to be flagged")
+	}
+	// VerifyChain independently reports the backward timestamp, so look
+	// specifically at whether the signature itself recomputes.
+	hmacBroken := func(rows []store.Change) bool {
+		for _, e := range integrity.VerifyChain(testKey, rows) {
+			if strings.Contains(e.Problem, "hmac does not recompute") {
+				return true
+			}
+		}
+		return false
+	}
+
+	if hmacBroken(rows) {
+		t.Fatal("signature should recompute for rows as written")
+	}
+	// Erasing the flag must now break the signature.
+	rows[1].ClockTamperWarning = false
+	if !hmacBroken(rows) {
+		t.Fatal("clearing clock_tamper_warning went undetected by the HMAC")
 	}
 }
 

@@ -24,6 +24,10 @@ go build -o githints .
 githints init
 ```
 
+`init` also writes a managed block into `AGENTS.md` (read by opencode, Codex,
+and Gemini CLI) and `CLAUDE.md` (read by Claude Code), so the agent knows the
+tools exist. Re-running it updates only that block.
+
 Then wire `githints serve` into your project-scoped MCP config. See
 [docs/usage.md](docs/usage.md) for Claude Code, opencode, and manual setup.
 
@@ -65,9 +69,10 @@ Linux, macOS, and Windows (with [Git for Windows](https://gitforwindows.org/)).
 ## CLI overview
 
 ```sh
-githints init [-share]           # set up .githints/, install hooks, and gitignore
+githints init [-share]           # set up .githints/, install hooks, gitignore,
+                                 #   and the AGENTS.md / CLAUDE.md blocks
                                  #   -share commits rendered markdown; state stays local
-githints serve                   # run the MCP stdio server
+githints serve [-root=PATH]      # run the MCP stdio server
 githints record -file=F -summary=S [-reason=R]
                                  # manually record a change
 githints verify                  # check HMAC chain and markdown consistency

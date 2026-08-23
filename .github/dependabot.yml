@@ -1,0 +1,16 @@
+version: 2
+
+# The mcp-go upgrade that prompted this file spanned 30 releases. This is the
+# gap Dependabot exists to close.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

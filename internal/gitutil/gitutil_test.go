@@ -1,6 +1,7 @@
 package gitutil
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +51,69 @@ func chdir(t *testing.T, dir string) func() {
 		if err := os.Chdir(cwd); err != nil {
 			t.Fatalf("restore wd: %v", err)
 		}
+	}
+}
+
+// ChangedFiles and DiffStat place the commit-ish in argv before the "--"
+// separator, so an unvalidated value beginning with "-" would be parsed as a
+// git option. FileDiff and DiffHash always guarded this; these two did not.
+func TestCommitishGuardOnAllCallers(t *testing.T) {
+	dir := makeRepo(t)
+	defer chdir(t, dir)()
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	for _, bad := range []string{"--output=/tmp/pwn", "--upload-pack=touch /tmp/x", "-x", "HEAD"} {
+		t.Run(bad, func(t *testing.T) {
+			if _, err := ChangedFiles(bad); err == nil {
+				t.Errorf("ChangedFiles(%q) = nil error, want rejection", bad)
+			}
+			if got := DiffStat(bad, "main.go"); got != "" {
+				t.Errorf("DiffStat(%q) = %q, want empty", bad, got)
+			}
+			if _, err := FileDiff(bad, "main.go"); err == nil {
+				t.Errorf("FileDiff(%q) = nil error, want rejection", bad)
+			}
+			if _, err := DiffHash(bad, "main.go"); err == nil {
+				t.Errorf("DiffHash(%q) = nil error, want rejection", bad)
+			}
+		})
+	}
+}
+
+func TestRunCapsOutput(t *testing.T) {
+	w := &capWriter{n: 10}
+	if _, err := w.Write([]byte("0123456789abcdef")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := w.buf.String(); got != "0123456789" {
+		t.Errorf("buffered %q, want %q", got, "0123456789")
+	}
+	if !w.truncated {
+		t.Error("expected truncated flag")
+	}
+	// A further write must not grow the buffer or fail.
+	n, err := w.Write([]byte("more"))
+	if err != nil || n != 4 {
+		t.Errorf("Write after cap = (%d, %v), want (4, nil)", n, err)
+	}
+	if w.buf.Len() != 10 {
+		t.Errorf("buffer grew past cap to %d", w.buf.Len())
+	}
+}
+
+func TestFileDiffCtxHonorsCancellation(t *testing.T) {
+	dir := makeRepo(t)
+	defer chdir(t, dir)()
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", "main.go")
+	runGit(t, dir, "commit", "-m", "initial")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := FileDiffCtx(ctx, "", "main.go"); err == nil {
+		t.Error("expected error from cancelled context")
 	}
 }
 

@@ -5,9 +5,13 @@ and make changes.
 
 ## Requirements
 
-- Go 1.23 or later.
+- Go 1.25.5 or later (the floor comes from `mark3labs/mcp-go` and from
+  `os.Root.MkdirAll`, which arrived in Go 1.25).
 - Git.
 - Linux, macOS, or Windows (Windows requires [Git for Windows](https://gitforwindows.org/), which provides the POSIX sh used by the git hooks).
+- A C toolchain if you want to run `go test -race`, which needs cgo. On Windows,
+  `winget install BrechtSanders.WinLibs.POSIX.UCRT` provides a self-contained
+  mingw-w64; the Go distribution alone is not sufficient.
 
 ## Build
 
@@ -19,9 +23,14 @@ go build -o githints .
 ## Test
 
 ```sh
+gofmt -l .            # must print nothing
 go vet ./...
 go test -race ./...
+golangci-lint run ./...
+govulncheck ./...
 ```
+
+CI runs all five on Linux, macOS, and Windows.
 
 Some tests create temporary git repositories and call the real `git` binary.
 Make sure `git` is on your `PATH` and your user config does not conflict with
@@ -40,7 +49,10 @@ what tests expect.
   `rotate-salt`.
 - `internal/gitutil` — thin wrappers around `git` commands.
 - `internal/llm` — local Ollama client and diff scrubbing.
-- `internal/mcpserver` — MCP stdio server and tool handlers.
+- `internal/secrets` — the single credential-pattern list, shared by the
+  recorder's write-path refusal and the diff scrubber.
+- `internal/mcpserver` — MCP stdio server and tool handlers. The only package
+  that imports `mark3labs/mcp-go`.
 
 ## Code style
 
@@ -74,7 +86,15 @@ stores must upgrade automatically when they open.
 2. Add a handler function in the same file.
 3. Reuse `recorder.Record`/`BatchRecord` for writes so validation and
   rendering stay centralized.
-4. Add a test in `internal/mcpserver/server_test.go` if the tool has
+4. Read arguments through the mcp-go helpers (`req.RequireString`,
+  `req.GetString`, `req.GetInt`, `req.GetBool`, `req.GetArguments`). Do not
+  index `req.Params.Arguments` — it is typed `any`, and the helpers coerce the
+  string-encoded numbers some clients send.
+5. Bound anything unbounded in Go, not only in the declared schema: clamp
+  limits with `clampLimit`, and cap sizes the way `recorder.MaxSummaryLen` and
+  `maxDiffResultBytes` do. Schema `minimum`/`maximum`/`maxLength` are advisory;
+  clients are not required to enforce them.
+6. Add a test in `internal/mcpserver/server_test.go` if the tool has
   non-trivial logic.
 
 ## Self-tracking
@@ -82,6 +102,13 @@ stores must upgrade automatically when they open.
 githints can track its own development. After running `githints init` in the
 repo, the hooks will ignore changes under `.githints/`, so re-rendered
 markdown files do not create self-referential noise.
+
+One wrinkle: this repo's `AGENTS.md` is hand-written and more detailed than the
+generic block `init` installs, so running `init` here appends a redundant
+managed block. Delete the block (everything between the
+`<!-- >>> githints (managed) -->` markers) after initializing; the hand-written
+content is the one to keep. `CLAUDE.md` is the normal case — its managed block
+is just the `@AGENTS.md` import, and the repo-specific guidance lives below it.
 
 ## Opening issues and PRs
 

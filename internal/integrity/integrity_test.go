@@ -55,6 +55,26 @@ func TestDeriveKeyStable(t *testing.T) {
 	}
 }
 
+// mustHMAC / mustMerkle keep the tests readable now that both return an error
+// (they used to panic and silently ignore, respectively).
+func mustHMAC(t *testing.T, key []byte, c store.Change) string {
+	t.Helper()
+	h, err := ComputeHMAC(key, c)
+	if err != nil {
+		t.Fatalf("ComputeHMAC: %v", err)
+	}
+	return h
+}
+
+func mustMerkle(t *testing.T, rows []store.Change) string {
+	t.Helper()
+	r, err := MerkleRoot(rows)
+	if err != nil {
+		t.Fatalf("MerkleRoot: %v", err)
+	}
+	return r
+}
+
 func TestComputeHMACStableAndSensitive(t *testing.T) {
 	key := DeriveKey([]byte("s"+string(make([]byte, 31))), "u@example.com")
 	c := store.Change{
@@ -69,22 +89,29 @@ func TestComputeHMACStableAndSensitive(t *testing.T) {
 		PrevHMAC:   "",
 	}
 
-	h1 := ComputeHMAC(key, c)
-	h2 := ComputeHMAC(key, c)
+	h1 := mustHMAC(t, key, c)
+	h2 := mustHMAC(t, key, c)
 	if h1 != h2 {
 		t.Fatal("HMAC not stable for identical input")
 	}
 
 	c.AgentID = "session-2"
-	h3 := ComputeHMAC(key, c)
+	h3 := mustHMAC(t, key, c)
 	if h1 == h3 {
 		t.Fatal("HMAC did not change when row changed")
 	}
 
 	otherKey := DeriveKey([]byte("different-salt-0123456789abcdef"), "u@example.com")
-	h4 := ComputeHMAC(otherKey, c)
+	h4 := mustHMAC(t, otherKey, c)
 	if h3 == h4 {
 		t.Fatal("HMAC did not change with different key")
+	}
+
+	// The clock-tamper flag must be covered by the signature: flipping it in
+	// the database used to be invisible to VerifyChain.
+	c.ClockTamperWarning = true
+	if flagged := mustHMAC(t, key, c); flagged == h3 {
+		t.Fatal("HMAC did not change when clock_tamper_warning was flipped")
 	}
 }
 
@@ -99,7 +126,7 @@ func TestVerifyChain(t *testing.T) {
 		if i > 0 {
 			rows[i].PrevHMAC = rows[i-1].HMAC
 		}
-		rows[i].HMAC = ComputeHMAC(key, rows[i])
+		rows[i].HMAC = mustHMAC(t, key, rows[i])
 	}
 
 	errs := VerifyChain(key, rows)
@@ -125,7 +152,7 @@ func TestVerifyChainDetectsBackwardClock(t *testing.T) {
 		if i > 0 {
 			rows[i].PrevHMAC = rows[i-1].HMAC
 		}
-		rows[i].HMAC = ComputeHMAC(key, rows[i])
+		rows[i].HMAC = mustHMAC(t, key, rows[i])
 	}
 
 	errs := VerifyChain(key, rows)
@@ -151,11 +178,11 @@ func TestMerkleRoot(t *testing.T) {
 		if i > 0 {
 			rows[i].PrevHMAC = rows[i-1].HMAC
 		}
-		rows[i].HMAC = ComputeHMAC(key, rows[i])
+		rows[i].HMAC = mustHMAC(t, key, rows[i])
 	}
 
-	r1 := MerkleRoot(rows)
-	r2 := MerkleRoot(rows)
+	r1 := mustMerkle(t, rows)
+	r2 := mustMerkle(t, rows)
 	if r1 != r2 {
 		t.Fatal("Merkle root not stable")
 	}
@@ -164,8 +191,8 @@ func TestMerkleRoot(t *testing.T) {
 	}
 
 	rows[1].Summary = "changed"
-	rows[1].HMAC = ComputeHMAC(key, rows[1])
-	r3 := MerkleRoot(rows)
+	rows[1].HMAC = mustHMAC(t, key, rows[1])
+	r3 := mustMerkle(t, rows)
 	if r1 == r3 {
 		t.Fatal("Merkle root did not change when row changed")
 	}
@@ -219,7 +246,7 @@ func TestRotateSalt(t *testing.T) {
 
 	mustInsert := func(c store.Change) {
 		t.Helper()
-		c.HMAC = ComputeHMAC(key, c)
+		c.HMAC = mustHMAC(t, key, c)
 		if _, err := st.Insert(c); err != nil {
 			t.Fatalf("Insert: %v", err)
 		}
@@ -227,7 +254,7 @@ func TestRotateSalt(t *testing.T) {
 	mustInsert(store.Change{FilePath: "a.go", Source: "agent", Summary: "first", RecordedAt: 10})
 	rows, _ := st.AllChanges()
 	second := store.Change{FilePath: "b.go", Source: "agent", Summary: "second", RecordedAt: 20, PrevHMAC: rows[0].HMAC}
-	second.HMAC = ComputeHMAC(key, second)
+	second.HMAC = mustHMAC(t, key, second)
 	mustInsert(second)
 	st.Close()
 
