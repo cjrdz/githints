@@ -5,6 +5,7 @@ package gitutil
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -12,17 +13,66 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
-func run(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	var out, stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderr.String())
+// MaxOutputBytes caps how much of git's stdout we will buffer. A diff on a
+// generated or vendored file can be arbitrarily large, and this runs inside a
+// long-lived stdio server, so an uncapped buffer is a memory-exhaustion vector.
+const MaxOutputBytes = 1 << 20
+
+// defaultTimeout bounds a git invocation that was not given a context. git can
+// block indefinitely on a credential-helper prompt, a network filesystem, or
+// index-lock contention; every caller would rather have an error.
+const defaultTimeout = 30 * time.Second
+
+// capWriter buffers up to n bytes and silently discards the rest, recording
+// that it did so.
+type capWriter struct {
+	buf       bytes.Buffer
+	n         int
+	truncated bool
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	if room := w.n - w.buf.Len(); room > 0 {
+		if len(p) <= room {
+			return w.buf.Write(p)
+		}
+		if _, err := w.buf.Write(p[:room]); err != nil {
+			return 0, err
+		}
 	}
-	return strings.TrimSpace(out.String()), nil
+	w.truncated = true
+	// Report a full write so git is not handed a short-write error.
+	return len(p), nil
+}
+
+// run invokes git with a default timeout. Use runCtx when the caller has a
+// context to honor (every MCP tool handler does).
+func run(args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	return runCtx(ctx, args...)
+}
+
+func runCtx(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	out := &capWriter{n: MaxOutputBytes}
+	stderr := &capWriter{n: 8 << 10}
+	cmd.Stdout = out
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), ctxErr)
+		}
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderr.buf.String())
+	}
+	s := strings.TrimSpace(out.buf.String())
+	if out.truncated {
+		s += fmt.Sprintf("\n[truncated: git output exceeded %d bytes]", MaxOutputBytes)
+	}
+	return s, nil
 }
 
 // commitishRe matches a hex commit-ish. We require at least 4 characters to
@@ -80,13 +130,22 @@ func StagedFiles() ([]string, error) {
 // committed form uses `git show` so it also works for a repo's first
 // commit, where `hash^` does not exist.
 func FileDiff(hash, file string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	return FileDiffCtx(ctx, hash, file)
+}
+
+// FileDiffCtx is FileDiff bound to a caller-supplied context. MCP tool
+// handlers use this so a hung git call fails with the request instead of
+// blocking the handler indefinitely.
+func FileDiffCtx(ctx context.Context, hash, file string) (string, error) {
 	if !IsValidCommitish(hash) {
 		return "", fmt.Errorf("invalid commit hash %q", hash)
 	}
 	if hash == "" {
-		return run("diff", "HEAD", "--", file)
+		return runCtx(ctx, "diff", "HEAD", "--", file)
 	}
-	return run("show", "--pretty=format:", hash, "--", file)
+	return runCtx(ctx, "show", "--pretty=format:", hash, "--", file)
 }
 
 // UserEmail returns the git user.email config, or "" if not set.
@@ -124,6 +183,12 @@ func WorktreeDiffHash(file string) (string, error) {
 // ChangedFiles lists files touched by the given commit (vs its parent).
 // Falls back to the diff against an empty tree for the very first commit.
 func ChangedFiles(hash string) ([]string, error) {
+	// hash lands in argv before the "--" separator, so an unvalidated value
+	// starting with "-" would be parsed as an option. FileDiff and DiffHash
+	// already guard this; all four must.
+	if !IsValidCommitish(hash) {
+		return nil, fmt.Errorf("invalid commit hash %q", hash)
+	}
 	out, err := run("diff", "--name-only", hash+"^", hash)
 	if err != nil {
 		// likely the first commit in the repo: diff against the empty tree
@@ -138,8 +203,14 @@ func ChangedFiles(hash string) ([]string, error) {
 	return strings.Split(out, "\n"), nil
 }
 
-// DiffStat returns a compact "+N -M" string for one file in one commit.
+// DiffStat returns a compact "+N -M" string for one file in one commit. An
+// invalid commit-ish yields "" rather than an error, matching the existing
+// "unknown stat" contract — but it must never reach argv, since hash sits
+// before the "--" separator.
 func DiffStat(hash, file string) string {
+	if !IsValidCommitish(hash) {
+		return ""
+	}
 	out, err := run("diff", "--numstat", hash+"^", hash, "--", file)
 	if err != nil || out == "" {
 		return ""

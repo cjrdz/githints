@@ -404,7 +404,9 @@ func TestFullScanSkipsSymlink(t *testing.T) {
 	initGitRepo(t, root)
 	writeGo(t, root, "real.go", "package main\nfunc Real() {}\n")
 	if err := os.Symlink(filepath.Join(root, "real.go"), filepath.Join(root, "link.go")); err != nil {
-		t.Fatalf("symlink: %v", err)
+		// A file symlink needs Developer Mode or Administrator on Windows, and
+		// unlike a directory link it has no junction equivalent to fall back on.
+		t.Skipf("cannot create a file symlink on this platform: %v", err)
 	}
 
 	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, false, 0); err != nil {

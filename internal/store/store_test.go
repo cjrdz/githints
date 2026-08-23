@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -19,8 +20,11 @@ func openTestStore(t *testing.T) (*Store, func()) {
 	return st, func() { st.Close() }
 }
 
+// mustInsert mirrors the production write path: the clock-tamper check runs
+// before the row is built, so the flag can be covered by the row's HMAC.
 func mustInsert(t *testing.T, st *Store, c Change) int64 {
 	t.Helper()
+	c.ClockTamperWarning = st.CheckClockTamper(c.RecordedAt)
 	id, err := st.Insert(c)
 	if err != nil {
 		t.Fatalf("Insert: %v", err)
@@ -249,7 +253,36 @@ func TestSearch(t *testing.T) {
 	}
 }
 
-func TestHasAgentRecordForCommit(t *testing.T) {
+// agentRecordsTx and claimPendingTx exercise the transaction-scoped variants,
+// which are the ones the post-commit hook actually calls. The non-Tx twins were
+// removed as dead code, so this coverage moved here rather than disappearing.
+func agentRecordsTx(t *testing.T, st *Store, file, hash string) []Change {
+	t.Helper()
+	var out []Change
+	if err := st.WithTx(func(tx *sql.Tx) error {
+		var err error
+		out, err = AgentRecordsForCommitTx(tx, file, hash)
+		return err
+	}); err != nil {
+		t.Fatalf("AgentRecordsForCommitTx: %v", err)
+	}
+	return out
+}
+
+func claimPendingTx(t *testing.T, st *Store, file, hash string) int64 {
+	t.Helper()
+	var n int64
+	if err := st.WithTx(func(tx *sql.Tx) error {
+		var err error
+		n, err = ClaimPendingTx(tx, file, hash)
+		return err
+	}); err != nil {
+		t.Fatalf("ClaimPendingTx: %v", err)
+	}
+	return n
+}
+
+func TestAgentRecordForCommitTx(t *testing.T) {
 	st, cleanup := openTestStore(t)
 	defer cleanup()
 
@@ -278,18 +311,15 @@ func TestHasAgentRecordForCommit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.file+"-"+tt.hash, func(t *testing.T) {
-			got, err := st.HasAgentRecordForCommit(tt.file, tt.hash)
-			if err != nil {
-				t.Fatalf("HasAgentRecordForCommit: %v", err)
-			}
-			if got != tt.want {
+			// The fallback row must not count: only source='agent' rows do.
+			if got := len(agentRecordsTx(t, st, tt.file, tt.hash)) > 0; got != tt.want {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestClaimPending(t *testing.T) {
+func TestClaimPendingTx(t *testing.T) {
 	st, cleanup := openTestStore(t)
 	defer cleanup()
 
@@ -298,19 +328,11 @@ func TestClaimPending(t *testing.T) {
 	mustInsert(t, st, Change{FilePath: "x.go", CommitHash: "old", Source: "agent", Summary: "already committed"})
 	mustInsert(t, st, Change{FilePath: "x.go", Source: "hook", Summary: "should not be claimed"})
 
-	n, err := st.ClaimPending("x.go", "abc123")
-	if err != nil {
-		t.Fatalf("ClaimPending: %v", err)
-	}
-	if n != 2 {
+	if n := claimPendingTx(t, st, "x.go", "abc123"); n != 2 {
 		t.Fatalf("claimed %d rows, want 2", n)
 	}
 
-	got, err := st.HasAgentRecordForCommit("x.go", "abc123")
-	if err != nil {
-		t.Fatalf("HasAgentRecordForCommit: %v", err)
-	}
-	if !got {
+	if len(agentRecordsTx(t, st, "x.go", "abc123")) == 0 {
 		t.Fatal("expected agent record for abc123 after claiming")
 	}
 
@@ -329,7 +351,7 @@ func TestClaimPending(t *testing.T) {
 	}
 }
 
-func TestAgentRecordsForCommit(t *testing.T) {
+func TestAgentRecordsForCommitTxReturnsDiffStats(t *testing.T) {
 	st, cleanup := openTestStore(t)
 	defer cleanup()
 
@@ -354,10 +376,7 @@ func TestAgentRecordsForCommit(t *testing.T) {
 		Summary:    "hook fallback",
 	})
 
-	rows, err := st.AgentRecordsForCommit("x.go", "aaa")
-	if err != nil {
-		t.Fatalf("AgentRecordsForCommit: %v", err)
-	}
+	rows := agentRecordsTx(t, st, "x.go", "aaa")
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}
@@ -675,6 +694,48 @@ func TestInsertFlagsClockTamper(t *testing.T) {
 	if rows[0].ClockTamperWarning {
 		t.Errorf("expected clock_tamper_warning=0 for first row, got %v", rows[0].ClockTamperWarning)
 	}
+}
+
+// The tamper check read lastRecordedAt outside the mutex, which `go test
+// -race` never caught because nothing exercised it concurrently. Backward
+// timestamps are what trigger the warning path where the read happened.
+func TestCheckClockTamperIsRaceFree(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	// Every backward jump warns on stderr, which bypasses the test
+	// framework's per-test buffering and would print hundreds of lines.
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	realStderr := os.Stderr
+	os.Stderr = devNull
+	t.Cleanup(func() {
+		os.Stderr = realStderr
+		devNull.Close()
+	})
+
+	st.CheckClockTamper(1_000_000)
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				// Alternate forward and backward jumps so both the advance
+				// and the warning branches run concurrently.
+				if j%2 == 0 {
+					st.CheckClockTamper(int64(1_000 + i))
+				} else {
+					st.CheckClockTamper(int64(2_000_000 + i*100 + j))
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestHasPendingAgentRecord(t *testing.T) {

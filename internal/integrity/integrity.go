@@ -129,47 +129,54 @@ func KeyFromRepo(root string) ([]byte, error) {
 
 // hmacPayload is the stable, JSON-serialized representation of a row for
 // HMAC purposes. commit_hash is intentionally excluded because it is mutated
-// by store.ClaimPending after the row is inserted.
+// by store.ClaimPendingTx after the row is inserted; the per-commit Merkle
+// root in refs/notes/githints is what binds rows to their commit.
+//
+// clock_tamper_warning IS included: it is immutable once written, and leaving
+// it out meant an attacker with database write access could flip it from 1 to
+// 0 and erase the tamper evidence while the chain still verified clean.
 type hmacPayload struct {
-	PrevHMAC   string `json:"prev_hmac"`
-	FilePath   string `json:"file_path"`
-	Branch     string `json:"branch"`
-	Source     string `json:"source"`
-	Summary    string `json:"summary"`
-	Reason     string `json:"reason"`
-	DiffStat   string `json:"diff_stat"`
-	DiffHash   string `json:"diff_hash"`
-	AgentID    string `json:"agent_id"`
-	RecordedAt int64  `json:"recorded_at"`
+	PrevHMAC           string `json:"prev_hmac"`
+	FilePath           string `json:"file_path"`
+	Branch             string `json:"branch"`
+	Source             string `json:"source"`
+	Summary            string `json:"summary"`
+	Reason             string `json:"reason"`
+	DiffStat           string `json:"diff_stat"`
+	DiffHash           string `json:"diff_hash"`
+	AgentID            string `json:"agent_id"`
+	RecordedAt         int64  `json:"recorded_at"`
+	ClockTamperWarning bool   `json:"clock_tamper_warning"`
 }
 
 func payloadFromChange(c store.Change) hmacPayload {
 	return hmacPayload{
-		PrevHMAC:   c.PrevHMAC,
-		FilePath:   c.FilePath,
-		Branch:     c.Branch,
-		Source:     c.Source,
-		Summary:    c.Summary,
-		Reason:     c.Reason,
-		DiffStat:   c.DiffStat,
-		DiffHash:   c.DiffHash,
-		AgentID:    c.AgentID,
-		RecordedAt: c.RecordedAt,
+		PrevHMAC:           c.PrevHMAC,
+		FilePath:           c.FilePath,
+		Branch:             c.Branch,
+		Source:             c.Source,
+		Summary:            c.Summary,
+		Reason:             c.Reason,
+		DiffStat:           c.DiffStat,
+		DiffHash:           c.DiffHash,
+		AgentID:            c.AgentID,
+		RecordedAt:         c.RecordedAt,
+		ClockTamperWarning: c.ClockTamperWarning,
 	}
 }
 
 // ComputeHMAC returns the hex-encoded HMAC-SHA256 for a change row, linked
-// to the previous row's HMAC.
-func ComputeHMAC(key []byte, c store.Change) string {
-	payload := payloadFromChange(c)
-	data, err := json.Marshal(payload)
+// to the previous row's HMAC. The error is only reachable if the payload ever
+// grows a type encoding/json cannot handle; it used to panic here, which meant
+// a crash mid-commit-hook where nothing recovers.
+func ComputeHMAC(key []byte, c store.Change) (string, error) {
+	data, err := json.Marshal(payloadFromChange(c))
 	if err != nil {
-		// JSON marshalling of strings + ints cannot fail in practice.
-		panic(fmt.Sprintf("marshal hmac payload: %v", err))
+		return "", fmt.Errorf("marshal hmac payload: %w", err)
 	}
 	mac := hmac.New(sha256.New, key)
 	mac.Write(data)
-	return hex.EncodeToString(mac.Sum(nil))
+	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 // IntegrityError describes one broken link in the HMAC chain.
@@ -202,6 +209,17 @@ func VerifyChain(key []byte, rows []store.Change) []IntegrityError {
 			continue
 		}
 
+		if i == 0 && c.PrevHMAC != "" {
+			// The head of the chain has no predecessor. Without this check a
+			// forged first row could claim any prev_hmac it liked.
+			errs = append(errs, IntegrityError{
+				ID:       c.ID,
+				Problem:  "first row has a non-empty prev_hmac (chain head was forged or rows are missing)",
+				GotPrev:  c.PrevHMAC,
+				WantPrev: "",
+			})
+		}
+
 		if i > 0 && c.PrevHMAC != prev.HMAC {
 			errs = append(errs, IntegrityError{
 				ID:       c.ID,
@@ -211,7 +229,15 @@ func VerifyChain(key []byte, rows []store.Change) []IntegrityError {
 			})
 		}
 
-		want := ComputeHMAC(key, c)
+		want, err := ComputeHMAC(key, c)
+		if err != nil {
+			errs = append(errs, IntegrityError{
+				ID:      c.ID,
+				Problem: fmt.Sprintf("cannot recompute hmac: %v", err),
+			})
+			prev = c
+			continue
+		}
 		if !hmac.Equal([]byte(c.HMAC), []byte(want)) {
 			errs = append(errs, IntegrityError{
 				ID:       c.ID,
@@ -239,15 +265,20 @@ func VerifyChain(key []byte, rows []store.Change) []IntegrityError {
 // ordered by id. It is a compact, public fingerprint of the entire log that
 // can be committed elsewhere (git note, CI artifact) and verified later.
 // Empty log returns the empty string.
-func MerkleRoot(rows []store.Change) string {
+//
+// The marshal error is returned rather than ignored: silently hashing "" for a
+// row that failed to encode would weaken the fingerprint without any signal.
+func MerkleRoot(rows []store.Change) (string, error) {
 	if len(rows) == 0 {
-		return ""
+		return "", nil
 	}
 
 	hashes := make([][sha256.Size]byte, len(rows))
 	for i, c := range rows {
-		payload := payloadFromChange(c)
-		data, _ := json.Marshal(payload)
+		data, err := json.Marshal(payloadFromChange(c))
+		if err != nil {
+			return "", fmt.Errorf("marshal row %d for merkle leaf: %w", c.ID, err)
+		}
 		hashes[i] = sha256.Sum256(data)
 	}
 
@@ -267,7 +298,7 @@ func MerkleRoot(rows []store.Change) string {
 		}
 		hashes = next
 	}
-	return hex.EncodeToString(hashes[0][:])
+	return hex.EncodeToString(hashes[0][:]), nil
 }
 
 // RotateSalt generates a new integrity salt and re-signs every existing
@@ -315,7 +346,10 @@ func RotateSalt(root string, force bool) error {
 	var prev string
 	for i, c := range rows {
 		c.PrevHMAC = prev
-		c.HMAC = ComputeHMAC(newKey, c)
+		c.HMAC, err = ComputeHMAC(newKey, c)
+		if err != nil {
+			return fmt.Errorf("re-sign row %d: %w", c.ID, err)
+		}
 		updates[i] = update{id: c.ID, hmac: c.HMAC, prev: c.PrevHMAC}
 		prev = c.HMAC
 	}

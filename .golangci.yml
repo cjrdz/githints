@@ -1,0 +1,32 @@
+version: "2"
+
+# Deliberately close to the defaults. The point is to catch what `go vet` does
+# not — unused code, ignored errors, unreachable branches — not to enforce a
+# house style.
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    errcheck:
+      # Errors deliberately dropped in githints are written as `_ =` or
+      # `x, _ :=`, which errcheck reports only with check-blank enabled.
+      check-blank: false
+      check-type-assertions: true
+
+  exclusions:
+    # Covers the idiomatic cases errcheck flags but nobody handles: deferred
+    # Close on a reader we are done with, and fmt.Fprint* to stdout/stderr.
+    # Without this, errcheck reports 15 pre-existing sites whose only possible
+    # "fix" is `_ =` noise.
+    presets:
+      - std-error-handling
+    rules:
+      # Test helpers routinely ignore Close/Chdir errors in cleanup paths.
+      - path: _test\.go$
+        linters:
+          - errcheck

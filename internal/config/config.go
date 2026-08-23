@@ -84,10 +84,12 @@ func Load(root string) (Config, error) {
 	cfg := Default()
 
 	path := filepath.Join(root, ".githints", "config.json")
+	repoEnabledOllama := false
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &cfg); err != nil {
 			return Config{}, fmt.Errorf("parse %s: %w", path, err)
 		}
+		repoEnabledOllama = cfg.Ollama.Enabled
 	} else if !os.IsNotExist(err) {
 		return Config{}, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -103,6 +105,19 @@ func Load(root string) (Config, error) {
 		if err := validateIndex(cfg.Index); err != nil {
 			return Config{}, err
 		}
+	}
+
+	// config.json lives in the repository, so it can arrive in a clone. It
+	// cannot reach off-box (the endpoint must resolve to loopback and the
+	// request path is forced to /api/generate), but it can still choose which
+	// local port receives diff content. Say so loudly rather than starting
+	// egress a user never asked for.
+	if repoEnabledOllama && cfg.Ollama.Enabled {
+		fmt.Fprintf(os.Stderr,
+			"githints: NOTE: %s enables Ollama and will send diff content to %s.\n"+
+				"githints: This file came from the repository, not your environment. Delete it or set\n"+
+				"githints: GITHINTS_OLLAMA_ENABLED=0 if you did not intend this.\n",
+			path, cfg.Ollama.Endpoint)
 	}
 
 	return cfg, nil
@@ -177,6 +192,13 @@ func validateIndex(i Index) error {
 	return nil
 }
 
+// AllowNonLoopback reports whether the operator has explicitly opted out of
+// the local-only boundary. Exported so the HTTP client can enforce the same
+// rule at dial time, where the address is finally pinned.
+func AllowNonLoopback() bool {
+	return os.Getenv(allowNonLoopbackEnv) == "1"
+}
+
 // validateOllama enforces the local-only security boundary. It rejects
 // non-loopback endpoints unless the dedicated override env var is set.
 func validateOllama(o Ollama) error {
@@ -193,7 +215,7 @@ func validateOllama(o Ollama) error {
 		return fmt.Errorf("ollama.max_diff_bytes must be positive, got %d", o.MaxDiffBytes)
 	}
 
-	if os.Getenv(allowNonLoopbackEnv) == "1" {
+	if AllowNonLoopback() {
 		return nil
 	}
 

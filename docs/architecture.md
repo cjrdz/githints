@@ -114,8 +114,15 @@ The `hint` package reads the SQLite store and writes two kinds of artifacts:
 Both files are fully derived from the database, so they can be deleted and
 regenerated at any time (`githints init` re-creates an empty changelog).
 
-Markdown rendering escapes HTML and markdown metacharacters to prevent
-injection when the files are later rendered in an MCP client's webview.
+Both renderers escape agent-supplied text so it cannot inject markup when the
+files are rendered in an MCP client's webview. Prose fields go through `escape`
+(HTML entities plus backslash-escaped markdown metacharacters); values wrapped in
+a `` `code span` `` go through `codeSpan` instead, which strips backticks and
+newlines — `escape`'s backslashes would render literally inside a span.
+
+All writes go through `os.Root`, so a symlink or Windows junction under
+`.githints/` cannot redirect a render outside the repository. Path validation
+alone is lexical and cannot see links.
 
 ## Local Ollama integration
 
@@ -178,11 +185,15 @@ Every inserted row stores:
 - `hmac` — HMAC-SHA256 over a JSON payload of the row's immutable fields.
 
 `commit_hash` is intentionally excluded from the HMAC payload because
-`ClaimPending` mutates it after insertion. All other fields, including
-`diff_hash`, are included.
+`ClaimPendingTx` mutates it after insertion; the per-commit Merkle root in
+`refs/notes/githints` is what binds rows to their commit. All other fields are
+included, `diff_hash` and `clock_tamper_warning` among them — the latter must be
+signed, or clearing it in the database would erase the tamper evidence while the
+chain still verified clean. That is why the clock check runs in
+`store.CheckClockTamper` before the row is signed, rather than inside `Insert`.
 
-`githints verify` walks the chain and reports broken or missing links, plus
-any backward `recorded_at` jumps.
+`githints verify` walks the chain and reports broken or missing links, a
+non-empty `prev_hmac` on the first row, and any backward `recorded_at` jumps.
 
 ### Clock tamper detection
 
