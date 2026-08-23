@@ -94,9 +94,11 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
 
 `mcp-go` is pinned to a **pre-release** (`v1.0.0-beta.1`, the 2026-07-28 spec).
 Expect the API to move before v1.0.0 final; treat an upgrade as a real change
-with its own commit, not a routine bump. `go.mod` requires Go 1.25.5 because
-that is mcp-go's floor and because `os.Root.MkdirAll`/`WriteFile` arrived in
-1.25.
+with its own commit, not a routine bump. `go.mod` requires Go 1.25.14: the 1.25
+minor is mcp-go's floor and where `os.Root.MkdirAll`/`WriteFile` arrived, and
+.14 is the first patch in that line with the standard-library CVEs fixed. CI
+builds from this directive, so lowering it would ship release binaries against
+vulnerable stdlib.
 
 ### Cross-client support
 

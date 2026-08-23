@@ -5,8 +5,9 @@ and make changes.
 
 ## Requirements
 
-- Go 1.25.5 or later (the floor comes from `mark3labs/mcp-go` and from
-  `os.Root.MkdirAll`, which arrived in Go 1.25).
+- Go 1.25.14 or later. The 1.25 minor comes from `mark3labs/mcp-go` and from
+  `os.Root.MkdirAll`; the patch level is the first in that line with the
+  standard-library CVEs fixed, and `govulncheck` in CI enforces it.
 - Git.
 - Linux, macOS, or Windows (Windows requires [Git for Windows](https://gitforwindows.org/), which provides the POSIX sh used by the git hooks).
 - A C toolchain if you want to run `go test -race`, which needs cgo. On Windows,
