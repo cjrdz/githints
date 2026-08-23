@@ -24,7 +24,7 @@ archives:
   - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats: ["zip"]
     files:
       - LICENSE
       - README.md
@@ -33,18 +33,50 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-# One SBOM per archive, so consumers can see the dependency set a binary was
-# built from without reconstructing it from go.mod.
-sboms:
-  - artifacts: archive
+# No `sboms:` block on purpose. A static pure-Go binary already carries its
+# dependency graph: `go version -m githints` lists every module with its version
+# and h1: hash, and `govulncheck -mode=binary` scans the shipped artifact
+# directly. An SBOM would be a less convenient copy of that, at the cost of six
+# extra release assets and an unpinned syft install script in the workflow whose
+# whole purpose is supply-chain integrity. The provenance attestation stays,
+# because build origin is the one thing the binary cannot self-report.
 
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
+
+release:
+  # The annotated tag's body becomes the top of the release notes, so a
+  # per-release upgrade warning is written once — in the tag — instead of being
+  # bolted on afterwards with `gh release edit`.
+  header: |
+    {{ with .TagBody }}{{ . }}
+
+    {{ end }}
 
 changelog:
+  # Deliberately the default `git` backend rather than `github`: the latter
+  # calls the compare API, so it needs a live token and network at release time
+  # and fails the whole release when either is missing. Grouping below is what
+  # actually makes the notes readable, and it works offline.
   sort: asc
+  # 40-char SHAs made the v0.1.1 notes unreadable.
+  abbrev: 7
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Security
+      regexp: '^.*?sec(urity)?(\(.+\))??!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
   filters:
     exclude:
       - "^docs:"
       - "^test:"
+      - "^chore:"
       - "^Merge pull request"
+      - "^Merge branch"

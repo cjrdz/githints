@@ -98,6 +98,49 @@ stores must upgrade automatically when they open.
 6. Add a test in `internal/mcpserver/server_test.go` if the tool has
   non-trivial logic.
 
+## Cutting a release
+
+Work lands on `dev`, then `dev` merges to `main`. A release is cut by pushing an
+annotated tag on `main`:
+
+```sh
+git checkout main && git pull
+git tag -a v0.1.2 -F -   # see below for what the message should contain
+git push origin v0.1.2
+```
+
+Two things follow from that tag:
+
+- **The tag body becomes the release notes.** `.goreleaser.yml` puts
+  `{{ .TagBody }}` at the top of the generated notes, so any upgrade warning
+  belongs in the tag message — write it once there rather than fixing the
+  release afterwards with `gh release edit`. Everything below it is a changelog
+  grouped by Conventional Commit type.
+- **The release cannot publish unless CI passes on that commit.** `release.yml`
+  calls `ci.yml` as a reusable workflow and the publish job declares
+  `needs: checks`, so the six binaries only ship after `build` has succeeded on
+  ubuntu, macOS, and Windows and after `lint` and `vulncheck` are green.
+
+To check what a release would produce without publishing anything:
+
+```sh
+goreleaser check
+goreleaser release --clean --skip=publish,announce,validate
+cat dist/CHANGELOG.md
+```
+
+`dist/` is gitignored.
+
+There are deliberately **no SBOMs**. A static pure-Go binary already carries its
+dependency graph — `go version -m githints` lists every module with its version
+and `h1:` hash, and `govulncheck -mode=binary` scans a shipped artifact
+directly. The provenance attestation is kept, because build origin is the one
+thing the binary cannot self-report:
+
+```sh
+gh attestation verify <file> --repo cjrdz/githints
+```
+
 ## Self-tracking
 
 githints can track its own development. After running `githints init` in the
