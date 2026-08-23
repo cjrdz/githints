@@ -2,15 +2,40 @@ version: 2
 
 # The mcp-go upgrade that prompted this file spanned 30 releases. This is the
 # gap Dependabot exists to close.
+#
+# Note: Dependabot only ever reads this file from the default branch (main),
+# regardless of what target-branch says.
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Work integrates on dev and is promoted to main, so send update PRs there.
+    # Without this, Dependabot targets the default branch and main drifts ahead
+    # of dev on go.mod, which then has to be reconciled by hand.
+    target-branch: dev
+    # `all` is required to cover the `// indirect` block. The default keeps only
+    # explicitly-declared direct dependencies up to date, and for gomod the
+    # indirect entries do not count as explicit — so golang.org/x/text, which
+    # needed a manual bump for a CVE during v0.1.1, would never have produced a
+    # PR. govulncheck in CI catches those, but only once something is pushed.
+    allow:
+      - dependency-type: all
+    groups:
+      # One PR per ecosystem sweep rather than up to five competing ones. The
+      # indirect set is large and moves together, so grouping keeps the noise
+      # proportional to the risk.
+      go-dependencies:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    target-branch: dev
+    groups:
+      github-actions:
+        patterns: ["*"]
