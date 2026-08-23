@@ -2,11 +2,16 @@ name: CI
 
 # dev is included so work merges into it under the same gates as main.
 # Without it, a PR targeting dev runs no checks at all.
+#
+# workflow_call lets release.yml gate publishing on these same jobs instead of
+# duplicating them. A tag push matches no `branches:` filter, so tagging does
+# not start a second, redundant CI run.
 on:
   push:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  workflow_call:
 
 # Least privilege by default; no job here needs write access.
 permissions:

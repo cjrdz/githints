@@ -5,30 +5,38 @@ on:
     tags:
       - "v*"
 
+# Least privilege at the top; only the release job elevates. This also caps what
+# the reusable CI workflow can do when called below.
 permissions:
-  contents: write
-  # Required for the build-provenance attestation below.
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
+  # The full CI suite — build on ubuntu/macos/windows, plus lint and
+  # govulncheck — reused rather than duplicated. `needs` on this job is what
+  # makes publishing the last stage of the pipeline: a tag cannot ship binaries
+  # unless all three platforms compiled and every check passed on that commit.
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: checks
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Required for the build-provenance attestation below.
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # GoReleaser needs full history and tags to build the changelog.
           fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-
-      - name: Install syft (for SBOMs)
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sh -s -- -b /usr/local/bin
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
@@ -39,8 +47,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Binaries previously shipped with nothing but a checksums.txt. This
-      # records who built them, from which commit, with which workflow.
+      # Records who built these artifacts, from which commit, with which
+      # workflow. Unlike a dependency list, this is not recoverable from the
+      # binary itself, which is why it stays.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
