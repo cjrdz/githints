@@ -1,10 +1,12 @@
 name: CI
 
+# dev is included so work merges into it under the same gates as main.
+# Without it, a PR targeting dev runs no checks at all.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 # Least privilege by default; no job here needs write access.
 permissions:
