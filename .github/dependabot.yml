@@ -9,7 +9,7 @@ updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     open-pull-requests-limit: 5
     # Work integrates on dev and is promoted to main, so send update PRs there.
     # Without this, Dependabot targets the default branch and main drifts ahead
@@ -33,7 +33,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     open-pull-requests-limit: 5
     target-branch: dev
     groups:
