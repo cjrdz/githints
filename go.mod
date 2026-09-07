@@ -7,7 +7,7 @@ module github.com/cjrdz/githints
 go 1.25.14
 
 require (
-	github.com/mark3labs/mcp-go v1.0.0-beta.1
+	github.com/mark3labs/mcp-go v1.0.0
 	modernc.org/sqlite v1.58.0
 )
 
