@@ -204,6 +204,9 @@ Environment overrides: `GITHINTS_INDEX_ENABLED`, `GITHINTS_INDEX_LANGUAGES`,
 `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
 `GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_OBSIDIAN_WIKILINKS`.
 
+`GITHINTS_INDEX_LANGUAGES` is a comma-separated list that replaces the
+configured set outright; names are trimmed and case-folded.
+
 A repo selects from the languages the binary supports via `index.languages`
 (default `["go"]`). It cannot add new languages; language parsers live in the
 githints project itself under `internal/index/lang/` and are registered in

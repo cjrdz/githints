@@ -416,9 +416,20 @@ packages, external modules, unresolvable path aliases — render as plain
 text. With `obsidian_wikilinks` enabled, links render as `[[wikilinks]]`
 instead.
 
-Environment overrides: `GITHINTS_INDEX_ENABLED`,
+Environment overrides: `GITHINTS_INDEX_ENABLED`, `GITHINTS_INDEX_LANGUAGES`,
 `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
 `GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_OBSIDIAN_WIKILINKS`.
+
+`GITHINTS_INDEX_LANGUAGES` takes a comma-separated list and replaces the
+configured set outright rather than adding to it. Names are trimmed and
+case-folded, so `Go, TypeScript` and `go,typescript` are equivalent:
+
+```sh
+GITHINTS_INDEX_LANGUAGES=go,typescript githints index
+```
+
+A value that parses to nothing is ignored, leaving the configured list in
+place.
 
 ## Pre-commit gate
 

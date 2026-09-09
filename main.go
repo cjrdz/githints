@@ -921,10 +921,11 @@ func cmdIndexLanguages(args []string) error {
 	}
 
 	if haveConfig {
-		// config.Load falls back to built-in defaults when the file is
-		// absent, so this must not claim the file is where the set came from.
+		// The set may have come from config.json, GITHINTS_INDEX_LANGUAGES, or
+		// the built-in default, so name the levers rather than claiming a source.
 		fmt.Println()
-		fmt.Println(`change the enabled set with "index.languages" in .githints/config.json`)
+		fmt.Println(`change the enabled set with "index.languages" in .githints/config.json,`)
+		fmt.Println(`or the GITHINTS_INDEX_LANGUAGES environment variable`)
 	}
 	return nil
 }
