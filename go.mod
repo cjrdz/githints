@@ -2,9 +2,10 @@ module github.com/cjrdz/githints
 
 // 1.25.5 is mcp-go's floor, but that patch release ships standard-library CVEs
 // (net/url, crypto/tls, crypto/x509, net/http, encoding/asn1, net/textproto),
-// all fixed by 1.25.13. CI builds from this directive, so pinning the floor at
-// the vulnerable minimum would ship release binaries against vulnerable stdlib.
-go 1.26.0
+// all fixed by 1.25.13. Go 1.26.0–1.26.5 carry the same CVE classes, so we pin
+// the floor at 1.26.7. CI builds from this directive, so pinning the floor at
+// a vulnerable minimum would ship release binaries against a vulnerable stdlib.
+go 1.26.7
 
 require (
 	github.com/mark3labs/mcp-go v1.0.0
