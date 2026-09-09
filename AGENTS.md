@@ -59,10 +59,14 @@ CLI:
 
 When the repo has a structural index, orient yourself with code-level queries:
 
-- `list_symbols(file="...")` / `./githints index list-symbols -file="..."`
-- `get_dependents(file="...")` / `./githints index dependents -file="..."`
-- `find_symbol(name="...")` / `./githints index find-symbol -name="..."`
-- `get_index_summary(limit=10)` / `./githints index summary`
+- `list_symbols(file="...")`
+- `get_dependents(file="...")`
+- `find_symbol(name="...")`
+- `get_index_summary(limit=10)`
+
+These four are MCP-only; there is no CLI equivalent. Without the MCP server,
+read the rendered notes under `.githints/index/` and the `.githints/INDEX.md`
+rollup, which carry the same information.
 
 Every index tool response includes `last_indexed_at`, so you can decide whether
 the data is fresh enough or whether to re-index.
