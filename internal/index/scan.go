@@ -22,6 +22,9 @@ import (
 // maxBytes. Use force to override either guard.
 func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error {
 	registry := lang.NewRegistry()
+	// Strict on purpose. The user ran `githints index`, so an unsupported
+	// language is worth stopping for, and the error names the supported set.
+	// IncrementalScan is deliberately lenient; see the comment there.
 	parsers, err := registry.ResolveLanguages(opts.Languages)
 	if err != nil {
 		return err
@@ -301,9 +304,19 @@ func parseWithTimeout(p lang.LanguageParser, rel string, src []byte, timeout tim
 // their rows replaced. This is the hook path used in Phase 2.
 func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 	registry := lang.NewRegistry()
-	parsers, err := registry.ResolveLanguages(opts.Languages)
+	// Lenient on purpose: this runs from the post-commit hook, which only
+	// warns on a scan error, so a hard failure here means the commit succeeds
+	// while the index silently stops updating forever. FullScan and
+	// VerifyIndex stay strict because the user invoked those directly and an
+	// error is the answer they asked for.
+	parsers, unknown, err := registry.ResolveKnownLanguages(opts.Languages)
 	if err != nil {
 		return err
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"githints: index: ignoring unsupported language(s) %s; indexing the rest (supported: %s)\n",
+			strings.Join(unknown, ", "), strings.Join(registry.Languages(), ", "))
 	}
 	set := lang.ParserSet(parsers)
 	extMap := lang.ExtensionMap(set)

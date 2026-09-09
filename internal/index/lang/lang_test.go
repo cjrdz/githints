@@ -222,6 +222,31 @@ func TestResolveLanguagesErrorListsSupported(t *testing.T) {
 	}
 }
 
+func TestResolveKnownLanguagesSkipsUnknown(t *testing.T) {
+	r := NewRegistry()
+	known := r.Languages()[0]
+
+	parsers, unknown, err := r.ResolveKnownLanguages([]string{known, unregisteredLanguage})
+	if err != nil {
+		t.Fatalf("ResolveKnownLanguages: %v", err)
+	}
+	if len(parsers) != 1 || strings.ToLower(parsers[0].Language()) != known {
+		t.Errorf("parsers = %v, want just %s", parsers, known)
+	}
+	if len(unknown) != 1 || unknown[0] != unregisteredLanguage {
+		t.Errorf("unknown = %v, want [%s]", unknown, unregisteredLanguage)
+	}
+}
+
+// TestResolveKnownLanguagesErrorsWhenNoneKnown guards against degrading into a
+// scan with no parsers, which would index nothing and report success.
+func TestResolveKnownLanguagesErrorsWhenNoneKnown(t *testing.T) {
+	r := NewRegistry()
+	if _, _, err := r.ResolveKnownLanguages([]string{unregisteredLanguage}); err == nil {
+		t.Fatal("expected an error when no configured language is supported")
+	}
+}
+
 // TestRegistryRegistersKnownLanguages pins that the parsers shipped today are
 // still wired into the registry. It is a subset check on purpose: adding a
 // language must not require editing it.

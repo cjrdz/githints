@@ -132,17 +132,48 @@ func (r *Registry) Languages() []string {
 // The error names the supported set. Without it a user who configured a
 // language this binary does not have gets told only that their choice is
 // wrong, with nothing in the CLI to tell them what would be right.
+//
+// Use this for work the user invoked directly, where stopping with a clear
+// error is the helpful answer. Unattended callers should use
+// ResolveKnownLanguages instead.
 func (r *Registry) ResolveLanguages(names []string) ([]LanguageParser, error) {
-	out := make([]LanguageParser, 0, len(names))
-	for _, name := range names {
-		p := r.ForLanguage(name)
-		if p == nil {
-			return nil, fmt.Errorf("unsupported index language: %q (supported: %s)",
-				name, strings.Join(r.Languages(), ", "))
-		}
-		out = append(out, p)
+	parsers, unknown, err := r.ResolveKnownLanguages(names)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("unsupported index language: %q (supported: %s)",
+			unknown[0], strings.Join(r.Languages(), ", "))
+	}
+	return parsers, nil
+}
+
+// ResolveKnownLanguages returns parsers for every name it recognizes and
+// reports the rest, rather than failing on the first unknown one. It errors
+// only when nothing was recognized, because a scan with no parsers would index
+// nothing while reporting success.
+//
+// This exists for callers that run unattended. config.json travels in clones,
+// so a repo naming a language that some teammate's older binary does not have
+// would otherwise stop that teammate's index dead: the post-commit hook only
+// warns on a scan error, so the commit succeeds and the index silently never
+// updates again. Skipping the unknown name and indexing the rest keeps the
+// failure visible without making it fatal.
+func (r *Registry) ResolveKnownLanguages(names []string) ([]LanguageParser, []string, error) {
+	parsers := make([]LanguageParser, 0, len(names))
+	var unknown []string
+	for _, name := range names {
+		if p := r.ForLanguage(name); p != nil {
+			parsers = append(parsers, p)
+			continue
+		}
+		unknown = append(unknown, name)
+	}
+	if len(parsers) == 0 {
+		return nil, unknown, fmt.Errorf("no supported index language configured: %q (supported: %s)",
+			names, strings.Join(r.Languages(), ", "))
+	}
+	return parsers, unknown, nil
 }
 
 // ExtensionOf returns the lower-case extension of path, or empty string.

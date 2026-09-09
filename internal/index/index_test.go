@@ -726,6 +726,85 @@ func TestIncrementalScanUpdatesOnlyChangedFiles(t *testing.T) {
 	}
 }
 
+// TestIncrementalScanSkipsUnknownLanguage is the regression guard for a silent
+// failure mode. config.json travels in clones, so a repo naming a language that
+// a teammate's older binary lacks used to abort the whole incremental scan.
+// The post-commit hook only warns on a scan error, so their commit succeeded
+// while the index stopped updating -- permanently, and near-invisibly.
+func TestIncrementalScanSkipsUnknownLanguage(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"go", "klingon"},
+		MaxFileSize:  1024,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := IncrementalScan(st, opts, []string{"a.go"}); err != nil {
+		t.Fatalf("IncrementalScan should skip the unknown language, got: %v", err)
+	}
+
+	syms, err := st.SymbolsForFile("a.go")
+	if err != nil {
+		t.Fatalf("SymbolsForFile: %v", err)
+	}
+	if len(syms) != 1 {
+		t.Errorf("a.go symbols = %d, want 1; the known language must still be indexed", len(syms))
+	}
+}
+
+// TestIncrementalScanFailsWhenNoLanguageIsKnown pins the other half: skipping
+// every language would index nothing while reporting success, which is the
+// same silent failure in a different costume.
+func TestIncrementalScanFailsWhenNoLanguageIsKnown(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"klingon"},
+		MaxFileSize:  1024,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := IncrementalScan(st, opts, []string{"a.go"}); err == nil {
+		t.Fatal("expected an error when no configured language is supported")
+	}
+}
+
+// TestFullScanStillRejectsUnknownLanguage pins the deliberate asymmetry: the
+// user ran this command, so the unsupported name is worth stopping for.
+func TestFullScanStillRejectsUnknownLanguage(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"go", "klingon"},
+		MaxFileSize:  1024,
+		ParseTimeout: 5 * time.Second,
+	}
+	err := FullScan(st, opts, false, 0)
+	if err == nil {
+		t.Fatal("FullScan should reject an unsupported language")
+	}
+	if !strings.Contains(err.Error(), "klingon") {
+		t.Errorf("error should name the unsupported language, got: %v", err)
+	}
+}
+
 func initGitRepo(t *testing.T, root string) {
 	t.Helper()
 	cmd := exec.Command("git", "init", "-q", root)
