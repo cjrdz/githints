@@ -192,6 +192,36 @@ func TestRegistry(t *testing.T) {
 	}
 }
 
+// TestLanguagesIsSorted pins the ordering. Languages() is built by ranging a
+// map, so without an explicit sort the CLI listing and the ResolveLanguages
+// error message would both shuffle between runs.
+func TestLanguagesIsSorted(t *testing.T) {
+	got := NewRegistry().Languages()
+	for i := 1; i < len(got); i++ {
+		if got[i-1] > got[i] {
+			t.Fatalf("Languages() not sorted: %v", got)
+		}
+	}
+}
+
+// TestResolveLanguagesErrorListsSupported checks the error is actionable. The
+// user who sees it has, by definition, guessed wrong about what is supported.
+func TestResolveLanguagesErrorListsSupported(t *testing.T) {
+	r := NewRegistry()
+	_, err := r.ResolveLanguages([]string{unregisteredLanguage})
+	if err == nil {
+		t.Fatal("expected an error for an unsupported language")
+	}
+	if !strings.Contains(err.Error(), unregisteredLanguage) {
+		t.Errorf("error should name the rejected language, got: %v", err)
+	}
+	for _, name := range r.Languages() {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error should list supported language %q, got: %v", name, err)
+		}
+	}
+}
+
 // TestRegistryRegistersKnownLanguages pins that the parsers shipped today are
 // still wired into the registry. It is a subset check on purpose: adding a
 // language must not require editing it.

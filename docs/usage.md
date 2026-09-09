@@ -360,6 +360,16 @@ into the binary:
 | `svelte` | `.svelte` (`<script>` blocks) | heuristic, via the TypeScript parser |
 | `astro` | `.astro` (frontmatter + `<script>` blocks) | heuristic, via the TypeScript parser |
 
+This table is hand-maintained. To see what the binary you are running actually
+supports — and which of those languages this repo has enabled:
+
+```sh
+githints index languages
+```
+
+An unsupported name in `index.languages` is rejected with the supported set
+named in the error.
+
 TypeScript-family notes:
 
 - Relative imports (`./x`, `../x`) are resolved to repo-relative file keys —

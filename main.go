@@ -85,6 +85,7 @@ Usage:
   githints index                  re-index the structural symbol cache
   githints index status           show index statistics
   githints index verify           report drift between the index and the repo
+  githints index languages        list the languages this binary can index
   githints version                print the githints version`
 
 func cmdVersion() error {
@@ -818,11 +819,20 @@ func cmdIndex(args []string) error {
 	if len(args) > 0 && args[0] == "verify" {
 		return cmdIndexVerify(args[1:])
 	}
+	if len(args) > 0 && args[0] == "languages" {
+		return cmdIndexLanguages(args[1:])
+	}
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
 	obsidian := fs.Bool("obsidian", false, "render Obsidian wikilinks in index notes")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// flag.Parse stops at the first non-flag argument and leaves it in Args(),
+	// so without this a mistyped subcommand ("index langauges") silently falls
+	// through to a full rebuild — which clears the index and VACUUMs the file.
+	if rest := fs.Args(); len(rest) > 0 {
+		return fmt.Errorf("unknown index subcommand: %s", rest[0])
 	}
 
 	root, err := gitutil.RepoRoot()
@@ -861,6 +871,61 @@ func cmdIndex(args []string) error {
 		return fmt.Errorf("index meta: %w", err)
 	}
 	fmt.Printf("indexed %d files, %d symbols\n", meta.FileCount, meta.SymbolCount)
+	return nil
+}
+
+// cmdIndexLanguages prints the languages this binary can index, with the file
+// extensions each one claims.
+//
+// It deliberately needs no repository, no config, and no database: which
+// languages exist is a property of the binary. That is the whole point — a
+// user whose configured language was rejected has, without this, no way to ask
+// what would have been accepted. When there *is* a repo to consult, each
+// language is additionally marked with whether the current config enables it,
+// which is the usual reason a file is not showing up in the index.
+func cmdIndexLanguages(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("unknown index languages argument: %s", args[0])
+	}
+
+	r := lang.NewRegistry()
+
+	// Best-effort: outside a repo, or with an unreadable config, the plain
+	// list is still the correct answer to "what does this binary support".
+	enabled := map[string]bool{}
+	haveConfig := false
+	if root, err := gitutil.RepoRoot(); err == nil {
+		if cfg, err := config.Load(root); err == nil {
+			haveConfig = true
+			for _, name := range cfg.Index.Languages {
+				enabled[strings.ToLower(name)] = true
+			}
+		}
+	}
+
+	fmt.Println("languages this githints binary can index:")
+	for _, name := range r.Languages() {
+		p := r.ForLanguage(name)
+		exts := append([]string(nil), p.Extensions()...)
+		sort.Strings(exts)
+
+		line := fmt.Sprintf("  %-12s %s", name, strings.Join(exts, " "))
+		if haveConfig {
+			if enabled[name] {
+				line += "  [enabled]"
+			} else {
+				line += "  [not enabled]"
+			}
+		}
+		fmt.Println(line)
+	}
+
+	if haveConfig {
+		// config.Load falls back to built-in defaults when the file is
+		// absent, so this must not claim the file is where the set came from.
+		fmt.Println()
+		fmt.Println(`change the enabled set with "index.languages" in .githints/config.json`)
+	}
 	return nil
 }
 

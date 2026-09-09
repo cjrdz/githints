@@ -113,24 +113,32 @@ func (r *Registry) AllParsers() []LanguageParser {
 	return out
 }
 
-// Languages reports every supported language name.
+// Languages reports every supported language name, sorted. The order is
+// deterministic because it reaches users directly: `githints index languages`
+// prints it, and ResolveLanguages puts it in an error message.
 func (r *Registry) Languages() []string {
 	out := make([]string, 0, len(r.parsers))
 	for name := range r.parsers {
 		out = append(out, name)
 	}
+	stringsSort(out)
 	return out
 }
 
 // ResolveLanguages validates a list of configured languages against the
 // registry and returns a parser slice in the same order. It returns an error
 // if any language is unsupported.
+//
+// The error names the supported set. Without it a user who configured a
+// language this binary does not have gets told only that their choice is
+// wrong, with nothing in the CLI to tell them what would be right.
 func (r *Registry) ResolveLanguages(names []string) ([]LanguageParser, error) {
 	out := make([]LanguageParser, 0, len(names))
 	for _, name := range names {
 		p := r.ForLanguage(name)
 		if p == nil {
-			return nil, fmt.Errorf("unsupported index language: %q", name)
+			return nil, fmt.Errorf("unsupported index language: %q (supported: %s)",
+				name, strings.Join(r.Languages(), ", "))
 		}
 		out = append(out, p)
 	}

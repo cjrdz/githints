@@ -174,6 +174,8 @@ time.
     ./githints index verify       # report drift (stale notes, ghost rows,
                                   # uncovered source files with reasons); exits
                                   # non-zero on drift
+    ./githints index languages    # list the languages this binary can index,
+                                  # and which are enabled in this repo
     ./githints index --obsidian   # render index notes as Obsidian wikilinks
 
 The index is updated automatically by the post-commit hook when indexing is
@@ -203,6 +205,10 @@ A repo selects from the languages the binary supports via `index.languages`
 githints project itself under `internal/index/lang/` and are registered in
 `NewRegistry()`. Currently supported: `go`, `typescript` (including `.js`,
 `.jsx`, `.mts`, `.cts`), `svelte`, and `astro`.
+
+That list is hand-maintained and can fall behind the binary you are running.
+`./githints index languages` reports the authoritative set, along with which
+languages the current repo has enabled.
 
 ### Import resolution and tsconfig aliases
 
