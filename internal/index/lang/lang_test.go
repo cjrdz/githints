@@ -3,6 +3,7 @@ package lang
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -105,49 +106,111 @@ func TestGoParserHandlesEmptyFile(t *testing.T) {
 	}
 }
 
+// unregisteredLanguage is a name no parser will ever claim. Using a plausible
+// language here (this test used to use "rust") turns the negative assertions
+// into a tripwire that fires the day that language is added.
+const unregisteredLanguage = "definitely-not-a-language"
+
+// TestRegistry asserts the invariants that must hold for *any* registry,
+// whatever is registered in it. Nothing here counts parsers or names them, so
+// adding a language cannot break it; see TestRegistryRegistersKnownLanguages
+// for the coverage that a specific parser is still wired up.
 func TestRegistry(t *testing.T) {
 	r := NewRegistry()
-	got := r.Languages()
-	if len(got) != 4 {
-		t.Errorf("Languages = %v, want 4 languages", got)
+
+	names := r.Languages()
+	if len(names) == 0 {
+		t.Fatal("Languages() is empty; no parsers registered")
 	}
-	for _, name := range []string{"go", "typescript", "svelte", "astro"} {
-		if p := r.ForLanguage(name); p == nil {
-			t.Errorf("ForLanguage(%s) = nil", name)
-		}
-	}
-	if p := r.ForPath("foo.go"); p == nil {
-		t.Error("ForPath(foo.go) = nil")
-	}
-	if p := r.ForPath("foo.ts"); p == nil {
-		t.Error("ForPath(foo.ts) = nil")
-	}
-	if p := r.ForPath("foo.svelte"); p == nil {
-		t.Error("ForPath(foo.svelte) = nil")
-	}
-	if p := r.ForPath("foo.astro"); p == nil {
-		t.Error("ForPath(foo.astro) = nil")
-	}
-	if p := r.ForLanguage("rust"); p != nil {
-		t.Error("ForLanguage(rust) should be nil")
+	if len(names) != len(r.AllParsers()) {
+		t.Errorf("Languages() = %d names but AllParsers() = %d parsers", len(names), len(r.AllParsers()))
 	}
 
-	parsers, err := r.ResolveLanguages([]string{"go"})
+	seenExt := make(map[string]string)
+	for _, name := range names {
+		p := r.ForLanguage(name)
+		if p == nil {
+			t.Errorf("ForLanguage(%q) = nil for a name Languages() reported", name)
+			continue
+		}
+		if got := strings.ToLower(p.Language()); got != name {
+			t.Errorf("Languages() reported %q but parser calls itself %q", name, got)
+		}
+
+		// Language names are serialized into the meta row as "name:count"
+		// pairs joined by commas (EncodeLanguageCounts). ':' is rejected
+		// there, but ',' is not and would silently corrupt the decode.
+		if strings.ContainsAny(name, ":,") {
+			t.Errorf("language %q contains ':' or ',', which EncodeLanguageCounts cannot round-trip", name)
+		}
+
+		// Case-insensitive lookup is relied on by config, where users type
+		// the language name by hand.
+		if r.ForLanguage(strings.ToUpper(name)) != p {
+			t.Errorf("ForLanguage(%q) is case-sensitive", name)
+		}
+
+		exts := p.Extensions()
+		if len(exts) == 0 {
+			t.Errorf("%s claims no extensions, so no file can ever select it", name)
+		}
+		for _, ext := range exts {
+			if !strings.HasPrefix(ext, ".") || ext != strings.ToLower(ext) {
+				t.Errorf("%s: extension %q must be lower-case and dot-prefixed", name, ext)
+			}
+			if owner, dup := seenExt[ext]; dup {
+				t.Errorf("extension %q claimed by both %s and %s", ext, owner, name)
+			}
+			seenExt[ext] = name
+			if got := r.ForPath("foo" + ext); got != p {
+				t.Errorf("ForPath(foo%s) did not resolve back to %s", ext, name)
+			}
+		}
+	}
+
+	if p := r.ForLanguage(unregisteredLanguage); p != nil {
+		t.Errorf("ForLanguage(%q) = %v, want nil", unregisteredLanguage, p)
+	}
+
+	// ResolveLanguages must accept everything the registry advertises, and
+	// preserve the caller's order.
+	parsers, err := r.ResolveLanguages(names)
 	if err != nil {
-		t.Fatalf("ResolveLanguages: %v", err)
+		t.Fatalf("ResolveLanguages(%v): %v", names, err)
 	}
-	if len(parsers) != 1 {
-		t.Fatalf("parsers = %d", len(parsers))
+	if len(parsers) != len(names) {
+		t.Fatalf("ResolveLanguages returned %d parsers for %d names", len(parsers), len(names))
 	}
-	parsers, err = r.ResolveLanguages([]string{"typescript", "svelte", "astro"})
-	if err != nil {
-		t.Fatalf("ResolveLanguages: %v", err)
+	for i, name := range names {
+		if strings.ToLower(parsers[i].Language()) != name {
+			t.Errorf("ResolveLanguages[%d] = %s, want %s (order not preserved)", i, parsers[i].Language(), name)
+		}
 	}
-	if len(parsers) != 3 {
-		t.Fatalf("parsers = %d", len(parsers))
-	}
-	if _, err := r.ResolveLanguages([]string{"go", "rust"}); err == nil {
+
+	if _, err := r.ResolveLanguages([]string{names[0], unregisteredLanguage}); err == nil {
 		t.Error("expected unsupported language error")
+	}
+}
+
+// TestRegistryRegistersKnownLanguages pins that the parsers shipped today are
+// still wired into the registry. It is a subset check on purpose: adding a
+// language must not require editing it.
+func TestRegistryRegistersKnownLanguages(t *testing.T) {
+	r := NewRegistry()
+	for _, tc := range []struct{ language, path string }{
+		{"go", "foo.go"},
+		{"typescript", "foo.ts"},
+		{"svelte", "foo.svelte"},
+		{"astro", "foo.astro"},
+	} {
+		p := r.ForLanguage(tc.language)
+		if p == nil {
+			t.Errorf("ForLanguage(%s) = nil", tc.language)
+			continue
+		}
+		if got := r.ForPath(tc.path); got != p {
+			t.Errorf("ForPath(%s) did not resolve to the %s parser", tc.path, tc.language)
+		}
 	}
 }
 
