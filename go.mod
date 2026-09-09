@@ -4,7 +4,7 @@ module github.com/cjrdz/githints
 // (net/url, crypto/tls, crypto/x509, net/http, encoding/asn1, net/textproto),
 // all fixed by 1.25.13. CI builds from this directive, so pinning the floor at
 // the vulnerable minimum would ship release binaries against vulnerable stdlib.
-go 1.25.14
+go 1.26.0
 
 require (
 	github.com/mark3labs/mcp-go v1.0.0
@@ -21,9 +21,9 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
-	modernc.org/libc v1.75.6 // indirect
+	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
