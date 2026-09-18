@@ -8,8 +8,8 @@ module github.com/cjrdz/githints
 go 1.26.7
 
 require (
-	github.com/mark3labs/mcp-go v1.0.0
-	modernc.org/sqlite v1.58.0
+	github.com/mark3labs/mcp-go v1.1.0
+	modernc.org/sqlite v1.59.0
 )
 
 require (
