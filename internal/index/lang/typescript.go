@@ -2,6 +2,7 @@ package lang
 
 import (
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -73,17 +74,6 @@ func resolveTSImport(importerFile, spec string) string {
 	}
 	joined := path.Join(path.Dir(importerFile), spec)
 	return tsFileKey(joined)
-}
-
-// isTSCodeExtension reports whether ext (with leading dot, lower case) is a
-// TS-family code extension. Used by LocalImportPath.
-func isTSCodeExtension(ext string) bool {
-	for _, e := range tsCodeExtensions {
-		if e == ext {
-			return true
-		}
-	}
-	return false
 }
 
 // --- import extraction -----------------------------------------------------
@@ -451,3 +441,9 @@ func tsNextLineContinues(next string) bool {
 
 // BeginScan installs the tsconfig path aliases this parser resolves against.
 func (TypeScriptParser) BeginScan(root string) func() { return beginTSScan(root) }
+
+// ImportPath maps the file to the key TypeScript importers resolve to:
+// the repo-relative path with the code extension and a trailing /index removed.
+func (TypeScriptParser) ImportPath(_, file string) (string, error) {
+	return tsFileKey(filepath.ToSlash(file)), nil
+}

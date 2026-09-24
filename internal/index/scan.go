@@ -397,7 +397,7 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 			fmt.Fprintf(os.Stderr, "githints: index insert imports failed: %s: %v\n", path, err)
 			continue
 		}
-		if err := renderFileNote(db, opts.Root, path, opts.Obsidian, resolveImportPaths(db, opts.Root)); err != nil {
+		if err := renderFileNote(db, opts.Root, path, opts.Obsidian, resolveImportPaths(db, opts.Root, registry), registry); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index note render failed: %s: %v\n", path, err)
 		}
 	}
@@ -411,7 +411,7 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 	if err := db.SetMeta(meta); err != nil {
 		return fmt.Errorf("set index meta: %w", err)
 	}
-	if err := renderIndexRollup(db, opts.Root, opts.Obsidian); err != nil {
+	if err := renderIndexRollup(db, opts.Root, opts.Obsidian, registry); err != nil {
 		return fmt.Errorf("render index rollup: %w", err)
 	}
 

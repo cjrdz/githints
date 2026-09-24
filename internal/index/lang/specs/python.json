@@ -46,6 +46,13 @@
     }
   ],
 
+  // A module is named by its path with dots: app/service.py is "app.service",
+  // and a package's __init__.py stands for the directory itself. This is the
+  // inverse of the import rules below, and what puts Python files in the
+  // dependency graph rather than only in the symbol list.
+  "import_path": "dotted",
+  "import_path_index_names": ["__init__"],
+
   "imports": [
     { "requires": "import", "pattern": "^\\s*from\\s+(?P<path>[.\\w]+)\\s+import\\b" },
     { "requires": "import", "pattern": "^\\s*import\\s+(?P<path>[\\w.]+)" }

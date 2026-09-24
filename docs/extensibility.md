@@ -292,9 +292,19 @@ they can add a language but never redefine one the binary provides.
 ### Phase 4 — Import resolution and scan hooks
 
 12. `BeginScan` optional interface; move `activeTSPaths` install/teardown onto
-    it and delete the duplicated edits at `scan.go:34` and `scan.go:313`.
+    it and delete the duplicated edits in both scan entry points. *(done)*
 13. `ImportPath` optional interface; `LocalImportPath` consults the registry
-    instead of switching on extension.
+    instead of switching on extension. *(done)*
+
+Spec-driven languages join the graph by declaring `import_path`: `slash` for
+the TypeScript-style file key, `dotted` for Python- and Java-style module
+names, with `import_path_index_names` for stems that stand for their directory
+(`__init__`, `index`). A spec that declares none simply does not implement the
+interface, rather than inventing a key nothing would match.
+
+`ImportPath` is the inverse of a language's import rules, and nothing enforces
+that the two agree, so a language implementing it should be tested against its
+own extraction. `TestPythonImportPathRoundTrip` is the pattern.
 
 ### Phase 5 — Facets
 

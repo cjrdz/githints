@@ -6,9 +6,10 @@ package lang
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -174,7 +175,7 @@ func (r *Registry) Languages() []string {
 	for name := range r.parsers {
 		out = append(out, name)
 	}
-	stringsSort(out)
+	sort.Strings(out)
 	return out
 }
 
@@ -270,47 +271,59 @@ type ScanOptions struct {
 	Obsidian     bool
 }
 
-// LocalImportPath returns the in-repo import path for a source file. For Go
-// files this is the module path from go.mod joined with the file's directory.
-// For TypeScript-family files (.ts/.tsx/.js/.../.svelte/.astro) it is the
-// normalized file key that importers resolve to: the repo-relative path with
-// the code extension and a trailing "/index" stripped, matching how the
-// TypeScript parser stores relative import specifiers. If the language cannot
-// be determined, it returns an error. This is used by the get_dependents MCP
-// tool to map a repo-relative file path back to the import path other files
-// use to import it.
-func LocalImportPath(root, file string) (string, error) {
-	ext := strings.ToLower(filepath.Ext(file))
-	switch {
-	case ext == ".go":
-		module, err := readModulePath(root)
-		if err != nil {
-			return "", fmt.Errorf("read module path: %w", err)
-		}
-		dir := filepath.ToSlash(filepath.Dir(file))
-		if dir == "." || dir == "" {
-			return module, nil
-		}
-		return module + "/" + dir, nil
-	case isTSCodeExtension(ext):
-		return tsFileKey(filepath.ToSlash(file)), nil
-	}
-	return "", fmt.Errorf("unsupported language for import path resolution: %s", ext)
+// ImportPathResolver is implemented by parsers whose language has a notion of
+// the key other files import a file by: a Go module path, a TypeScript file
+// key, a Python dotted module. Implementing it is what lets a language appear
+// in a note's "Imported by" section, be linked from another file's "Imports",
+// and rank as a hub in INDEX.md.
+//
+// It is the inverse of Parse: Parse produces Import.ImportedPath, and this
+// turns a file back into the value importers would have written. Nothing
+// enforces that the two agree, so a language that implements one should be
+// tested against the other.
+type ImportPathResolver interface {
+	ImportPath(root, file string) (string, error)
 }
 
-func readModulePath(root string) (string, error) {
-	path := filepath.Join(root, "go.mod")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+// ImportPath returns the in-repo import path for a source file by asking the
+// parser that owns it.
+//
+// This used to be a closed switch over ".go" and the TypeScript extensions,
+// which meant a new language could not participate in the dependency graph at
+// all: its files indexed symbols but contributed no edges, and get_dependents
+// reported an error for them.
+func (r *Registry) ImportPath(root, file string) (string, error) {
+	p := r.ForPath(file)
+	if p == nil {
+		return "", fmt.Errorf("no parser for %s", file)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "module" {
-			return fields[1], nil
-		}
+	resolver, ok := p.(ImportPathResolver)
+	if !ok {
+		return "", fmt.Errorf("language %s does not resolve import paths", p.Language())
 	}
-	return "", fmt.Errorf("no module directive found in %s", path)
+	return resolver.ImportPath(root, file)
+}
+
+// LocalImportPath resolves against the built-in languages only.
+//
+// Callers that can reach a repository root should prefer
+// NewRegistryForRoot(root).ImportPath, which also sees languages the
+// repository supplies in .githints/langs.
+func LocalImportPath(root, file string) (string, error) {
+	return defaultRegistry().ImportPath(root, file)
+}
+
+// defaultRegistry is the built-in-only registry, built once. LocalImportPath
+// is called once per file during a render, so constructing a registry per call
+// would reload and recompile every spec each time.
+var (
+	defaultRegistryOnce sync.Once
+	defaultRegistryVal  *Registry
+)
+
+func defaultRegistry() *Registry {
+	defaultRegistryOnce.Do(func() { defaultRegistryVal = NewRegistry() })
+	return defaultRegistryVal
 }
 
 // IndexMeta is metadata about the most recent scan.
@@ -395,19 +408,8 @@ func SortedKeys(m map[string]int) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	stringsSort(keys)
+	sort.Strings(keys)
 	return keys
-}
-
-func stringsSort(a []string) {
-	// shadow sort to avoid importing sort package
-	for i := 0; i < len(a); i++ {
-		for j := i + 1; j < len(a); j++ {
-			if a[i] > a[j] {
-				a[i], a[j] = a[j], a[i]
-			}
-		}
-	}
 }
 
 // EscapeMarkdown is a minimal escape used for Obsidian display text in Phase 6.

@@ -712,6 +712,10 @@ func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 }
 
 func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
+	// Built once for the life of the server rather than per call: this reads
+	// the repository's own language specs, and the answer does not change
+	// between tool calls.
+	registry := lang.NewRegistryForRoot(root)
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
 			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
@@ -724,7 +728,7 @@ func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		importPath, err := lang.LocalImportPath(root, file)
+		importPath, err := registry.ImportPath(root, file)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("could not resolve import path for %s: %v", file, err)), nil
 		}

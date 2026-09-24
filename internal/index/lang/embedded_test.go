@@ -182,3 +182,66 @@ func TestPythonSpecParsesRealSource(t *testing.T) {
 		t.Errorf("imports = %v, want %v", gotImports, wantImports)
 	}
 }
+
+// TestPythonImportPathRoundTrip checks the inverse relationship that puts a
+// language in the dependency graph: ImportPath must produce exactly what the
+// import rules extract from a file that imports it. Nothing enforces this
+// automatically, so it is pinned here.
+func TestPythonImportPathRoundTrip(t *testing.T) {
+	p := NewRegistry().ForLanguage("python")
+	resolver, ok := p.(ImportPathResolver)
+	if !ok {
+		t.Fatal("python does not resolve import paths, so it cannot appear in Imported by")
+	}
+
+	for _, tc := range []struct{ file, want string }{
+		{"app/service.py", "app.service"},
+		{"service.py", "service"},
+		{"app/__init__.py", "app"},
+		{"a/b/c/mod.pyi", "a.b.c.mod"},
+	} {
+		got, err := resolver.ImportPath("/repo", tc.file)
+		if err != nil {
+			t.Errorf("%s: %v", tc.file, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s -> %q, want %q", tc.file, got, tc.want)
+		}
+	}
+
+	// The round trip: a file importing app.service must yield the same key
+	// ImportPath produces for app/service.py.
+	_, imports, err := p.Parse("caller.py", []byte("from app.service import Thing\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(imports) != 1 {
+		t.Fatalf("imports = %v", imports)
+	}
+	want, err := resolver.ImportPath("/repo", "app/service.py")
+	if err != nil {
+		t.Fatalf("ImportPath: %v", err)
+	}
+	if imports[0].ImportedPath != want {
+		t.Errorf("import rule yields %q but ImportPath yields %q; the graph would never connect",
+			imports[0].ImportedPath, want)
+	}
+}
+
+func TestSpecWithoutImportPathIsNotAResolver(t *testing.T) {
+	spec, err := LoadSpec([]byte(`{
+		"language":"noimp","extensions":[".ni"],
+		"symbols":[{"kind":"func","pattern":"^(?P<name>\\w+)"}]
+	}`))
+	if err != nil {
+		t.Fatalf("LoadSpec: %v", err)
+	}
+	p, err := NewSpecParser(spec)
+	if err != nil {
+		t.Fatalf("NewSpecParser: %v", err)
+	}
+	if _, err := p.ImportPath("/repo", "a.ni"); err == nil {
+		t.Error("a spec declaring no import_path should not invent one")
+	}
+}

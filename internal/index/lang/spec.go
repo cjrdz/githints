@@ -27,6 +27,23 @@ const (
 	MaxSpecPatternLen = 1000
 )
 
+// ImportPathStyle says how a file maps back to the key other files import it
+// by. Declaring one is what lets a spec-driven language take part in the
+// dependency graph rather than only contributing symbols.
+type ImportPathStyle string
+
+const (
+	// ImportPathNone: the language has no file-to-import-path mapping, or one
+	// that cannot be derived from the path alone. Files still index symbols.
+	ImportPathNone ImportPathStyle = ""
+	// ImportPathSlash: repo-relative path with the extension removed, and a
+	// trailing index segment dropped, as TypeScript resolves "./dir".
+	ImportPathSlash ImportPathStyle = "slash"
+	// ImportPathDotted: repo-relative path with the extension removed and
+	// separators replaced by dots, as Python and Java name modules.
+	ImportPathDotted ImportPathStyle = "dotted"
+)
+
 // DepthStyle says how a language marks nesting, so a rule can ask to match
 // only where a declaration is top-level.
 type DepthStyle string
@@ -78,6 +95,14 @@ type Spec struct {
 	RegexLiterals bool         `json:"regex_literals"`
 	Symbols       []SpecRule   `json:"symbols"`
 	Imports       []SpecRule   `json:"imports"`
+
+	// ImportPath describes the inverse of the import rules: how one of this
+	// language's files is named by the files that import it.
+	ImportPath ImportPathStyle `json:"import_path"`
+
+	// ImportPathIndexNames are file stems that stand for their directory, so
+	// pkg/__init__.py is imported as "pkg" rather than "pkg.__init__".
+	ImportPathIndexNames []string `json:"import_path_index_names"`
 }
 
 // knownSymbolKinds is the closed set a spec may use. Rendering interpolates
@@ -135,6 +160,12 @@ func (s Spec) Validate() error {
 	case DepthNone, DepthBrace, DepthIndent:
 	default:
 		return fmt.Errorf("language %s: unknown depth_style %q (want none, brace or indent)", s.Language, s.DepthStyle)
+	}
+
+	switch s.ImportPath {
+	case ImportPathNone, ImportPathSlash, ImportPathDotted:
+	default:
+		return fmt.Errorf("language %s: unknown import_path %q (want slash or dotted)", s.Language, s.ImportPath)
 	}
 
 	if len(s.Extensions) == 0 {

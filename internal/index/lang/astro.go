@@ -1,6 +1,7 @@
 package lang
 
 import (
+	"path/filepath"
 	"strings"
 )
 
@@ -49,3 +50,9 @@ func parseAstroFrontmatter(file string, src []byte) ([]Symbol, []Import) {
 
 // BeginScan installs the tsconfig path aliases this parser resolves against.
 func (AstroParser) BeginScan(root string) func() { return beginTSScan(root) }
+
+// ImportPath maps the file to the key TypeScript importers resolve to:
+// the repo-relative path with the code extension and a trailing /index removed.
+func (AstroParser) ImportPath(_, file string) (string, error) {
+	return tsFileKey(filepath.ToSlash(file)), nil
+}

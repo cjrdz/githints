@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -251,4 +253,34 @@ func exprString(e ast.Expr) string {
 	default:
 		return "..."
 	}
+}
+
+// ImportPath maps a Go file back to the package path importers write: the
+// module path from go.mod joined with the file's directory.
+func (GoParser) ImportPath(root, file string) (string, error) {
+	module, err := readModulePath(root)
+	if err != nil {
+		return "", fmt.Errorf("read module path: %w", err)
+	}
+	dir := filepath.ToSlash(filepath.Dir(file))
+	if dir == "." || dir == "" {
+		return module, nil
+	}
+	return module + "/" + dir, nil
+}
+
+// readModulePath returns the module path from the repository's go.mod.
+func readModulePath(root string) (string, error) {
+	path := filepath.Join(root, "go.mod")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return fields[1], nil
+		}
+	}
+	return "", fmt.Errorf("no module directive found in %s", path)
 }

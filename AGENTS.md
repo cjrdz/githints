@@ -245,6 +245,12 @@ See `docs/extensibility.md` for the spec format.
 
 ### Import resolution and tsconfig aliases
 
+Each language decides how its files map back to the key importers name them
+by, so a language that declares one takes part in "Imported by", cross-note
+links, and hub ranking. Python uses dotted module names (`app/service.py` is
+`app.service`, and `app/__init__.py` is `app`); Go uses the module path from
+`go.mod`; the TypeScript family uses the normalized file key.
+
 For TypeScript-family files, the index resolves relative imports and tsconfig
 `paths` aliases (e.g. `@core/x`, `@shared/x`, `@features/x`, `@api-types/x`)
 installing the active `paths` map from the nearest `tsconfig.json` on each scan.

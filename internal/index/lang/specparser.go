@@ -2,6 +2,8 @@ package lang
 
 import (
 	"fmt"
+	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -25,6 +27,8 @@ type SpecParser struct {
 	language   string
 	extensions []string
 	depthStyle DepthStyle
+	importPath ImportPathStyle
+	indexNames []string
 	blanker    *Blanker
 	symbols    []compiledRule
 	imports    []compiledRule
@@ -54,6 +58,8 @@ func NewSpecParser(spec Spec) (*SpecParser, error) {
 		language:   spec.Language,
 		extensions: append([]string(nil), spec.Extensions...),
 		depthStyle: spec.DepthStyle,
+		importPath: spec.ImportPath,
+		indexNames: append([]string(nil), spec.ImportPathIndexNames...),
 		blanker:    NewBlanker(spec.BlankSpec()),
 	}
 	var err error
@@ -265,4 +271,36 @@ func indentWidth(line string) int {
 		}
 	}
 	return width
+}
+
+// ImportPath maps a file to the key importers name it by, per the spec's
+// import_path style. A spec that declares none does not implement the
+// behaviour at all, so the registry reports the language as not resolving
+// import paths rather than inventing a key that nothing would match.
+func (p *SpecParser) ImportPath(_, file string) (string, error) {
+	if p.importPath == ImportPathNone {
+		return "", fmt.Errorf("language %s does not resolve import paths", p.language)
+	}
+
+	key := filepath.ToSlash(file)
+	if ext := path.Ext(key); ext != "" {
+		key = strings.TrimSuffix(key, ext)
+	}
+	// A directory's index file is imported as the directory.
+	for _, name := range p.indexNames {
+		if key == name {
+			return "", fmt.Errorf("%s at the repository root has no import path", name)
+		}
+		if strings.HasSuffix(key, "/"+name) {
+			key = strings.TrimSuffix(key, "/"+name)
+			break
+		}
+	}
+	if key == "" {
+		return "", fmt.Errorf("no import path for %s", file)
+	}
+	if p.importPath == ImportPathDotted {
+		key = strings.ReplaceAll(key, "/", ".")
+	}
+	return key, nil
 }
