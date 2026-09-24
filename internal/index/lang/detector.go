@@ -149,6 +149,12 @@ func (d Detector) Validate() error {
 		if rule.Pattern == "" {
 			return fmt.Errorf("framework %s: rules[%d] has no pattern", d.Framework, i)
 		}
+		// Without a gate checked against the code view, a keep_strings rule
+		// would match its own shape appearing inside any string literal.
+		if rule.KeepStrings && rule.Requires == "" {
+			return fmt.Errorf("framework %s: rules[%d] sets keep_strings so it must set requires, "+
+				"which is what confines it to real code", d.Framework, i)
+		}
 		if len(rule.Pattern) > MaxSpecPatternLen {
 			return fmt.Errorf("framework %s: rules[%d] pattern is over the limit of %d", d.Framework, i, MaxSpecPatternLen)
 		}
@@ -231,6 +237,14 @@ func (s *DetectorSet) Detect(in DetectInput) []Detected {
 		return nil
 	}
 	var found []Detected
+	// Two rules can legitimately describe the same thing -- a GORM model is
+	// named both by its TableName method and by its AutoMigrate registration
+	// -- and reporting it twice reads as noise in a listing. Detail is part of
+	// the key, so two routes sharing a path but differing in HTTP method stay
+	// separate.
+	type facetKey struct{ facet, framework, name, detail string }
+	seen := make(map[facetKey]bool)
+
 	for _, d := range s.detectors {
 		if !d.applies(in) {
 			continue
@@ -241,28 +255,40 @@ func (s *DetectorSet) Detect(in DetectInput) []Detected {
 				lines = in.Strings
 			}
 			for i, line := range lines {
-				if rule.requires != "" && !strings.Contains(line, rule.requires) {
+				// The gate is always checked against the code view, even when
+				// the pattern matches the string-preserving one. That is what
+				// keeps a route-shaped string from being read as a route: in
+				// `var doc = ` + "`" + `r.Get("/x", h)` + "`" + `, the code view
+				// holds an empty literal, so the gate finds no call to match.
+				if rule.requires != "" && !strings.Contains(in.Code[i], rule.requires) {
 					continue
 				}
-				m := rule.re.FindStringSubmatch(line)
-				if m == nil {
-					continue
+				// All matches, not just the first: one line can name several
+				// things worth recording, as AutoMigrate(&User{}, &Post{})
+				// does, and reporting only the first would silently drop the
+				// rest.
+				for _, m := range rule.re.FindAllStringSubmatch(line, -1) {
+					name := m[rule.nameIdx]
+					if name == "" {
+						continue
+					}
+					det := Detected{
+						FilePath:  in.FilePath,
+						Facet:     rule.facet,
+						Framework: d.framework,
+						Name:      name,
+						Line:      i + 1,
+					}
+					if rule.detailIdx >= 0 {
+						det.Detail = m[rule.detailIdx]
+					}
+					key := facetKey{det.Facet, det.Framework, det.Name, det.Detail}
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					found = append(found, det)
 				}
-				name := m[rule.nameIdx]
-				if name == "" {
-					continue
-				}
-				det := Detected{
-					FilePath:  in.FilePath,
-					Facet:     rule.facet,
-					Framework: d.framework,
-					Name:      name,
-					Line:      i + 1,
-				}
-				if rule.detailIdx >= 0 {
-					det.Detail = m[rule.detailIdx]
-				}
-				found = append(found, det)
 			}
 		}
 	}

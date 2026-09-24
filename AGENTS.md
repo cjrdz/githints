@@ -235,6 +235,9 @@ Spring and Laravel routes are all `route`. The facets are `route`, `model`,
 That normalization is the point: ask for every HTTP route in a repo without
 knowing which frameworks it uses.
 
+Detectors shipped today: `django`, `flask`, `fastapi`, `sqlalchemy` (Python),
+`chi`, `gorm`, `bun` (Go), `react`, `vue` (TypeScript).
+
     find_facets(facet="route")                 # MCP
     ./githints index facets -facet=route       # CLI
 

@@ -1,0 +1,24 @@
+{
+  // Vue components declared in TypeScript with defineComponent.
+  //
+  // Vue's more common form is a single-file component, which needs a .vue
+  // parser; until that exists this covers the .ts spelling only, rather than
+  // pretending to cover a framework it cannot see.
+  "framework": "vue",
+  "languages": ["typescript"],
+  "when_imports": ["vue"],
+  "rules": [
+    {
+      "facet": "component",
+      "requires": "defineComponent",
+      "pattern": "^\\s*(?:export\\s+)?(?:const|let)\\s+(?P<name>\\w+)\\s*(?::[^=]+)?=\\s*defineComponent\\("
+    },
+    {
+      // export default defineComponent({ name: "Thing" })
+      "facet": "component",
+      "requires": "name:",
+      "keep_strings": true,
+      "pattern": "^\\s*name:\\s*[\"'](?P<name>[A-Z]\\w*)[\"']"
+    }
+  ]
+}

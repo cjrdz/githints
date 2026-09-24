@@ -1,0 +1,17 @@
+{
+  // chi routers. Routes are method calls, not declarations, which is the
+  // clearest case for matching lines rather than symbols.
+  "framework": "chi",
+  "languages": ["go"],
+  "when_imports": ["github.com/go-chi/chi"],
+  "rules": [
+    {
+      // r.Get("/users", handler) and friends. The path is a string literal, so
+      // this needs the view that keeps string contents.
+      "facet": "route",
+      "requires": "(",
+      "keep_strings": true,
+      "pattern": "\\.(?P<detail>Get|Post|Put|Patch|Delete|Head|Options|Connect|Trace|Handle|HandleFunc|Method|Mount|Route)\\(\\s*\"(?P<name>[^\"]*)\""
+    }
+  ]
+}

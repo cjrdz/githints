@@ -172,3 +172,20 @@ func TestImportMatches(t *testing.T) {
 		}
 	}
 }
+
+// TestKeepStringsRequiresAGate pins the rule that makes keep_strings safe.
+// The gate is evaluated against the code view, so it is what confines such a
+// rule to real code; without one it would match its own shape inside any
+// string literal in the file.
+func TestKeepStringsRequiresAGate(t *testing.T) {
+	_, err := LoadDetector([]byte(`{
+		"framework":"f","when_imports":["x"],
+		"rules":[{"facet":"route","keep_strings":true,"pattern":"\"(?P<name>[^\"]+)\""}]
+	}`))
+	if err == nil {
+		t.Fatal("a keep_strings rule with no requires should be rejected")
+	}
+	if !strings.Contains(err.Error(), "must set requires") {
+		t.Errorf("error = %q", err)
+	}
+}

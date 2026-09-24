@@ -318,7 +318,21 @@ own extraction. `TestPythonImportPathRoundTrip` is the pattern.
 16. MCP tool and CLI for querying facets. *(done)* `find_facets` and
     `githints index facets`, plus a `## Framework` section in each note and a
     breakdown in `index status`.
-17. Detector specs for the listed frameworks and ORMs.
+17. Detector specs for the listed frameworks and ORMs. *(partly done)*
+    Shipped: django, flask, fastapi, sqlalchemy, chi, gorm, bun, react, vue.
+    Spring Boot, Laravel/Eloquent, Entity Framework and Tokio wait on Phase 6:
+    detection needs a parser to produce the blanked views and the file's
+    imports, so a detector for a language githints cannot read would be inert.
+    Prisma and Vue single-file components likewise wait on `.prisma` and
+    `.vue`.
+
+    Two rules emerged from writing these. A `keep_strings` rule must declare a
+    `requires` gate, and the gate is always evaluated against the *code* view
+    even when the pattern matches the string-preserving one -- otherwise a
+    route-shaped string is indistinguishable from a route. And facets are
+    deduplicated within a file on facet, framework, name and detail, so a
+    model named by two rules is reported once while two routes sharing a path
+    but differing in method stay separate.
 
 ### Phase 6 — Languages
 
