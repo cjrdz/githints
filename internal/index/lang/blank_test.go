@@ -62,7 +62,11 @@ func blankerCorpus(t *testing.T) map[string]string {
 		if err != nil {
 			t.Fatalf("read fixture %s: %v", name, err)
 		}
-		corpus["fixture:"+name] = string(data)
+		// Normalize the checkout's line endings. .gitattributes pins these
+		// fixtures to LF, but a clone predating that entry still has CRLF on
+		// Windows, and the golden file would then differ by a trailing \r on
+		// every line -- a checkout artifact, not parser behaviour.
+		corpus["fixture:"+name] = strings.ReplaceAll(string(data), "\r\n", "\n")
 	}
 	return corpus
 }
