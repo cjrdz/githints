@@ -103,6 +103,11 @@ type Spec struct {
 	// ImportPathIndexNames are file stems that stand for their directory, so
 	// pkg/__init__.py is imported as "pkg" rather than "pkg.__init__".
 	ImportPathIndexNames []string `json:"import_path_index_names"`
+
+	// ImportPathStripPrefixes are repository path prefixes that are not part
+	// of the import path. Java's src/main/java is the clearest case: the file
+	// is at src/main/java/com/x/Foo.java and imported as com.x.Foo.
+	ImportPathStripPrefixes []string `json:"import_path_strip_prefixes"`
 }
 
 // knownSymbolKinds is the closed set a spec may use. Rendering interpolates

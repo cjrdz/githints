@@ -1,0 +1,60 @@
+{
+  // Java.
+  "language": "java",
+  "extensions": [".java"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"\"\"", "close": "\"\"\"", "escape": "\\", "multiline": true },
+    { "open": "\"", "close": "\"", "escape": "\\" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  // A class is imported by its fully qualified name, which is its path below
+  // the source root. Without stripping that root the key would be
+  // src.main.java.com.x.Foo and would match nothing any file imports.
+  "import_path": "dotted",
+  "import_path_strip_prefixes": [
+    "src/main/java",
+    "src/test/java",
+    "src/main/kotlin",
+    "src"
+  ],
+
+  "symbols": [
+    {
+      "kind": "type",
+      "requires": "class",
+      "pattern": "^\\s*(?:(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "interface",
+      "pattern": "^\\s*(?:(?:public|private|protected|abstract|static|sealed|non-sealed)\\s+)*interface\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "enum",
+      "pattern": "^\\s*(?:(?:public|private|protected|static|final)\\s+)*enum\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "record",
+      "pattern": "^\\s*(?:(?:public|private|protected|static|final)\\s+)*record\\s+(?P<name>\\w+)\\s*\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      // Methods need an explicit modifier to be distinguishable from a call:
+      // `foo(bar)` and `void foo(bar)` differ only by the return type, and
+      // requiring a modifier is what keeps ordinary statements out of the
+      // index. Package-private methods are missed as a result.
+      "kind": "method",
+      "requires": "(",
+      "pattern": "^\\s*(?:@\\w+\\s+)*(?:public|private|protected)\\s+(?:(?:static|final|abstract|synchronized|native|default)\\s+)*(?:<[^>]+>\\s*)?[\\w.$<>\\[\\],?\\s]+\\s+(?P<name>\\w+)\\s*\\((?P<sig>[^)]*)\\)"
+    }
+  ],
+
+  "imports": [
+    { "requires": "import", "pattern": "^\\s*import\\s+(?:static\\s+)?(?P<path>[\\w.]+)" }
+  ]
+}

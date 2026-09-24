@@ -1,0 +1,67 @@
+{
+  // Rust.
+  //
+  // Char literals are deliberately absent from the string rules. A lifetime
+  // (`&'a str`) opens a quote that never closes, so treating ' as a string
+  // delimiter would blank the rest of every line carrying one. Losing the
+  // occasional char literal costs far less.
+  //
+  // Block comments nest in Rust and do not here, so a nested /* */ ends the
+  // comment early. Rare enough to accept, and the failure is visible rather
+  // than silent.
+  "language": "rust",
+  "extensions": [".rs"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\", "multiline": true }
+  ],
+
+  // A file's module path depends on mod declarations, lib.rs and mod.rs
+  // conventions and the crate root, none of which follow from the path alone,
+  // so Rust files contribute symbols and imports but no graph edges.
+  "import_path": "",
+
+  "symbols": [
+    {
+      "kind": "func",
+      "requires": "fn",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:default\\s+)?(?:const\\s+)?(?:async\\s+)?(?:unsafe\\s+)?(?:extern\\s+\"[^\"]*\"\\s+)?fn\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      "kind": "type",
+      "requires": "struct",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?struct\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "enum",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?enum\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "trait",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:unsafe\\s+)?trait\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "type",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?type\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "const",
+      "requires": "const",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?const\\s+(?P<name>\\w+)\\s*:"
+    },
+    {
+      "kind": "var",
+      "requires": "static",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?static\\s+(?:mut\\s+)?(?P<name>\\w+)\\s*:"
+    }
+  ],
+
+  "imports": [
+    { "requires": "use", "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?use\\s+(?P<path>[\\w:]+)" }
+  ]
+}

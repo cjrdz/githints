@@ -1,0 +1,47 @@
+{
+  // SQL DDL.
+  //
+  // Rules carry no `requires` gate because SQL keywords are case-insensitive
+  // and the gate is a literal substring test. The patterns use (?i) instead;
+  // SQL files are small enough that losing the gate costs little.
+  //
+  // Single quotes delimit values and double quotes delimit identifiers, which
+  // is the opposite of most languages here. Both are blanked either way.
+  "language": "sql",
+  "extensions": [".sql"],
+  "depth_style": "none",
+
+  "comments": { "line": ["--"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "'", "close": "'" },
+    { "open": "\"", "close": "\"" }
+  ],
+
+  // SQL files are not imported by anything.
+  "import_path": "",
+
+  "symbols": [
+    {
+      "kind": "type",
+      "pattern": "(?i)^\\s*create\\s+(?:or\\s+replace\\s+)?(?:global\\s+|local\\s+|temp(?:orary)?\\s+|unlogged\\s+)*table\\s+(?:if\\s+not\\s+exists\\s+)?(?P<name>[\\w.\"]+)"
+    },
+    {
+      "kind": "type",
+      "pattern": "(?i)^\\s*create\\s+(?:or\\s+replace\\s+)?(?:materialized\\s+)?view\\s+(?:if\\s+not\\s+exists\\s+)?(?P<name>[\\w.\"]+)"
+    },
+    {
+      "kind": "func",
+      "pattern": "(?i)^\\s*create\\s+(?:or\\s+replace\\s+)?(?:function|procedure)\\s+(?P<name>[\\w.\"]+)\\s*\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      "kind": "var",
+      "pattern": "(?i)^\\s*create\\s+(?:unique\\s+)?index\\s+(?:concurrently\\s+)?(?:if\\s+not\\s+exists\\s+)?(?P<name>[\\w.\"]+)"
+    },
+    {
+      "kind": "type",
+      "pattern": "(?i)^\\s*create\\s+(?:or\\s+replace\\s+)?trigger\\s+(?P<name>[\\w.\"]+)"
+    }
+  ],
+
+  "imports": []
+}

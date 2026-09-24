@@ -24,14 +24,15 @@ const tabWidth = 8
 // A SpecParser is immutable once built and Parse keeps its state in locals, so
 // one may be shared across concurrent scans.
 type SpecParser struct {
-	language   string
-	extensions []string
-	depthStyle DepthStyle
-	importPath ImportPathStyle
-	indexNames []string
-	blanker    *Blanker
-	symbols    []compiledRule
-	imports    []compiledRule
+	language    string
+	extensions  []string
+	depthStyle  DepthStyle
+	importPath  ImportPathStyle
+	indexNames  []string
+	stripPrefix []string
+	blanker     *Blanker
+	symbols     []compiledRule
+	imports     []compiledRule
 }
 
 // SpecParser must satisfy the same interface a hand-written parser does; the
@@ -55,12 +56,13 @@ func NewSpecParser(spec Spec) (*SpecParser, error) {
 		return nil, err
 	}
 	p := &SpecParser{
-		language:   spec.Language,
-		extensions: append([]string(nil), spec.Extensions...),
-		depthStyle: spec.DepthStyle,
-		importPath: spec.ImportPath,
-		indexNames: append([]string(nil), spec.ImportPathIndexNames...),
-		blanker:    NewBlanker(spec.BlankSpec()),
+		language:    spec.Language,
+		extensions:  append([]string(nil), spec.Extensions...),
+		depthStyle:  spec.DepthStyle,
+		importPath:  spec.ImportPath,
+		indexNames:  append([]string(nil), spec.ImportPathIndexNames...),
+		stripPrefix: append([]string(nil), spec.ImportPathStripPrefixes...),
+		blanker:     NewBlanker(spec.BlankSpec()),
 	}
 	var err error
 	if p.symbols, err = compileRules(spec.Symbols, "name"); err != nil {
@@ -283,6 +285,14 @@ func (p *SpecParser) ImportPath(_, file string) (string, error) {
 	}
 
 	key := filepath.ToSlash(file)
+	// Source roots are not part of the import path.
+	for _, prefix := range p.stripPrefix {
+		prefix = strings.TrimSuffix(filepath.ToSlash(prefix), "/") + "/"
+		if strings.HasPrefix(key, prefix) {
+			key = strings.TrimPrefix(key, prefix)
+			break
+		}
+	}
 	if ext := path.Ext(key); ext != "" {
 		key = strings.TrimSuffix(key, ext)
 	}
