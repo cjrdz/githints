@@ -3,6 +3,7 @@ package index
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -1535,5 +1536,162 @@ func TestIncrementalScanReplacesFileRows(t *testing.T) {
 	}
 	if len(syms) != 3 {
 		t.Errorf("symbols = %d, want 3 after the rewrite", len(syms))
+	}
+}
+
+// TestFullScanIsDeterministic is the guarantee parallel parsing must not
+// break. Rendered notes are committed in shared mode, so a scan that emitted
+// results in completion order would produce a different diff on every run for
+// no reason.
+//
+// Repeated because a race that reorders results may not show on one run.
+func TestFullScanIsDeterministic(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, root)
+
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("go.mod", "module example.com/m\n\ngo 1.26\n")
+
+	// Enough files, across enough directories, that a pool has real
+	// opportunity to finish out of order.
+	for i := range 60 {
+		write(fmt.Sprintf("pkg/p%d/file%d.go", i/10, i),
+			fmt.Sprintf("package p%d\n\nimport \"fmt\"\n\nfunc Fn%d() { fmt.Println(%d) }\n\ntype T%d struct{}\n", i/10, i, i, i))
+	}
+	for i := range 40 {
+		write(fmt.Sprintf("src/m%d/mod%d.ts", i/10, i),
+			fmt.Sprintf("export function fn%d(a: string): string { return a; }\nexport class K%d {}\n", i, i))
+	}
+
+	opts := lang.ScanOptions{
+		Root: root, Languages: []string{"go", "typescript"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}
+
+	snapshot := func() (string, map[string]string) {
+		t.Helper()
+		st, err := Open(filepath.Join(t.TempDir(), "index.db"))
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		defer st.Close()
+		if err := FullScan(st, opts, true, 0); err != nil {
+			t.Fatalf("FullScan: %v", err)
+		}
+
+		// Symbol order as stored, which is what the notes are rendered from.
+		files, err := st.AllIndexedFiles()
+		if err != nil {
+			t.Fatalf("AllIndexedFiles: %v", err)
+		}
+		var order strings.Builder
+		for _, f := range files {
+			syms, err := st.SymbolsForFile(f)
+			if err != nil {
+				t.Fatalf("SymbolsForFile: %v", err)
+			}
+			for _, s := range syms {
+				fmt.Fprintf(&order, "%s:%s:%d\n", s.FilePath, s.Name, s.LineStart)
+			}
+		}
+
+		notes := map[string]string{}
+		noteRoot := filepath.Join(root, ".githints", "index")
+		if err := filepath.WalkDir(noteRoot, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(noteRoot, path)
+			notes[filepath.ToSlash(rel)] = string(data)
+			return nil
+		}); err != nil {
+			t.Fatalf("walk notes: %v", err)
+		}
+		return order.String(), notes
+	}
+
+	firstOrder, firstNotes := snapshot()
+	if len(firstNotes) == 0 {
+		t.Fatal("no notes rendered")
+	}
+
+	// The checks above would hold even if results came back in completion
+	// order, because every read path sorts in SQL. Insertion order is the
+	// thing a worker pool can actually disturb, so assert it directly: rows
+	// must have been written in walk order.
+	assertInsertionOrder(t, root, opts)
+
+	for run := range 4 {
+		order, notes := snapshot()
+		if order != firstOrder {
+			t.Fatalf("run %d: symbol order differs from the first scan", run+2)
+		}
+		if len(notes) != len(firstNotes) {
+			t.Fatalf("run %d: %d notes, want %d", run+2, len(notes), len(firstNotes))
+		}
+		for name, body := range firstNotes {
+			if notes[name] != body {
+				t.Fatalf("run %d: note %s differs:\n--- first ---\n%s\n--- now ---\n%s", run+2, name, body, notes[name])
+			}
+		}
+	}
+}
+
+// assertInsertionOrder checks rows were written in walk order, which is the
+// property a worker pool can disturb and which the sorted read paths would
+// otherwise hide.
+func assertInsertionOrder(t *testing.T, root string, opts lang.ScanOptions) {
+	t.Helper()
+
+	st, err := Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+	if err := FullScan(st, opts, true, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	rows, err := st.db.Query("SELECT file_path FROM symbols ORDER BY id")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	var seen []string
+	last := ""
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if p != last {
+			seen = append(seen, p)
+			last = p
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected many files, saw %d", len(seen))
+	}
+	for i := 1; i < len(seen); i++ {
+		if seen[i] < seen[i-1] {
+			t.Fatalf("rows written out of walk order: %q came after %q", seen[i], seen[i-1])
+		}
 	}
 }

@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cjrdz/githints/internal/gitutil"
@@ -47,13 +49,6 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 		fmt.Fprintf(os.Stderr, "githints: framework detector ignored: %v\n", err)
 	}
 
-	// candidate is a file the walk accepted, held until the batched ignore
-	// check can rule on all of them at once.
-	type candidate struct {
-		rel    string
-		abs    string
-		parser lang.LanguageParser
-	}
 	var candidates []candidate
 
 	var allSymbols []lang.Symbol
@@ -137,35 +132,38 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	}
 	ignored := resolveIgnored(opts.Root, rels)
 
+	work := candidates[:0:0]
 	for _, c := range candidates {
-		if ignored[c.rel] {
-			continue
+		if !ignored[c.rel] {
+			work = append(work, c)
 		}
-		rel, path, parser := c.rel, c.abs, c.parser
+	}
 
-		src, err := os.ReadFile(path)
-		if err != nil {
+	// Reading, parsing and framework detection are per-file and independent,
+	// and together they are most of what a scan spends its time on. They run
+	// across a worker pool; everything that follows is merged back in walk
+	// order.
+	results := parseCandidates(work, opts, detectors)
+
+	for i, c := range work {
+		r := results[i]
+		if r.warn != "" {
 			meta.SkippedCount++
-			fmt.Fprintf(os.Stderr, "githints: index skipped (read error): %s: %v\n", rel, err)
+			// Warnings are emitted here rather than from the worker so the
+			// order of stderr matches the order of the files, whatever order
+			// the pool happened to finish in.
+			fmt.Fprintln(os.Stderr, r.warn)
 			continue
 		}
-
-		symbols, imports, err := parseWithTimeout(parser, rel, src, opts.ParseTimeout)
-		if err != nil {
-			meta.SkippedCount++
-			fmt.Fprintf(os.Stderr, "githints: index skipped (parse error): %s: %v\n", rel, err)
-			continue
-		}
-
 		// Record language only for files that actually produced symbols.
-		if len(symbols) > 0 {
-			meta.LanguageCounts[parser.Language()]++
+		if len(r.symbols) > 0 {
+			meta.LanguageCounts[c.parser.Language()]++
 			meta.FileCount++
-			meta.SymbolCount += len(symbols)
-			allSymbols = append(allSymbols, symbols...)
+			meta.SymbolCount += len(r.symbols)
+			allSymbols = append(allSymbols, r.symbols...)
 		}
-		allImports = append(allImports, imports...)
-		allFacets = append(allFacets, detectFacets(detectors, parser, rel, src, imports)...)
+		allImports = append(allImports, r.imports...)
+		allFacets = append(allFacets, r.facets...)
 	}
 
 	if err := guardWrite(db, allSymbols, allImports, force, maxBytes); err != nil {
@@ -621,4 +619,89 @@ func batchCheckIgnore(root string, rels []string, excludesFile string) (ignoreSe
 		}
 	}
 	return out, nil
+}
+
+// candidate is a file the walk accepted, held until the batched ignore check
+// can rule on all of them at once.
+type candidate struct {
+	rel    string
+	abs    string
+	parser lang.LanguageParser
+}
+
+// maxParseWorkers caps the pool. Past a dozen, a scan is bounded by the
+// filesystem and the store rather than by CPU, and more workers only add
+// scheduling and memory pressure. tgrep caps its own walker at the same number
+// for the same reason.
+const maxParseWorkers = 12
+
+// fileResult is one file's contribution, or the warning explaining why it has
+// none.
+type fileResult struct {
+	symbols []lang.Symbol
+	imports []lang.Import
+	facets  []lang.Detected
+	warn    string
+}
+
+// parseCandidates reads, parses and runs detection over every candidate,
+// returning results in the same order it was given them.
+//
+// Order is not an implementation detail here: rendered notes are committed in
+// shared mode, so a scan that emitted symbols in completion order would
+// produce a different diff on every run. Each worker writes to its own slot
+// and nothing is appended concurrently.
+func parseCandidates(work []candidate, opts lang.ScanOptions, detectors *lang.DetectorSet) []fileResult {
+	results := make([]fileResult, len(work))
+	if len(work) == 0 {
+		return results
+	}
+
+	workers := runtime.NumCPU()
+	if workers > maxParseWorkers {
+		workers = maxParseWorkers
+	}
+	if workers > len(work) {
+		workers = len(work)
+	}
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				results[i] = parseOne(work[i], opts, detectors)
+			}
+		}()
+	}
+	for i := range work {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+
+	return results
+}
+
+// parseOne is the per-file work a pool worker does. It touches nothing shared:
+// parsers and detectors are immutable once built, and the per-scan state they
+// consult is installed before the pool starts and read under a lock.
+func parseOne(c candidate, opts lang.ScanOptions, detectors *lang.DetectorSet) fileResult {
+	src, err := os.ReadFile(c.abs)
+	if err != nil {
+		return fileResult{warn: fmt.Sprintf("githints: index skipped (read error): %s: %v", c.rel, err)}
+	}
+
+	symbols, imports, err := parseWithTimeout(c.parser, c.rel, src, opts.ParseTimeout)
+	if err != nil {
+		return fileResult{warn: fmt.Sprintf("githints: index skipped (parse error): %s: %v", c.rel, err)}
+	}
+
+	return fileResult{
+		symbols: symbols,
+		imports: imports,
+		facets:  detectFacets(detectors, c.parser, c.rel, src, imports),
+	}
 }
