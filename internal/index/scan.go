@@ -166,7 +166,7 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 		allFacets = append(allFacets, r.facets...)
 	}
 
-	if err := guardWrite(db, allSymbols, allImports, force, maxBytes); err != nil {
+	if err := guardWrite(db, allSymbols, allImports, allFacets, force, maxBytes); err != nil {
 		return err
 	}
 
@@ -194,10 +194,49 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	return RenderNotes(db, opts.Root, opts.Obsidian)
 }
 
-// guardWrite enforces the Phase 5 safety checks before mutating the index.
-// It returns an error if the new scan would be a partial write (fewer rows than
-// the existing index) or would exceed the configured size cap, unless force is true.
-func guardWrite(db *Store, symbols []lang.Symbol, imports []lang.Import, force bool, maxBytes int) error {
+// Row size estimates. These are approximations of what SQLite will store,
+// deliberately on the generous side: a cap that is reached slightly early is a
+// far better failure than one reached slightly late.
+const (
+	symbolOverhead = 64
+	importOverhead = 32
+	facetOverhead  = 48
+)
+
+// estimateRowBytes approximates what a batch of rows will cost on disk.
+//
+// Shared by both scan paths so they cannot drift into disagreeing about what
+// the cap means.
+func estimateRowBytes(symbols []lang.Symbol, imports []lang.Import, facets []lang.Detected) int64 {
+	var n int64
+	for _, sym := range symbols {
+		n += int64(len(sym.Name) + len(string(sym.Kind)) + len(sym.FilePath) +
+			len(sym.Signature) + len(sym.Language) + symbolOverhead)
+	}
+	for _, imp := range imports {
+		n += int64(len(imp.FilePath) + len(imp.ImportedPath) + importOverhead)
+	}
+	for _, f := range facets {
+		n += int64(len(f.FilePath) + len(f.Facet) + len(f.Framework) +
+			len(f.Name) + len(f.Detail) + facetOverhead)
+	}
+	return n
+}
+
+// currentIndexBytes is the index's size on disk, or 0 when it cannot be
+// determined. Treating an unknown size as zero lets a scan proceed rather than
+// refusing on a stat failure.
+func currentIndexBytes(db *Store) int64 {
+	if size := db.Size(); size > 0 {
+		return size
+	}
+	return 0
+}
+
+// guardWrite enforces the safety checks before a full rebuild mutates the
+// index: that the scan is not a partial write (fewer rows than the existing
+// index), and that the result would not exceed the configured size cap.
+func guardWrite(db *Store, symbols []lang.Symbol, imports []lang.Import, facets []lang.Detected, force bool, maxBytes int) error {
 	existingSymbols, err := db.SymbolCount()
 	if err != nil {
 		return fmt.Errorf("check existing symbol count: %w", err)
@@ -213,25 +252,33 @@ func guardWrite(db *Store, symbols []lang.Symbol, imports []lang.Import, force b
 		return fmt.Errorf("partial write detected: %d new rows vs %d existing; use --force to overwrite", newRows, existingRows)
 	}
 
-	if maxBytes > 0 {
-		var estimated int64
-		if size := db.Size(); size > 0 {
-			estimated = size
-		}
-		const symbolOverhead = 64
-		for _, sym := range symbols {
-			estimated += int64(len(sym.Name) + len(string(sym.Kind)) + len(sym.FilePath) + len(sym.Signature) + symbolOverhead)
-		}
-		const importOverhead = 32
-		for _, imp := range imports {
-			estimated += int64(len(imp.FilePath) + len(imp.ImportedPath) + importOverhead)
-		}
-		if !force && estimated > int64(maxBytes) {
+	if maxBytes > 0 && !force {
+		estimated := currentIndexBytes(db) + estimateRowBytes(symbols, imports, facets)
+		if estimated > int64(maxBytes) {
 			return fmt.Errorf("index would exceed max_bytes (%d): estimated %d bytes; use --force to overwrite", maxBytes, estimated)
 		}
 	}
 
 	return nil
+}
+
+// incrementalBudget is the number of bytes an incremental scan may still add
+// before reaching the cap, or -1 when no cap is configured.
+//
+// FullScan has always enforced max_bytes; IncrementalScan took no cap at all,
+// so the hook path could grow the index past the configured limit
+// indefinitely, one commit at a time -- the one way an index actually gets
+// large in practice.
+func incrementalBudget(db *Store, maxBytes int) (int64, error) {
+	if maxBytes <= 0 {
+		return -1, nil
+	}
+	remaining := int64(maxBytes) - currentIndexBytes(db)
+	if remaining <= 0 {
+		return 0, fmt.Errorf("index is at or over max_bytes (%d); not adding to it. "+
+			"Raise index.max_bytes, or rebuild with `githints index --force`", maxBytes)
+	}
+	return remaining, nil
 }
 
 func shouldSkipFile(path string, info os.FileInfo) bool {
@@ -345,7 +392,7 @@ func parseWithTimeout(p lang.LanguageParser, rel string, src []byte, timeout tim
 // IncrementalScan re-indexes the files in paths. Deleted files are detected
 // when their path no longer exists on disk; existing files are parsed and
 // their rows replaced. This is the hook path used in Phase 2.
-func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
+func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes int) error {
 	registry := lang.NewRegistryForRoot(opts.Root)
 	// Lenient on purpose: this runs from the post-commit hook, which only
 	// warns on a scan error, so a hard failure here means the commit succeeds
@@ -375,6 +422,11 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 
 	// Files whose rows were written and which therefore need a note.
 	var rendered []string
+
+	budget, err := incrementalBudget(db, maxBytes)
+	if err != nil {
+		return err
+	}
 
 	for _, path := range paths {
 		if err := recorder.ValidateFilePath(path); err != nil {
@@ -439,6 +491,20 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 			fmt.Fprintf(os.Stderr, "githints: index delete failed: %s: %v\n", path, err)
 			continue
 		}
+		facets := detectFacets(detectors, parser, path, src, imports)
+
+		// Stop before crossing the cap rather than after. The remaining files
+		// keep their existing rows, so the index stays consistent -- just no
+		// longer complete, which the error says plainly.
+		if budget >= 0 {
+			budget -= estimateRowBytes(symbols, imports, facets)
+			if budget < 0 {
+				return fmt.Errorf("index reached max_bytes (%d) while indexing %s; "+
+					"remaining files were not indexed. Raise index.max_bytes, "+
+					"or rebuild with `githints index --force`", maxBytes, path)
+			}
+		}
+
 		if err := db.InsertSymbols(symbols); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index insert symbols failed: %s: %v\n", path, err)
 			continue
@@ -447,7 +513,7 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 			fmt.Fprintf(os.Stderr, "githints: index insert imports failed: %s: %v\n", path, err)
 			continue
 		}
-		if err := db.InsertFacets(detectFacets(detectors, parser, path, src, imports)); err != nil {
+		if err := db.InsertFacets(facets); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index insert facets failed: %s: %v\n", path, err)
 			continue
 		}

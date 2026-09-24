@@ -615,7 +615,7 @@ func cmdHookRun() error {
 				MaxFileSize:  int64(cfg.Index.MaxFileSize),
 				ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
 				Obsidian:     cfg.Index.ObsidianWikilinks,
-			}, files); err != nil {
+			}, files, cfg.Index.MaxBytes); err != nil {
 				fmt.Fprintf(os.Stderr, "githints: incremental index scan: %v\n", err)
 			}
 		}

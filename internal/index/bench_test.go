@@ -221,7 +221,7 @@ func BenchmarkIncrementalScan(b *testing.B) {
 			}
 
 			for b.Loop() {
-				if err := IncrementalScan(st, opts, paths); err != nil {
+				if err := IncrementalScan(st, opts, paths, 0); err != nil {
 					b.Fatalf("IncrementalScan: %v", err)
 				}
 			}

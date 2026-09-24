@@ -702,7 +702,7 @@ func TestIncrementalScanUpdatesOnlyChangedFiles(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "a.go")); err != nil {
 		t.Fatalf("remove a.go: %v", err)
 	}
-	if err := IncrementalScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, []string{"a.go", "b.go"}); err != nil {
+	if err := IncrementalScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, []string{"a.go", "b.go"}, 0); err != nil {
 		t.Fatalf("IncrementalScan: %v", err)
 	}
 
@@ -749,7 +749,7 @@ func TestIncrementalScanSkipsUnknownLanguage(t *testing.T) {
 		MaxFileSize:  1024,
 		ParseTimeout: 5 * time.Second,
 	}
-	if err := IncrementalScan(st, opts, []string{"a.go"}); err != nil {
+	if err := IncrementalScan(st, opts, []string{"a.go"}, 0); err != nil {
 		t.Fatalf("IncrementalScan should skip the unknown language, got: %v", err)
 	}
 
@@ -779,7 +779,7 @@ func TestIncrementalScanFailsWhenNoLanguageIsKnown(t *testing.T) {
 		MaxFileSize:  1024,
 		ParseTimeout: 5 * time.Second,
 	}
-	if err := IncrementalScan(st, opts, []string{"a.go"}); err == nil {
+	if err := IncrementalScan(st, opts, []string{"a.go"}, 0); err == nil {
 		t.Fatal("expected an error when no configured language is supported")
 	}
 }
@@ -1240,7 +1240,7 @@ func TestFullScanDetectsFacets(t *testing.T) {
 	}
 
 	// Rescanning the same file must replace its facets, not add to them.
-	if err := IncrementalScan(st, opts, []string{"app/models.py"}); err != nil {
+	if err := IncrementalScan(st, opts, []string{"app/models.py"}, 0); err != nil {
 		t.Fatalf("IncrementalScan: %v", err)
 	}
 	models, err = st.Facets(FacetFilter{Facet: lang.FacetModel})
@@ -1253,7 +1253,7 @@ func TestFullScanDetectsFacets(t *testing.T) {
 
 	// Removing the model must remove its facet.
 	write("app/models.py", "from django.db import models\n\n# gone\n")
-	if err := IncrementalScan(st, opts, []string{"app/models.py"}); err != nil {
+	if err := IncrementalScan(st, opts, []string{"app/models.py"}, 0); err != nil {
 		t.Fatalf("IncrementalScan: %v", err)
 	}
 	models, err = st.Facets(FacetFilter{Facet: lang.FacetModel})
@@ -1527,7 +1527,7 @@ func TestIncrementalScanReplacesFileRows(t *testing.T) {
 	}
 
 	writeGo(t, root, "a.go", "package main\n\nfunc One() {}\nfunc Two() {}\nfunc Three() {}\n")
-	if err := IncrementalScan(st, opts, []string{"a.go"}); err != nil {
+	if err := IncrementalScan(st, opts, []string{"a.go"}, 0); err != nil {
 		t.Fatalf("IncrementalScan: %v", err)
 	}
 	syms, err := st.SymbolsForFile("a.go")
@@ -1693,5 +1693,111 @@ func assertInsertionOrder(t *testing.T, root string, opts lang.ScanOptions) {
 		if seen[i] < seen[i-1] {
 			t.Fatalf("rows written out of walk order: %q came after %q", seen[i], seen[i-1])
 		}
+	}
+}
+
+// TestIncrementalScanEnforcesMaxBytes closes a gap the audit found: FullScan
+// has always enforced the cap, but IncrementalScan took no cap at all. That is
+// the path that runs on every commit, so an index could grow past the
+// configured limit indefinitely, one commit at a time -- which is the only way
+// an index actually gets large in practice.
+func TestIncrementalScanEnforcesMaxBytes(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.26\n")
+	for i := range 20 {
+		writeGo(t, root, fmt.Sprintf("f%d.go", i),
+			fmt.Sprintf("package main\n\nfunc Fn%d() {}\nfunc Gn%d() {}\n", i, i))
+	}
+
+	opts := lang.ScanOptions{
+		Root: root, Languages: []string{"go"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}
+	paths := make([]string, 0, 20)
+	for i := range 20 {
+		paths = append(paths, fmt.Sprintf("f%d.go", i))
+	}
+
+	// A cap far below the existing database refuses outright.
+	err := IncrementalScan(st, opts, paths, 1)
+	if err == nil {
+		t.Fatal("a scan under a cap smaller than the index should refuse")
+	}
+	// Specifically the up-front refusal, not the running-budget one: an index
+	// already over the cap should say so rather than reporting the first file
+	// it happened to reach.
+	if !strings.Contains(err.Error(), "at or over max_bytes") {
+		t.Errorf("error should be the up-front refusal, got: %v", err)
+	}
+
+	// No cap indexes everything.
+	if err := IncrementalScan(st, opts, paths, 0); err != nil {
+		t.Fatalf("uncapped IncrementalScan: %v", err)
+	}
+	full, err := st.SymbolCount()
+	if err != nil {
+		t.Fatalf("SymbolCount: %v", err)
+	}
+	if full != 40 {
+		t.Fatalf("SymbolCount = %d, want 40", full)
+	}
+}
+
+// TestIncrementalScanStopsAtTheCap checks the cap stops the scan partway
+// rather than only refusing up front, and that the message names the file it
+// stopped on.
+func TestIncrementalScanStopsAtTheCap(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.26\n")
+
+	// Many symbols per file, so the running budget is crossed mid-scan rather
+	// than on the first file.
+	var body strings.Builder
+	body.WriteString("package main\n\n")
+	for i := range 200 {
+		fmt.Fprintf(&body, "func LongerFunctionName%d() {}\n", i)
+	}
+	paths := make([]string, 0, 10)
+	for i := range 10 {
+		name := fmt.Sprintf("f%d.go", i)
+		writeGo(t, root, name, body.String())
+		paths = append(paths, name)
+	}
+
+	opts := lang.ScanOptions{
+		Root: root, Languages: []string{"go"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}
+
+	// Sized to admit some files but not all: the database starts near empty,
+	// and each file costs roughly 200 rows.
+	cap := int(currentIndexBytes(st)) + 120_000
+	err := IncrementalScan(st, opts, paths, cap)
+	if err == nil {
+		t.Fatal("expected the scan to stop at the cap")
+	}
+	if !strings.Contains(err.Error(), "max_bytes") || !strings.Contains(err.Error(), ".go") {
+		t.Errorf("error should name the cap and the file it stopped on, got: %v", err)
+	}
+
+	// What was written before the cap stays: the index is incomplete, not
+	// corrupt.
+	n, err := st.SymbolCount()
+	if err != nil {
+		t.Fatalf("SymbolCount: %v", err)
+	}
+	if n == 0 {
+		t.Error("nothing was indexed; the cap should stop the scan, not undo it")
+	}
+	if n >= 2000 {
+		t.Errorf("SymbolCount = %d; the cap did not stop the scan", n)
 	}
 }

@@ -203,6 +203,14 @@ Per-repo config lives in `.githints/config.json` under the `index` key:
       }
     }
 
+`max_bytes` caps the index size and is enforced on both scan paths. A full
+rebuild refuses up front; an incremental scan refuses if the index is already
+at the cap, and otherwise stops at the file that would cross it, leaving what
+it already wrote in place. Neither fails a commit -- the hook reports it on
+stderr and the commit succeeds -- so an index that stops growing is visible
+rather than silent. Raise `index.max_bytes`, or rebuild with
+`githints index --force`.
+
 Environment overrides: `GITHINTS_INDEX_ENABLED`, `GITHINTS_INDEX_LANGUAGES`,
 `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
 `GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_OBSIDIAN_WIKILINKS`.
