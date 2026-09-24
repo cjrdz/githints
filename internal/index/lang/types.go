@@ -5,6 +5,7 @@
 package lang
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -488,26 +489,47 @@ func encodeMarkdownTarget(s string) string {
 	return r.Replace(s)
 }
 
-// encodeLanguageCounts serializes a map to a comma-separated string.
+// EncodeLanguageCounts serializes the per-language file counts for the meta
+// row.
+//
+// This is JSON rather than the "name:count" pairs joined by commas it used to
+// be. That format made both characters illegal in a language name -- and only
+// the colon was checked, so a name containing a comma corrupted the record
+// silently. JSON has no such reserved characters, so a language may be called
+// c:sharp or f# without the storage format having an opinion.
 func EncodeLanguageCounts(m map[string]int) (string, error) {
 	if len(m) == 0 {
 		return "", nil
 	}
-	parts := make([]string, 0, len(m))
-	for k, v := range m {
-		if strings.Contains(k, ":") {
-			return "", fmt.Errorf("language name %q contains separator ':'", k)
-		}
-		parts = append(parts, fmt.Sprintf("%s:%d", k, v))
+	data, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("encode language_counts: %w", err)
 	}
-	return strings.Join(parts, ","), nil
+	return string(data), nil
 }
 
-// DecodeLanguageCounts parses a string serialized by EncodeLanguageCounts.
+// DecodeLanguageCounts parses what EncodeLanguageCounts wrote.
+//
+// It also reads the legacy "name:count" form, because the meta row survives
+// the schema reset that drops the data tables and would otherwise be read back
+// with the wrong parser after an upgrade.
 func DecodeLanguageCounts(s string) (map[string]int, error) {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
 	}
+	if strings.HasPrefix(s, "{") {
+		m := make(map[string]int)
+		if err := json.Unmarshal([]byte(s), &m); err != nil {
+			return nil, fmt.Errorf("decode language_counts: %w", err)
+		}
+		return m, nil
+	}
+	return decodeLegacyLanguageCounts(s)
+}
+
+// decodeLegacyLanguageCounts reads the pre-JSON "go:12,typescript:5" form.
+func decodeLegacyLanguageCounts(s string) (map[string]int, error) {
 	m := make(map[string]int)
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
@@ -518,13 +540,11 @@ func DecodeLanguageCounts(s string) (map[string]int, error) {
 		if idx < 0 {
 			return nil, fmt.Errorf("decode language_counts: missing ':' in %q", part)
 		}
-		lang := part[:idx]
-		countStr := part[idx+1:]
 		var count int
-		if _, err := fmt.Sscanf(countStr, "%d", &count); err != nil {
+		if _, err := fmt.Sscanf(part[idx+1:], "%d", &count); err != nil {
 			return nil, fmt.Errorf("decode language_counts: %w", err)
 		}
-		m[lang] = count
+		m[part[:idx]] = count
 	}
 	return m, nil
 }

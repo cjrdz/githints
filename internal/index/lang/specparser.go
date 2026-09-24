@@ -145,8 +145,14 @@ func (p *SpecParser) Parse(path string, src []byte) ([]Symbol, []Import, error) 
 			continue
 		}
 
+		// A declaration whose parameter list spans lines is invisible to a
+		// pattern that expects a closing paren, which is one of the larger
+		// systematic gaps in spec-driven parsing. Joining the continuation
+		// lines first lets one pattern cover both spellings.
+		logical, lastLine := joinContinuation(lines, i)
+
 		for _, rule := range p.symbols {
-			m := rule.match(line)
+			m := rule.match(logical)
 			if m == nil {
 				continue
 			}
@@ -159,7 +165,7 @@ func (p *SpecParser) Parse(path string, src []byte) ([]Symbol, []Import, error) 
 				Kind:      rule.kind,
 				FilePath:  path,
 				LineStart: i + 1,
-				LineEnd:   p.declEnd(lines, depths, i),
+				LineEnd:   p.declEnd(lines, depths, i, lastLine),
 			}
 			if rule.sigIdx >= 0 {
 				sym.Signature = strings.TrimSpace(m[rule.sigIdx])
@@ -211,7 +217,11 @@ func (p *SpecParser) lineDepths(lines []string) []int {
 }
 
 // declEnd finds the last line of the declaration starting at index start.
-func (p *SpecParser) declEnd(lines []string, depths []int, start int) int {
+//
+// header is the last line of the declaration's own header, which differs from
+// start when a parameter list spans lines: the opening brace is then on the
+// last header line, not the first.
+func (p *SpecParser) declEnd(lines []string, depths []int, start, header int) int {
 	limit := start + maxDeclScan
 	if limit > len(lines)-1 {
 		limit = len(lines) - 1
@@ -219,12 +229,15 @@ func (p *SpecParser) declEnd(lines []string, depths []int, start int) int {
 
 	switch p.depthStyle {
 	case DepthBrace:
-		// Walk until the braces opened on the declaration line are balanced.
-		depth := depths[start] + braceDelta(lines[start])
-		if depth <= depths[start] {
-			return start + 1 // single-line declaration
+		// Walk until the braces opened across the header are balanced.
+		depth := depths[start]
+		for i := start; i <= header && i < len(lines); i++ {
+			depth += braceDelta(lines[i])
 		}
-		for i := start + 1; i <= limit; i++ {
+		if depth <= depths[start] {
+			return header + 1 // the declaration ends with its header
+		}
+		for i := header + 1; i <= limit; i++ {
 			depth += braceDelta(lines[i])
 			if depth <= depths[start] {
 				return i + 1
@@ -232,8 +245,8 @@ func (p *SpecParser) declEnd(lines []string, depths []int, start int) int {
 		}
 	case DepthIndent:
 		// The body is everything indented further than the declaration.
-		end := start
-		for i := start + 1; i <= limit; i++ {
+		end := header
+		for i := header + 1; i <= limit; i++ {
 			if strings.TrimSpace(lines[i]) == "" {
 				continue
 			}
@@ -244,7 +257,7 @@ func (p *SpecParser) declEnd(lines []string, depths []int, start int) int {
 		}
 		return end + 1
 	}
-	return start + 1
+	return header + 1
 }
 
 func braceDelta(line string) int {
@@ -321,4 +334,57 @@ func (p *SpecParser) BlankLines(src []byte) []string { return p.blanker.Blank(sr
 // BlankLinesKeepingStrings keeps string contents, which detectors need.
 func (p *SpecParser) BlankLinesKeepingStrings(src []byte) []string {
 	return p.blanker.BlankKeepingStrings(src)
+}
+
+// maxContinuationJoin bounds how far a declaration header may span. Real
+// signatures are a handful of lines; a larger span means the parentheses were
+// never balanced, and joining further would drag unrelated code into the match.
+const maxContinuationJoin = 24
+
+// joinContinuation returns the logical declaration line starting at i, and the
+// index of its last physical line.
+//
+// A line with unbalanced parentheses is a declaration whose parameter list
+// continues, so the following lines are folded in until the parentheses close.
+// A balanced line is returned untouched, which is the overwhelmingly common
+// case and costs nothing.
+func joinContinuation(lines []string, i int) (string, int) {
+	if parenDelta(lines[i]) <= 0 {
+		return lines[i], i
+	}
+
+	var b strings.Builder
+	b.WriteString(lines[i])
+	depth := parenDelta(lines[i])
+
+	limit := i + maxContinuationJoin
+	if limit > len(lines)-1 {
+		limit = len(lines) - 1
+	}
+	for j := i + 1; j <= limit; j++ {
+		// A single space stands in for the newline so tokens cannot merge
+		// across the join: "foo(\n a" must not read as "foo( a" glued to the
+		// previous token.
+		b.WriteByte(' ')
+		b.WriteString(strings.TrimSpace(lines[j]))
+		depth += parenDelta(lines[j])
+		if depth <= 0 {
+			return b.String(), j
+		}
+	}
+	// Never closed: treat the line as it stands rather than returning a blob.
+	return lines[i], i
+}
+
+func parenDelta(line string) int {
+	delta := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '(':
+			delta++
+		case ')':
+			delta--
+		}
+	}
+	return delta
 }

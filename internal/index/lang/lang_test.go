@@ -137,11 +137,11 @@ func TestRegistry(t *testing.T) {
 			t.Errorf("Languages() reported %q but parser calls itself %q", name, got)
 		}
 
-		// Language names are serialized into the meta row as "name:count"
-		// pairs joined by commas (EncodeLanguageCounts). ':' is rejected
-		// there, but ',' is not and would silently corrupt the decode.
-		if strings.ContainsAny(name, ":,") {
-			t.Errorf("language %q contains ':' or ',', which EncodeLanguageCounts cannot round-trip", name)
+		// A name is typed into config.json and GITHINTS_INDEX_LANGUAGES, both
+		// comma-separated, so a comma or whitespace would make the language
+		// unselectable.
+		if strings.ContainsAny(name, " \t,") {
+			t.Errorf("language %q contains whitespace or ',', so it could not be selected in config", name)
 		}
 
 		// Case-insensitive lookup is relied on by config, where users type
@@ -404,5 +404,63 @@ func TestTSFamilyParsersShareTheScanHook(t *testing.T) {
 		if _, ok := p.(ScanHook); !ok {
 			t.Errorf("%s does not implement ScanHook", p.Language())
 		}
+	}
+}
+
+// TestLanguageCountsRoundTripExoticNames pins the constraint this encoding
+// removed. The previous format joined "name:count" pairs with commas, which
+// made both characters illegal in a language name -- and only the colon was
+// checked, so a comma corrupted the record silently.
+func TestLanguageCountsRoundTripExoticNames(t *testing.T) {
+	want := map[string]int{
+		"c:sharp":       3, // a colon, previously rejected
+		"f#":            1,
+		"objective-c++": 2,
+		"go":            7,
+	}
+	encoded, err := EncodeLanguageCounts(want)
+	if err != nil {
+		t.Fatalf("EncodeLanguageCounts: %v", err)
+	}
+	got, err := DecodeLanguageCounts(encoded)
+	if err != nil {
+		t.Fatalf("DecodeLanguageCounts: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%q = %d, want %d", k, got[k], v)
+		}
+	}
+}
+
+// TestLanguageCountsReadsLegacyFormat matters because the meta row survives
+// the schema reset that drops the data tables, so an upgraded index still
+// holds counts written by the old encoder.
+func TestLanguageCountsReadsLegacyFormat(t *testing.T) {
+	got, err := DecodeLanguageCounts("go:12,typescript:5")
+	if err != nil {
+		t.Fatalf("DecodeLanguageCounts: %v", err)
+	}
+	if got["go"] != 12 || got["typescript"] != 5 {
+		t.Errorf("legacy decode = %v", got)
+	}
+}
+
+// TestLanguageCountsCommaNoLongerCorrupts is the silent failure the old format
+// allowed: a comma in a name was not rejected, and split the record in two.
+func TestLanguageCountsCommaNoLongerCorrupts(t *testing.T) {
+	encoded, err := EncodeLanguageCounts(map[string]int{"a,b": 4})
+	if err != nil {
+		t.Fatalf("EncodeLanguageCounts: %v", err)
+	}
+	got, err := DecodeLanguageCounts(encoded)
+	if err != nil {
+		t.Fatalf("DecodeLanguageCounts: %v", err)
+	}
+	if len(got) != 1 || got["a,b"] != 4 {
+		t.Errorf("got %v, want a single entry for %q", got, "a,b")
 	}
 }

@@ -1,6 +1,7 @@
 package lang
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -319,5 +320,118 @@ func TestSpecParserIgnoresCommentedImports(t *testing.T) {
 	}
 	if !equalStringSlices(got, []string{"real"}) {
 		t.Errorf("imports = %v, want only [real]; a commented-out import was indexed", got)
+	}
+}
+
+// TestSpecParserJoinsMultiLineDeclarations covers one of the larger systematic
+// gaps in spec-driven parsing: a signature spanning lines is invisible to a
+// pattern that expects its closing paren on the same line.
+func TestSpecParserJoinsMultiLineDeclarations(t *testing.T) {
+	p := mustSpecParser(t, pythonSpecJSON)
+
+	src := []byte("" +
+		"def single(a, b):\n" + // 1
+		"    pass\n" + // 2
+		"\n" + // 3
+		"def spread(\n" + // 4
+		"    a,\n" + // 5
+		"    b,\n" + // 6
+		"):\n" + // 7
+		"    return a\n" + // 8
+		"\n" + // 9
+		"def after():\n" + // 10
+		"    pass\n") // 11
+
+	symbols, _, err := p.Parse("m.py", src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"single", "spread", "after"}
+	if got := symbolNames(symbols); !equalStringSlices(got, want) {
+		t.Fatalf("symbols = %v, want %v", got, want)
+	}
+
+	byName := map[string]Symbol{}
+	for _, s := range symbols {
+		byName[s.Name] = s
+	}
+	if got := byName["spread"]; got.LineStart != 4 {
+		t.Errorf("spread LineStart = %d, want 4 (the first header line)", got.LineStart)
+	}
+	// The body runs past the header, so the range must cover both.
+	if got := byName["spread"].LineEnd; got != 8 {
+		t.Errorf("spread LineEnd = %d, want 8", got)
+	}
+	// The joined signature is captured, not a fragment of it.
+	if got := byName["spread"].Signature; !strings.Contains(got, "a,") || !strings.Contains(got, "b,") {
+		t.Errorf("spread signature = %q, want both parameters", got)
+	}
+	// Continuation lines must not themselves be treated as declarations, and
+	// the declaration after must be unaffected.
+	if got := byName["after"].LineStart; got != 10 {
+		t.Errorf("after LineStart = %d, want 10", got)
+	}
+}
+
+func TestSpecParserMultiLineWithBraces(t *testing.T) {
+	p := mustSpecParser(t, goishSpecJSON)
+
+	src := []byte("" +
+		"func Spread(\n" + // 1
+		"\ta int,\n" + // 2
+		"\tb int,\n" + // 3
+		") error {\n" + // 4
+		"\treturn nil\n" + // 5
+		"}\n" + // 6
+		"\n" + // 7
+		"func After() {}\n") // 8
+
+	symbols, _, err := p.Parse("a.goish", src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := symbolNames(symbols); !equalStringSlices(got, []string{"Spread", "After"}) {
+		t.Fatalf("symbols = %v", got)
+	}
+	byName := map[string]Symbol{}
+	for _, s := range symbols {
+		byName[s.Name] = s
+	}
+	// The opening brace is on the last header line, so the body scan must
+	// start there rather than on the declaration's first line.
+	if got := byName["Spread"]; got.LineStart != 1 || got.LineEnd != 6 {
+		t.Errorf("Spread = %d-%d, want 1-6", got.LineStart, got.LineEnd)
+	}
+	if got := byName["After"]; got.LineStart != 8 {
+		t.Errorf("After LineStart = %d, want 8", got.LineStart)
+	}
+}
+
+// TestSpecParserUnclosedParenDoesNotRunAway guards the join: a parenthesis
+// that never closes must not swallow the rest of the file.
+func TestSpecParserUnclosedParenDoesNotRunAway(t *testing.T) {
+	p := mustSpecParser(t, pythonSpecJSON)
+
+	var b strings.Builder
+	b.WriteString("def broken(\n")
+	for i := 0; i < maxContinuationJoin*3; i++ {
+		b.WriteString("    x,\n")
+	}
+	b.WriteString("\ndef recovered():\n    pass\n")
+
+	symbols, _, err := p.Parse("m.py", []byte(b.String()))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	// broken is never completed, so it is not indexed; what matters is that
+	// the declaration after it still is.
+	found := false
+	for _, s := range symbols {
+		if s.Name == "recovered" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("an unclosed paren swallowed the rest of the file: %v", symbolNames(symbols))
 	}
 }
