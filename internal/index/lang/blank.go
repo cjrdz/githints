@@ -154,11 +154,13 @@ func (bl *Blanker) Blank(src []byte) []string {
 			rule := bl.strings[active]
 			switch {
 			case rule.Escape != 0 && c == rule.Escape && i+1 < len(raw):
-				// Hand a continuation's newline to the top of the loop so one
-				// source line stays one output line; consuming it here would
-				// merge them and shift every line number below.
-				if raw[i+1] == '\n' && rule.ContinueOnEscape {
-					pendingContinuation = true
+				// An escape never consumes a newline. Hand it to the top of
+				// the loop so one source line stays one output line; eating it
+				// here would merge them and shift every line number below.
+				// ContinueOnEscape only decides whether the literal survives
+				// the break, not whether the newline is consumed.
+				if raw[i+1] == '\n' {
+					pendingContinuation = rule.ContinueOnEscape
 				} else {
 					i++
 				}
@@ -177,14 +179,17 @@ func (bl *Blanker) Blank(src []byte) []string {
 			}
 
 		case bsRegex:
-			if c == '\\' && i+1 < len(raw) {
+			// An escape must never consume a newline: the line count is the
+			// one thing every caller relies on. A regex literal cannot legally
+			// span a line anyway, so a trailing escape is malformed input.
+			if c == '\\' && i+1 < len(raw) && raw[i+1] != '\n' {
 				i++
 			} else if c == '[' {
 				// Character class: skip to its end so a / inside does not
 				// terminate the literal.
 				for i+1 < len(raw) && raw[i+1] != ']' && raw[i+1] != '\n' {
 					i++
-					if raw[i] == '\\' {
+					if raw[i] == '\\' && i+1 < len(raw) && raw[i+1] != '\n' {
 						i++
 					}
 				}
@@ -292,6 +297,11 @@ func startsRegex(prev byte) bool {
 	}
 	return true
 }
+
+// tsBlanker is the compiled TypeScript spec, shared by every parse. A Blanker
+// is immutable once built and Blank keeps all its state in locals, so this is
+// safe to use from concurrent scans.
+var tsBlanker = NewBlanker(TypeScriptBlankSpec())
 
 // TypeScriptBlankSpec is the lexical surface of the TypeScript/JavaScript
 // family. It is also the reference spec: TestBlankerMatchesCleanTSLines pins

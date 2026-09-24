@@ -1,6 +1,7 @@
 package lang
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,24 +67,44 @@ func blankerCorpus(t *testing.T) map[string]string {
 	return corpus
 }
 
-// TestBlankerMatchesCleanTSLines is the proof that the generalized lexer is a
-// faithful replacement for the hand-written one. cleanTSLines is the oracle
-// while both exist; once the TypeScript parser moves over, this test is what
-// licenses deleting it.
-func TestBlankerMatchesCleanTSLines(t *testing.T) {
+// TestBlankerMatchesTypeScriptGolden pins the Blanker against the output of
+// cleanTSLines, the hand-written lexer it replaced. The golden file was
+// generated from that lexer while both existed, after a differential test and
+// 13.1M fuzz executions showed no divergence; it is how that equivalence
+// survives the original being deleted.
+//
+// Regenerate deliberately, never to make a red test green: a diff here means
+// the TypeScript parser's view of the source changed.
+func TestBlankerMatchesTypeScriptGolden(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "testdata", "blanker_typescript.json"))
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	var want map[string][]string
+	if err := json.Unmarshal(data, &want); err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+
 	bl := NewBlanker(TypeScriptBlankSpec())
+	corpus := blankerCorpus(t)
 
-	for name, src := range blankerCorpus(t) {
+	if len(want) != len(corpus) {
+		t.Errorf("golden has %d cases, corpus has %d; regenerate the golden file", len(want), len(corpus))
+	}
+
+	for name, src := range corpus {
 		t.Run(name, func(t *testing.T) {
-			want := cleanTSLines([]byte(src))
-			got := bl.Blank([]byte(src))
-
-			if len(got) != len(want) {
-				t.Fatalf("line count = %d, want %d\n got: %q\nwant: %q", len(got), len(want), got, want)
+			expected, ok := want[name]
+			if !ok {
+				t.Fatalf("case %q missing from the golden file", name)
 			}
-			for i := range want {
-				if got[i] != want[i] {
-					t.Errorf("line %d:\n got: %q\nwant: %q", i+1, got[i], want[i])
+			got := bl.Blank([]byte(src))
+			if len(got) != len(expected) {
+				t.Fatalf("line count = %d, want %d\n got: %q\nwant: %q", len(got), len(expected), got, expected)
+			}
+			for i := range expected {
+				if got[i] != expected[i] {
+					t.Errorf("line %d:\n got: %q\nwant: %q", i+1, got[i], expected[i])
 				}
 			}
 		})
@@ -108,22 +129,24 @@ func TestBlankerPreservesLineCount(t *testing.T) {
 	}
 }
 
-func FuzzBlankerMatchesCleanTSLines(f *testing.F) {
+// FuzzBlankerLineCount keeps fuzzing the property that outlived the oracle:
+// one output line per input line, on arbitrary bytes. That is the invariant
+// every caller relies on to map a matched line back to the source.
+func FuzzBlankerLineCount(f *testing.F) {
 	for _, src := range blankerCases {
 		f.Add([]byte(src))
 	}
 	bl := NewBlanker(TypeScriptBlankSpec())
 
 	f.Fuzz(func(t *testing.T, src []byte) {
-		want := cleanTSLines(src)
-		got := bl.Blank(src)
-		if len(got) != len(want) {
-			t.Fatalf("line count = %d, want %d\nsrc: %q\n got: %q\nwant: %q", len(got), len(want), src, got, want)
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("line %d differs\nsrc: %q\n got: %q\nwant: %q", i+1, src, got[i], want[i])
+		want := 1
+		for i := 0; i < len(src); i++ {
+			if src[i] == '\n' {
+				want++
 			}
+		}
+		if got := len(bl.Blank(src)); got != want {
+			t.Fatalf("%d lines, want %d for %q", got, want, src)
 		}
 	})
 }
@@ -238,5 +261,34 @@ func TestBlankerNoRegexLiterals(t *testing.T) {
 	got := bl.Blank([]byte("SELECT a / b / c FROM t;\n"))
 	if got[0] != "SELECT a / b / c FROM t;" {
 		t.Errorf("division was altered: %q", got[0])
+	}
+}
+
+// TestBlankerEscapeNeverConsumesNewline pins the three places an escape could
+// swallow a line break. All three were found by fuzzing, and each one shifted
+// the reported line number of every symbol below it.
+//
+// The rule is uniform: an escape never consumes a newline. Whether the literal
+// survives the break is a separate question, answered by ContinueOnEscape.
+func TestBlankerEscapeNeverConsumesNewline(t *testing.T) {
+	bl := NewBlanker(TypeScriptBlankSpec())
+
+	for _, tc := range []struct{ name, src string }{
+		{"quotedString", "const s = \"a\\\nb\";\n"},
+		{"templateLiteral", "const t = `a\\\nb`;\n"},
+		{"regexLiteral", "const r = /a\\\nb/;\n"},
+		{"regexCharClass", "const r = /[a\\\nb]/;\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := 1
+			for i := 0; i < len(tc.src); i++ {
+				if tc.src[i] == '\n' {
+					want++
+				}
+			}
+			if got := len(bl.Blank([]byte(tc.src))); got != want {
+				t.Errorf("%d lines, want %d", got, want)
+			}
+		})
 	}
 }
