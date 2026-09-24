@@ -39,8 +39,14 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 
 	meta := lang.IndexMeta{LanguageCounts: make(map[string]int)}
 
+	detectors, detectorErrs := lang.EmbeddedDetectors()
+	for _, err := range detectorErrs {
+		fmt.Fprintf(os.Stderr, "githints: framework detector ignored: %v\n", err)
+	}
+
 	var allSymbols []lang.Symbol
 	var allImports []lang.Import
+	var allFacets []lang.Detected
 
 	// Walk in deterministic order so repeated scans are byte-for-byte identical.
 	err = filepath.WalkDir(opts.Root, func(path string, d os.DirEntry, walkErr error) error {
@@ -126,6 +132,7 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 			allSymbols = append(allSymbols, symbols...)
 		}
 		allImports = append(allImports, imports...)
+		allFacets = append(allFacets, detectFacets(detectors, parser, rel, src, imports)...)
 
 		return nil
 	})
@@ -144,6 +151,9 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 		return err
 	}
 	if err := db.InsertImports(allImports); err != nil {
+		return err
+	}
+	if err := db.InsertFacets(allFacets); err != nil {
 		return err
 	}
 	meta.LastIndexedAt = time.Now().Unix()
@@ -325,6 +335,10 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 			"githints: index: ignoring unsupported language(s) %s; indexing the rest (supported: %s)\n",
 			strings.Join(unknown, ", "), strings.Join(registry.Languages(), ", "))
 	}
+	detectors, detectorErrs := lang.EmbeddedDetectors()
+	for _, err := range detectorErrs {
+		fmt.Fprintf(os.Stderr, "githints: framework detector ignored: %v\n", err)
+	}
 	set := lang.ParserSet(parsers)
 	extMap := lang.ExtensionMap(set)
 
@@ -404,6 +418,10 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 			fmt.Fprintf(os.Stderr, "githints: index insert imports failed: %s: %v\n", path, err)
 			continue
 		}
+		if err := db.InsertFacets(detectFacets(detectors, parser, path, src, imports)); err != nil {
+			fmt.Fprintf(os.Stderr, "githints: index insert facets failed: %s: %v\n", path, err)
+			continue
+		}
 		if err := renderFileNote(db, opts.Root, path, opts.Obsidian, resolveImportPaths(db, opts.Root, registry), registry); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index note render failed: %s: %v\n", path, err)
 		}
@@ -423,4 +441,34 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 	}
 
 	return nil
+}
+
+// lineBlanker is implemented by parsers that can expose the blanked views of a
+// file. Framework detection matches lines, and matching raw source would let a
+// declaration inside a comment or an example inside a docstring be reported as
+// real code.
+type lineBlanker interface {
+	BlankLines(src []byte) []string
+	BlankLinesKeepingStrings(src []byte) []string
+}
+
+// detectFacets runs framework detection over one file.
+//
+// A parser that cannot produce blanked views simply contributes no facets:
+// guessing from raw source would be worse than reporting nothing.
+func detectFacets(set *lang.DetectorSet, parser lang.LanguageParser, rel string, src []byte, imports []lang.Import) []lang.Detected {
+	if set.Empty() {
+		return nil
+	}
+	bl, ok := parser.(lineBlanker)
+	if !ok {
+		return nil
+	}
+	return set.Detect(lang.DetectInput{
+		FilePath: rel,
+		Language: parser.Language(),
+		Imports:  imports,
+		Code:     bl.BlankLines(src),
+		Strings:  bl.BlankLinesKeepingStrings(src),
+	})
 }

@@ -1188,3 +1188,85 @@ func captureStderr(fn func() error) (string, error) {
 	}
 	return string(out), runErr
 }
+
+// TestFullScanDetectsFacets is the end-to-end proof that framework detection
+// reaches the database: a Django project must yield models and routes, and
+// incremental rescans must not duplicate or strand them.
+func TestFullScanDetectsFacets(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("app/models.py", "from django.db import models\n\nclass Article(models.Model):\n    pass\n")
+	write("app/urls.py", "from django.urls import path\n\nurlpatterns = [\n    path(\"articles/\", views.index),\n]\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"python"},
+		MaxFileSize:  1 << 20,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	models, err := st.FacetsByName(lang.FacetModel)
+	if err != nil {
+		t.Fatalf("FacetsByName: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "Article" || models[0].Framework != "django" {
+		t.Errorf("models = %v", models)
+	}
+	routes, err := st.FacetsByName(lang.FacetRoute)
+	if err != nil {
+		t.Fatalf("FacetsByName: %v", err)
+	}
+	if len(routes) != 1 || routes[0].Name != "articles/" {
+		t.Errorf("routes = %v", routes)
+	}
+
+	// Rescanning the same file must replace its facets, not add to them.
+	if err := IncrementalScan(st, opts, []string{"app/models.py"}); err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	models, err = st.FacetsByName(lang.FacetModel)
+	if err != nil {
+		t.Fatalf("FacetsByName: %v", err)
+	}
+	if len(models) != 1 {
+		t.Errorf("after rescan models = %v, want 1; facets were duplicated", models)
+	}
+
+	// Removing the model must remove its facet.
+	write("app/models.py", "from django.db import models\n\n# gone\n")
+	if err := IncrementalScan(st, opts, []string{"app/models.py"}); err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	models, err = st.FacetsByName(lang.FacetModel)
+	if err != nil {
+		t.Fatalf("FacetsByName: %v", err)
+	}
+	if len(models) != 0 {
+		t.Errorf("after removal models = %v, want none; the facet was stranded", models)
+	}
+
+	// The route in the untouched file must survive an unrelated rescan.
+	routes, err = st.FacetsByName(lang.FacetRoute)
+	if err != nil {
+		t.Fatalf("FacetsByName: %v", err)
+	}
+	if len(routes) != 1 {
+		t.Errorf("routes = %v, want the untouched file's route to survive", routes)
+	}
+}

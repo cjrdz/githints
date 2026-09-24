@@ -155,6 +155,7 @@ CREATE TABLE IF NOT EXISTS meta (
 const dropDataSchema = `
 DROP TABLE IF EXISTS symbols;
 DROP TABLE IF EXISTS imports;
+DROP TABLE IF EXISTS facets;
 `
 
 const dataSchema = `
@@ -181,6 +182,20 @@ CREATE TABLE IF NOT EXISTS imports (
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_path);
 CREATE INDEX IF NOT EXISTS idx_imports_path ON imports(imported_path);
 CREATE INDEX IF NOT EXISTS idx_symbols_language ON symbols(language);
+
+CREATE TABLE IF NOT EXISTS facets (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	file_path TEXT NOT NULL,
+	facet TEXT NOT NULL,
+	framework TEXT NOT NULL,
+	name TEXT NOT NULL,
+	detail TEXT,
+	line INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_facets_facet ON facets(facet);
+CREATE INDEX IF NOT EXISTS idx_facets_file ON facets(file_path);
+CREATE INDEX IF NOT EXISTS idx_facets_framework ON facets(framework);
 `
 
 func (s *Store) metaGet(key string) (string, error) {
@@ -298,16 +313,22 @@ func (s *Store) Clear() error {
 	if _, err := s.db.Exec("DELETE FROM imports"); err != nil {
 		return fmt.Errorf("clear imports: %w", err)
 	}
+	if _, err := s.db.Exec("DELETE FROM facets"); err != nil {
+		return fmt.Errorf("clear facets: %w", err)
+	}
 	return nil
 }
 
-// DeleteFile removes all symbols and imports for a single file path.
+// DeleteFile removes all symbols, imports and facets for a single file path.
 func (s *Store) DeleteFile(path string) error {
 	if _, err := s.db.Exec("DELETE FROM symbols WHERE file_path = ?", path); err != nil {
 		return fmt.Errorf("delete symbols for %s: %w", path, err)
 	}
 	if _, err := s.db.Exec("DELETE FROM imports WHERE file_path = ?", path); err != nil {
 		return fmt.Errorf("delete imports for %s: %w", path, err)
+	}
+	if _, err := s.db.Exec("DELETE FROM facets WHERE file_path = ?", path); err != nil {
+		return fmt.Errorf("delete facets for %s: %w", path, err)
 	}
 	return nil
 }
@@ -501,4 +522,67 @@ func (s *Store) ImportsForFile(file string) ([]lang.Import, error) {
 func (s *Store) Vacuum() error {
 	_, err := s.db.Exec("VACUUM")
 	return err
+}
+
+// InsertFacets writes a batch of detected facets.
+func (s *Store) InsertFacets(facets []lang.Detected) error {
+	if len(facets) == 0 {
+		return nil
+	}
+	stmt, err := s.db.Prepare("INSERT INTO facets (file_path, facet, framework, name, detail, line) VALUES (?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("prepare facets insert: %w", err)
+	}
+	defer stmt.Close()
+	for _, f := range facets {
+		if _, err := stmt.Exec(f.FilePath, f.Facet, f.Framework, f.Name, f.Detail, f.Line); err != nil {
+			return fmt.Errorf("insert facet %s in %s: %w", f.Facet, f.FilePath, err)
+		}
+	}
+	return nil
+}
+
+// FacetsForFile returns every facet detected in one file.
+func (s *Store) FacetsForFile(path string) ([]lang.Detected, error) {
+	return s.queryFacets("SELECT file_path, facet, framework, name, detail, line FROM facets WHERE file_path = ? ORDER BY line", path)
+}
+
+// FacetsByName returns facets of one kind across the repository, newest
+// nothing -- ordered by file then line so the result reads like a listing.
+// An empty facet returns every facet, which is how a caller asks "what
+// frameworks are in here at all".
+func (s *Store) FacetsByName(facet string) ([]lang.Detected, error) {
+	if facet == "" {
+		return s.queryFacets("SELECT file_path, facet, framework, name, detail, line FROM facets ORDER BY facet, file_path, line")
+	}
+	return s.queryFacets("SELECT file_path, facet, framework, name, detail, line FROM facets WHERE facet = ? ORDER BY file_path, line", facet)
+}
+
+func (s *Store) queryFacets(query string, args ...any) ([]lang.Detected, error) {
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query facets: %w", err)
+	}
+	defer rows.Close()
+
+	var out []lang.Detected
+	for rows.Next() {
+		var f lang.Detected
+		var detail sql.NullString
+		if err := rows.Scan(&f.FilePath, &f.Facet, &f.Framework, &f.Name, &detail, &f.Line); err != nil {
+			return nil, fmt.Errorf("scan facet: %w", err)
+		}
+		f.Detail = detail.String
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// FacetCount returns the number of detected facets.
+func (s *Store) FacetCount() (int, error) {
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM facets").Scan(&n); err != nil {
+		return 0, fmt.Errorf("count facets: %w", err)
+	}
+	return n, nil
 }

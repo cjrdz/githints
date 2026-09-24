@@ -1,0 +1,29 @@
+{
+  // Django. The import gate matters as much as the patterns: `class X(Model)`
+  // is the shape of every Python ORM ever written, and attributing one to the
+  // wrong framework is worse than not detecting it.
+  "framework": "django",
+  "languages": ["python"],
+  "when_imports": ["django.*"],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "class",
+      "pattern": "^\\s*class\\s+(?P<name>\\w+)\\s*\\([^)]*\\bmodels\\.Model\\b"
+    },
+    {
+      // urlpatterns entries are data, not declarations, which is why rules
+      // match lines rather than symbols. The route itself is a string, so
+      // this needs the view that keeps string contents.
+      "facet": "route",
+      "requires": "path(",
+      "keep_strings": true,
+      "pattern": "\\b(?:re_)?path\\(\\s*[\"'](?P<name>[^\"']*)[\"']\\s*,\\s*(?P<detail>[\\w.]+)"
+    },
+    {
+      "facet": "migration",
+      "requires": "Migration",
+      "pattern": "^\\s*class\\s+(?P<name>Migration)\\s*\\("
+    }
+  ]
+}

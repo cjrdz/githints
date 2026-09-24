@@ -304,3 +304,11 @@ func (p *SpecParser) ImportPath(_, file string) (string, error) {
 	}
 	return key, nil
 }
+
+// BlankLines returns the comment- and string-free view of the file.
+func (p *SpecParser) BlankLines(src []byte) []string { return p.blanker.Blank(src) }
+
+// BlankLinesKeepingStrings keeps string contents, which detectors need.
+func (p *SpecParser) BlankLinesKeepingStrings(src []byte) []string {
+	return p.blanker.BlankKeepingStrings(src)
+}

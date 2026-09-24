@@ -56,3 +56,11 @@ func (AstroParser) BeginScan(root string) func() { return beginTSScan(root) }
 func (AstroParser) ImportPath(_, file string) (string, error) {
 	return tsFileKey(filepath.ToSlash(file)), nil
 }
+
+// BlankLines returns the comment- and string-free view of the file.
+func (AstroParser) BlankLines(src []byte) []string { return tsBlanker.Blank(src) }
+
+// BlankLinesKeepingStrings keeps string contents, which detectors need.
+func (AstroParser) BlankLinesKeepingStrings(src []byte) []string {
+	return tsBlanker.BlankKeepingStrings(src)
+}

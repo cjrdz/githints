@@ -284,3 +284,29 @@ func readModulePath(root string) (string, error) {
 	}
 	return "", fmt.Errorf("no module directive found in %s", path)
 }
+
+// goBlanker exposes Go's lexical surface for post-passes that match lines.
+//
+// GoParser itself has no use for it -- go/parser gives exact structure -- but
+// framework detection runs over blanked lines for every language, and without
+// this Go files would be the one place a detector could match a declaration
+// that exists only inside a comment or a string.
+var goBlanker = NewBlanker(BlankSpec{
+	LineComments:  []string{"//"},
+	BlockComments: [][2]string{{"/*", "*/"}},
+	Strings: []StringRule{
+		{Open: `"`, Close: `"`, Escape: '\\'},
+		{Open: "'", Close: "'", Escape: '\\'},
+		// Raw strings span lines and honour no escapes at all.
+		{Open: "`", Close: "`", Multiline: true},
+	},
+})
+
+// BlankLines returns the comment- and string-free view of a Go file.
+func (GoParser) BlankLines(src []byte) []string { return goBlanker.Blank(src) }
+
+// BlankLinesKeepingStrings returns the same view with string contents intact,
+// which detectors need: a route path or a struct tag lives inside a string.
+func (GoParser) BlankLinesKeepingStrings(src []byte) []string {
+	return goBlanker.BlankKeepingStrings(src)
+}

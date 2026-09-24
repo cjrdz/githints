@@ -95,3 +95,11 @@ func (SvelteParser) BeginScan(root string) func() { return beginTSScan(root) }
 func (SvelteParser) ImportPath(_, file string) (string, error) {
 	return tsFileKey(filepath.ToSlash(file)), nil
 }
+
+// BlankLines returns the comment- and string-free view of the file.
+func (SvelteParser) BlankLines(src []byte) []string { return tsBlanker.Blank(src) }
+
+// BlankLinesKeepingStrings keeps string contents, which detectors need.
+func (SvelteParser) BlankLinesKeepingStrings(src []byte) []string {
+	return tsBlanker.BlankKeepingStrings(src)
+}
