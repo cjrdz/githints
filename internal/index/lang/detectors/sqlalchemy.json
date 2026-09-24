@@ -1,0 +1,27 @@
+{
+  // SQLAlchemy, including the Flask-SQLAlchemy db.Model spelling.
+  //
+  // The import gate is doing real work here: `class X(Base)` is the shape of
+  // most Python ORMs, and attributing a Peewee or Tortoise model to
+  // SQLAlchemy would be worse than not detecting it at all.
+  "framework": "sqlalchemy",
+  "languages": ["python"],
+  "when_imports": ["sqlalchemy", "flask_sqlalchemy"],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "class",
+      // DeclarativeBase is deliberately absent: it appears only in the
+      // declaration of the base class itself, which is not a table.
+      "pattern": "^\\s*class\\s+(?P<name>\\w+)\\s*\\([^)]*\\b(?:Base|db\\.Model)\\b"
+    },
+    {
+      // A mapped class names its table explicitly; this catches models whose
+      // base class is a project-local alias the pattern above cannot know.
+      "facet": "model",
+      "requires": "__tablename__",
+      "keep_strings": true,
+      "pattern": "__tablename__\\s*=\\s*[\"'](?P<name>[^\"']+)[\"']"
+    }
+  ]
+}

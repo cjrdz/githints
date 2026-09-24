@@ -187,3 +187,14 @@ func stripJSONC(src []byte) []byte {
 	}
 	return out
 }
+
+// beginTSScan installs the tsconfig path aliases for the duration of a scan.
+//
+// The configuration is process-global because Parse has no per-scan argument;
+// see the comment on activeTSPaths. Routing it through ScanHook is what keeps
+// that detail inside this package instead of requiring an edit to every scan
+// entry point.
+func beginTSScan(root string) func() {
+	SetActiveTSPathsConfig(LoadTSPathsConfig(root))
+	return func() { SetActiveTSPathsConfig(nil) }
+}

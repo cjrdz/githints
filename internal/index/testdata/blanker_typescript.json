@@ -1,0 +1,336 @@
+{
+  "backslashAtEOF": [
+    "const s = \""
+  ],
+  "blockInString": [
+    "const s = \"\";",
+    "let z = 1;",
+    ""
+  ],
+  "blockSpan": [
+    "",
+    " let z = 1;",
+    ""
+  ],
+  "blockUnterminated": [
+    "",
+    "",
+    ""
+  ],
+  "bracesOnly": [
+    "function f() { if (x) { return 1; } }",
+    ""
+  ],
+  "commentInString": [
+    "const s = \"\";",
+    "let z = 1;",
+    ""
+  ],
+  "crlf": [
+    "let a = 1;\r",
+    "let b = 2;\r",
+    ""
+  ],
+  "divisionChain": [
+    "let x = y / 2 / 3;",
+    ""
+  ],
+  "dollarNotInterp": [
+    "const t = ``;",
+    "let z = 1;",
+    ""
+  ],
+  "empty": [
+    ""
+  ],
+  "emptyString": [
+    "const s = \"\";",
+    "const u = '';",
+    "const v = ``;",
+    ""
+  ],
+  "escapedBackslash": [
+    "const s = \"\";",
+    "let z = 1;",
+    ""
+  ],
+  "escapedQuote": [
+    "const s = \"\";",
+    "let z = 1;",
+    ""
+  ],
+  "fixture:sample.astro": [
+    "---",
+    "import BaseLayout from \"\";",
+    "import { getProducts } from \"\";",
+    "import type { Product } from \"\";",
+    "",
+    "export interface PageProps {",
+    "\ttitle: string;",
+    "}",
+    "",
+    "const { title } = Astro.props;",
+    "",
+    "const products: Product[] = await getProducts();",
+    "",
+    "export function formatTitle(raw: string): string {",
+    "\treturn `${raw}`;",
+    "}",
+    "---",
+    "",
+    "\u003cBaseLayout title={formatTitle(title)}\u003e",
+    "\t\u003cul\u003e",
+    "\t\t{products.map((p) =\u003e \u003cli\u003e{p.name}\u003c ",
+    "ul\u003e",
+    "\u003c ",
+    "",
+    "",
+    "lib/analytics\"",
+    "",
+    "\tconst page = document.title;",
+    "",
+    "\ttrackView(page);",
+    "\u003c ",
+    ""
+  ],
+  "fixture:sample.go": [
+    "package sample",
+    "",
+    "import (",
+    "\t\"\"",
+    "\t\"\"",
+    ")",
+    "",
+    "",
+    "type User struct {",
+    "\tName string",
+    "}",
+    "",
+    "const MaxRetries = 3",
+    "",
+    "var defaultTimeout = 30",
+    "",
+    "",
+    "func NewUser(name string) *User {",
+    "\treturn \u0026User{Name: name}",
+    "}",
+    "",
+    "",
+    "func (u *User) String() string {",
+    "\treturn fmt.Sprintf(\"\", u.Name)",
+    "}",
+    ""
+  ],
+  "fixture:sample.svelte": [
+    "\u003cscript module lang=\"\"\u003e",
+    "\texport const MODULE_VERSION = \"\";",
+    "\u003c ",
+    "",
+    "",
+    "",
+    ".. api\"",
+    "\timport type { User } from \"\";",
+    "",
+    "\tinterface Props {",
+    "\t\tuserId: string;",
+    "\t\tlabel?: string;",
+    "\t}",
+    "",
+    "\tlet { userId, label = \"\" }: Props = $props();",
+    "",
+    "\tlet user = $state\u003cUser | null\u003e(null);",
+    "",
+    "\tconst displayName = $derived(user ? user.name : label);",
+    "",
+    "\texport function refresh(): void {",
+    "\t\tload();",
+    "\t}",
+    "",
+    "\tasync function load(): Promise\u003cvoid\u003e {",
+    "\t\tuser = await fetchUser(userId);",
+    "\t}",
+    "",
+    "\tonMount(() =\u003e {",
+    "\t\tload();",
+    "\t});",
+    "\u003c ",
+    "",
+    "h1\u003e",
+    "",
+    "\u003cstyle\u003e",
+    "\th1 {",
+    "\t\tcolor: navy;",
+    "\t}",
+    "\u003c ",
+    ""
+  ],
+  "fixture:sample.ts": [
+    "import { Injectable } from \"\";",
+    "import type { User } from \"\";",
+    "import {",
+    "\tcreateLogger,",
+    "\ttype Logger,",
+    "} from \"\";",
+    "import \"\";",
+    "import * as utils from \"\";",
+    "",
+    "export * from \"\";",
+    "export { helper } from \"\";",
+    "",
+    "const dynamic = import(\"\");",
+    "const legacy = require(\"\");",
+    "",
+    "",
+    "",
+    "",
+    "export interface UserService {",
+    "\tfindAll(query: ListQuery): Promise\u003cUser[]\u003e;",
+    "\treadonly name: string;",
+    "}",
+    "",
+    "export type UserID = string;",
+    "",
+    "export type Result =",
+    "\t| { ok: true }",
+    "\t| { ok: false };",
+    "",
+    "export enum Role {",
+    "\tAdmin = \"\",",
+    "\tUser = \"\",",
+    "}",
+    "",
+    "export const MAX_RETRIES = 3;",
+    "",
+    "let mutableCounter = 0;",
+    "",
+    "export const buildQuery = (id: UserID): string =\u003e {",
+    "\treturn `${id}${Role.User}`;",
+    "};",
+    "",
+    "export async function fetchUser(id: UserID): Promise\u003cUser\u003e {",
+    "\tconst pattern =  g;",
+    "\tconst localHelper = () =\u003e id;",
+    "\tfunction innerClosure() {",
+    "\t\treturn localHelper();",
+    "\t}",
+    "\treturn fetch(`${id}`).then((r) =\u003e r.json());",
+    "}",
+    "",
+    "export default class BaseService implements UserService {",
+    "\treadonly name = \"\";",
+    "",
+    "\tconstructor(private logger: Logger) {}",
+    "",
+    "\tasync findAll(query: ListQuery): Promise\u003cUser[]\u003e {",
+    "\t\treturn this.query(query);",
+    "\t}",
+    "",
+    "\tget size(): number {",
+    "\t\treturn 0;",
+    "\t}",
+    "",
+    "\tprivate query(q: ListQuery): Promise\u003cUser[]\u003e {",
+    "\t\treturn Promise.resolve([]);",
+    "\t}",
+    "}",
+    ""
+  ],
+  "interpNested2": [
+    "const t = `${ `${ `${x}` }` }`;",
+    ""
+  ],
+  "lineCommentAtEOF": [
+    "let a = 1; "
+  ],
+  "lineContinuation": [
+    "const a = \"",
+    "\";",
+    "func X() {}",
+    ""
+  ],
+  "multiContinuation": [
+    "const a = \"",
+    "",
+    "\";",
+    "func X() {}",
+    ""
+  ],
+  "nestedTemplate": [
+    "const t = `${ `${c}` }`;",
+    "let z = 1;",
+    ""
+  ],
+  "noTrailingNewline": [
+    "let a = 1;"
+  ],
+  "plain": [
+    "const a = \"\";",
+    "func X() {}",
+    ""
+  ],
+  "regexAfterParen": [
+    "if ( .test(s)) {}",
+    ""
+  ],
+  "regexCharClass": [
+    "const r =  ;",
+    "let z = 1;",
+    ""
+  ],
+  "regexEscaped": [
+    "const r =  ;",
+    "let z = 1;",
+    ""
+  ],
+  "regexLiteral": [
+    "const r =  ;",
+    "const d = a / b;",
+    ""
+  ],
+  "singleQuote": [
+    "const a = '';",
+    "let z = 1;",
+    ""
+  ],
+  "stringInBlock": [
+    "",
+    "let z = 1;",
+    ""
+  ],
+  "stringInComment": [
+    "",
+    "let z = 1;",
+    ""
+  ],
+  "template": [
+    "const t = ``;",
+    "let z = 1;",
+    ""
+  ],
+  "templateBraces": [
+    "const t = `${ {a:1} }`;",
+    "let z = 1;",
+    ""
+  ],
+  "templateInterp": [
+    "const t = `${x}`;",
+    "let z = 1;",
+    ""
+  ],
+  "templateMultiline": [
+    "const t = `",
+    "`;",
+    "let z = 1;",
+    ""
+  ],
+  "unterminatedString": [
+    "const s = \"",
+    "let z = 1;",
+    ""
+  ],
+  "unterminatedTmpl": [
+    "const t = `",
+    "",
+    ""
+  ]
+}

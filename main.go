@@ -85,6 +85,9 @@ Usage:
   githints index                  re-index the structural symbol cache
   githints index status           show index statistics
   githints index verify           report drift between the index and the repo
+  githints index languages        list the languages this binary can index
+  githints index facets [-facet=] [-framework=] [-file=] [-limit=]
+                                  list detected framework constructs
   githints version                print the githints version`
 
 func cmdVersion() error {
@@ -612,7 +615,7 @@ func cmdHookRun() error {
 				MaxFileSize:  int64(cfg.Index.MaxFileSize),
 				ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
 				Obsidian:     cfg.Index.ObsidianWikilinks,
-			}, files); err != nil {
+			}, files, cfg.Index.MaxBytes); err != nil {
 				fmt.Fprintf(os.Stderr, "githints: incremental index scan: %v\n", err)
 			}
 		}
@@ -818,11 +821,23 @@ func cmdIndex(args []string) error {
 	if len(args) > 0 && args[0] == "verify" {
 		return cmdIndexVerify(args[1:])
 	}
+	if len(args) > 0 && args[0] == "languages" {
+		return cmdIndexLanguages(args[1:])
+	}
+	if len(args) > 0 && args[0] == "facets" {
+		return cmdIndexFacets(args[1:])
+	}
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
 	obsidian := fs.Bool("obsidian", false, "render Obsidian wikilinks in index notes")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	// flag.Parse stops at the first non-flag argument and leaves it in Args(),
+	// so without this a mistyped subcommand ("index langauges") silently falls
+	// through to a full rebuild — which clears the index and VACUUMs the file.
+	if rest := fs.Args(); len(rest) > 0 {
+		return fmt.Errorf("unknown index subcommand: %s", rest[0])
 	}
 
 	root, err := gitutil.RepoRoot()
@@ -862,6 +877,143 @@ func cmdIndex(args []string) error {
 	}
 	fmt.Printf("indexed %d files, %d symbols\n", meta.FileCount, meta.SymbolCount)
 	return nil
+}
+
+// cmdIndexLanguages prints the languages this binary can index, with the file
+// extensions each one claims.
+//
+// It deliberately needs no repository, no config, and no database: which
+// languages exist is a property of the binary. That is the whole point — a
+// user whose configured language was rejected has, without this, no way to ask
+// what would have been accepted. When there *is* a repo to consult, each
+// language is additionally marked with whether the current config enables it,
+// which is the usual reason a file is not showing up in the index.
+func cmdIndexLanguages(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("unknown index languages argument: %s", args[0])
+	}
+
+	// Best-effort: outside a repo, or with an unreadable config, the plain
+	// list is still the correct answer to "what does this binary support".
+	enabled := map[string]bool{}
+	haveConfig := false
+	root := ""
+	if found, err := gitutil.RepoRoot(); err == nil {
+		root = found
+		if cfg, err := config.Load(root); err == nil {
+			haveConfig = true
+			for _, name := range cfg.Index.Languages {
+				enabled[strings.ToLower(name)] = true
+			}
+		}
+	}
+	r := lang.NewRegistryForRoot(root)
+
+	fmt.Println("languages this githints binary can index:")
+	for _, name := range r.Languages() {
+		p := r.ForLanguage(name)
+		exts := append([]string(nil), p.Extensions()...)
+		sort.Strings(exts)
+
+		line := fmt.Sprintf("  %-12s %s", name, strings.Join(exts, " "))
+		if r.Origin(name) == lang.OriginRepo {
+			line += "  [from " + lang.UserSpecDir + "]"
+		}
+		if haveConfig {
+			if enabled[name] {
+				line += "  [enabled]"
+			} else {
+				line += "  [not enabled]"
+			}
+		}
+		fmt.Println(line)
+	}
+
+	if haveConfig {
+		// The set may have come from config.json, GITHINTS_INDEX_LANGUAGES, or
+		// the built-in default, so name the levers rather than claiming a source.
+		fmt.Println()
+		fmt.Println(`change the enabled set with "index.languages" in .githints/config.json,`)
+		fmt.Println(`or the GITHINTS_INDEX_LANGUAGES environment variable`)
+	}
+	return nil
+}
+
+// cmdIndexFacets lists detected framework constructs: routes, models,
+// components and the rest, normalized across frameworks.
+func cmdIndexFacets(args []string) error {
+	fs := flag.NewFlagSet("index facets", flag.ExitOnError)
+	facet := fs.String("facet", "", "role to list: route, model, component, migration, job, test")
+	framework := fs.String("framework", "", "restrict to one framework, e.g. django")
+	file := fs.String("file", "", "restrict to one repo-relative file path")
+	limit := fs.Int("limit", 50, "maximum facets to list")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if rest := fs.Args(); len(rest) > 0 {
+		return fmt.Errorf("unknown argument: %s", rest[0])
+	}
+
+	root, err := gitutil.RepoRoot()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(root)
+	if err != nil {
+		return err
+	}
+	if !cfg.Index.Enabled {
+		fmt.Println("indexing is disabled in .githints/config.json")
+		return nil
+	}
+
+	db, err := index.Open(lang.IndexDBPath(root))
+	if err != nil {
+		return fmt.Errorf("open index db: %w", err)
+	}
+	defer db.Close()
+
+	found, err := db.Facets(index.FacetFilter{
+		Facet:     *facet,
+		Framework: *framework,
+		File:      *file,
+		Limit:     clampCLILimit(*limit),
+	})
+	if err != nil {
+		return err
+	}
+	if len(found) == 0 {
+		total, err := db.FacetCount()
+		if err != nil {
+			return err
+		}
+		if total == 0 {
+			fmt.Println("no framework constructs detected in this repo")
+		} else {
+			fmt.Println("no facets match those filters")
+		}
+		return nil
+	}
+	for _, f := range found {
+		line := fmt.Sprintf("%-10s %-12s %s:%d  %s", f.Facet, f.Framework, f.FilePath, f.Line, f.Name)
+		if f.Detail != "" {
+			line += "  -> " + f.Detail
+		}
+		fmt.Println(line)
+	}
+	return nil
+}
+
+// clampCLILimit keeps a CLI limit in the same range the MCP tools enforce, so
+// the two surfaces cannot disagree about what is allowed.
+func clampCLILimit(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > 500 {
+		return 500
+	}
+	return n
 }
 
 // cmdIndexStatus prints a quick dashboard of the structural index.
@@ -925,6 +1077,12 @@ func cmdIndexStatus(args []string) error {
 		fmt.Println("language breakdown:")
 		for _, lang := range sortedStringKeys(meta.LanguageCounts) {
 			fmt.Printf("  - %s: %d\n", lang, meta.LanguageCounts[lang])
+		}
+	}
+	if facets, err := db.FacetBreakdown(); err == nil && len(facets) > 0 {
+		fmt.Println("framework facets:")
+		for _, f := range facets {
+			fmt.Printf("  - %s (%s): %d\n", f.Facet, f.Framework, f.Count)
 		}
 	}
 	if meta.SkippedCount > 0 {

@@ -48,7 +48,8 @@ Then wire `githints serve` into your project-scoped MCP config. See
 - **Structural index**: a separate, regenerable cache of symbols and imports
   (`.githints/index.db`) refreshed incrementally on every commit. Supported
   languages: Go (via `go/parser`), plus TypeScript/JavaScript, Svelte, and
-  Astro (via built-in heuristic parsers). MCP tools
+  Astro (via built-in heuristic parsers), and Python (via a built-in language
+  spec). MCP tools
   (`list_symbols`, `find_symbol`, `get_dependents`, `get_index_summary`) answer
   "what's in this file?" and "what breaks if I change it?" — and
   `githints index --obsidian` renders file-level wikilinks you can open as an

@@ -1,0 +1,26 @@
+{
+  // GORM. Identifying a model is harder than it looks: `type X struct` in a
+  // file importing gorm describes every struct in that file, so this uses the
+  // two single-line signals that actually mean "this is a model" -- a
+  // TableName method, and registration with AutoMigrate.
+  //
+  // A model recognisable only by embedding gorm.Model on the line after its
+  // type declaration is not detected; the matcher is line-oriented and has no
+  // lookahead. Under-reporting beats claiming every struct in the file.
+  "framework": "gorm",
+  "languages": ["go"],
+  "when_imports": ["gorm.io/gorm", "github.com/jinzhu/gorm"],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "TableName",
+      "pattern": "^func\\s+\\(\\s*\\w+\\s+\\*?(?P<name>\\w+)\\s*\\)\\s+TableName\\(\\)"
+    },
+    {
+      // AutoMigrate(&User{}, &Post{}) names several models on one line.
+      "facet": "model",
+      "requires": "AutoMigrate",
+      "pattern": "&(?P<name>\\w+)\\{\\}"
+    }
+  ]
+}

@@ -14,6 +14,16 @@ import (
 // current index state. It never writes to per-file hint markdown (.githints/<path>.md)
 // or CHANGES.md, which are integrity-verified by the hint package.
 func RenderNotes(db *Store, root string, obsidian bool) error {
+	// Built once here: a registry reload per file would re-read the repository's
+	// own specs for every note. Repo-aware so a language the checkout supplies
+	// takes part in the graph like any other.
+	registry := lang.NewRegistryForRoot(root)
+
+	// Let parsers install per-scan state for the render too. resolveImportPaths
+	// asks every indexed file for its import path, and without this a
+	// standalone `githints render` re-reads go.mod once per file. Inside a
+	// scan the hook is already active and installing it again is harmless.
+	defer lang.BeginScans(registry.AllParsers(), root)()
 	files, err := db.AllIndexedFiles()
 	if err != nil {
 		return fmt.Errorf("list indexed files: %w", err)
@@ -21,11 +31,11 @@ func RenderNotes(db *Store, root string, obsidian bool) error {
 
 	// Build the import-path → file map once; renderFileNote uses it to link
 	// outbound imports to the notes of the files providing them.
-	importToFile := resolveImportPaths(db, root)
+	importToFile := resolveImportPaths(db, root, registry)
 
 	rendered := make(map[string]struct{}, len(files))
 	for _, src := range files {
-		if err := renderFileNote(db, root, src, obsidian, importToFile); err != nil {
+		if err := renderFileNote(db, root, src, obsidian, importToFile, registry); err != nil {
 			return fmt.Errorf("render note for %s: %w", src, err)
 		}
 		if notePath, _, err := lang.IndexNotePath(root, src); err == nil {
@@ -36,7 +46,7 @@ func RenderNotes(db *Store, root string, obsidian bool) error {
 	pruneStaleNotes(root, rendered)
 	writeObsidianGraphPreset(root)
 
-	if err := renderIndexRollup(db, root, obsidian); err != nil {
+	if err := renderIndexRollup(db, root, obsidian, registry); err != nil {
 		return fmt.Errorf("render index rollup: %w", err)
 	}
 
@@ -105,7 +115,7 @@ func pruneStaleNotes(root string, keep map[string]struct{}) {
 	}
 }
 
-func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map[string]string) error {
+func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map[string]string, registry *lang.Registry) error {
 	notePath, collision, err := lang.IndexNotePath(root, src)
 	if err != nil {
 		if collision {
@@ -128,7 +138,7 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 	// path cannot be resolved (e.g. a Go file outside a module) no importer
 	// could reference it either, so the section is simply omitted.
 	var imports []lang.Import
-	if importPath, err := lang.LocalImportPath(root, src); err == nil {
+	if importPath, err := registry.ImportPath(root, src); err == nil {
 		imports, err = db.FilesImporting(importPath)
 		if err != nil {
 			return fmt.Errorf("load dependents: %w", err)
@@ -144,6 +154,25 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 			fmt.Fprintf(&b, "- `%s` (%s) lines %d-%d", sym.Name, sym.Kind, sym.LineStart, sym.LineEnd)
 			if sym.Signature != "" {
 				fmt.Fprintf(&b, " — `%s`", sym.Signature)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// Framework constructs are not symbols -- a route is a call, not a
+	// declaration -- so they get their own section rather than being folded in
+	// above.
+	facets, err := db.FacetsForFile(src)
+	if err != nil {
+		return fmt.Errorf("load facets: %w", err)
+	}
+	if len(facets) > 0 {
+		b.WriteString("## Framework\n\n")
+		for _, f := range facets {
+			fmt.Fprintf(&b, "- %s `%s` (%s) line %d", f.Facet, lang.EscapeMarkdown(f.Name), f.Framework, f.Line)
+			if f.Detail != "" {
+				fmt.Fprintf(&b, " — `%s`", lang.EscapeMarkdown(f.Detail))
 			}
 			b.WriteString("\n")
 		}
@@ -182,7 +211,7 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 	return os.WriteFile(notePath, []byte(b.String()), 0o644)
 }
 
-func renderIndexRollup(db *Store, root string, obsidian bool) error {
+func renderIndexRollup(db *Store, root string, obsidian bool, registry *lang.Registry) error {
 	meta, err := db.Meta()
 	if err != nil {
 		return fmt.Errorf("load meta: %w", err)
@@ -225,7 +254,7 @@ func renderIndexRollup(db *Store, root string, obsidian bool) error {
 
 	if len(hubs) > 0 {
 		b.WriteString("\n## Most imported files (hubs)\n\n")
-		importToFile := resolveImportPaths(db, root)
+		importToFile := resolveImportPaths(db, root, registry)
 		for _, h := range hubs {
 			if file, ok := importToFile[h.File]; ok {
 				// Hub entries are import paths; link them to the file's note.
@@ -258,14 +287,14 @@ func indexDirOf(src string) string {
 // entries — which are import paths, not files — can be linked to the file's
 // note. Files whose import path cannot be resolved are skipped; on
 // collisions the first file wins.
-func resolveImportPaths(db *Store, root string) map[string]string {
+func resolveImportPaths(db *Store, root string, registry *lang.Registry) map[string]string {
 	files, err := db.AllIndexedFiles()
 	if err != nil {
 		return nil
 	}
 	m := make(map[string]string, len(files))
 	for _, f := range files {
-		importPath, err := lang.LocalImportPath(root, f)
+		importPath, err := registry.ImportPath(root, f)
 		if err != nil {
 			continue
 		}

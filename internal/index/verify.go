@@ -42,7 +42,7 @@ func (r *IndexReport) Drift() bool {
 // git-tracked source files, and reports any disagreement. It never mutates
 // anything; run a full scan to repair drift.
 func VerifyIndex(db *Store, opts lang.ScanOptions) (*IndexReport, error) {
-	registry := lang.NewRegistry()
+	registry := lang.NewRegistryForRoot(opts.Root)
 	parsers, err := registry.ResolveLanguages(opts.Languages)
 	if err != nil {
 		return nil, err

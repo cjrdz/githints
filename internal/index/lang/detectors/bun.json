@@ -1,0 +1,17 @@
+{
+  // uptrace/bun. Its models carry the table name in a struct tag on the
+  // embedded bun.BaseModel, which is a single line and an unambiguous signal.
+  "framework": "bun",
+  "languages": ["go"],
+  "when_imports": ["github.com/uptrace/bun"],
+  "rules": [
+    {
+      // The tag lives inside a raw string literal, so string contents must
+      // survive blanking for this to match.
+      "facet": "model",
+      "requires": "bun.BaseModel",
+      "keep_strings": true,
+      "pattern": "bun\\.BaseModel\\s+`bun:\"table:(?P<name>[\\w.]+)"
+    }
+  ]
+}

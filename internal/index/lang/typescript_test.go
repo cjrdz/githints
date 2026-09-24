@@ -376,3 +376,25 @@ func TestTypeScriptSignatureBlanksStringContents(t *testing.T) {
 		t.Errorf("tpl signature = %q, want %q", tpl.Signature, want)
 	}
 }
+
+// TestTypeScriptLineContinuationKeepsLineNumbers guards a line-numbering bug.
+// A '\' at end of line continues a single- or double-quoted string. The
+// blanking pass consumed the escape *and* the newline together, so the two
+// source lines collapsed into one cleaned line and every symbol below the
+// string was reported one line too high.
+func TestTypeScriptLineContinuationKeepsLineNumbers(t *testing.T) {
+	src := []byte("const banner = \"line one \\\n" +
+		"line two\";\n" +
+		"\n" +
+		"export function afterContinuation(): void {}\n")
+
+	symbols, _, err := TypeScriptParser{}.Parse("a.ts", src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	sym := findSymbol(t, symbols, "afterContinuation", KindFunc)
+	if sym.LineStart != 4 {
+		t.Errorf("LineStart = %d, want 4 (the continuation swallowed a line)", sym.LineStart)
+	}
+}

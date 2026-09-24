@@ -359,6 +359,24 @@ into the binary:
 | `typescript` | `.ts` `.tsx` `.mts` `.cts` `.js` `.jsx` `.mjs` `.cjs` | heuristic, stdlib-only |
 | `svelte` | `.svelte` (`<script>` blocks) | heuristic, via the TypeScript parser |
 | `astro` | `.astro` (frontmatter + `<script>` blocks) | heuristic, via the TypeScript parser |
+| `python` | `.py` `.pyi` | spec-driven, `specs/python.json` |
+| `rust` | `.rs` | spec-driven |
+| `java` | `.java` | spec-driven |
+| `csharp` | `.cs` | spec-driven |
+| `php` | `.php` | spec-driven |
+| `sql` | `.sql` | spec-driven |
+| `prisma` | `.prisma` | spec-driven |
+| `vue` | `.vue` (`<script>` blocks) | heuristic, via the TypeScript parser |
+
+This table is hand-maintained. To see what the binary you are running actually
+supports — and which of those languages this repo has enabled:
+
+```sh
+githints index languages
+```
+
+An unsupported name in `index.languages` is rejected with the supported set
+named in the error.
 
 TypeScript-family notes:
 
@@ -406,9 +424,20 @@ packages, external modules, unresolvable path aliases — render as plain
 text. With `obsidian_wikilinks` enabled, links render as `[[wikilinks]]`
 instead.
 
-Environment overrides: `GITHINTS_INDEX_ENABLED`,
+Environment overrides: `GITHINTS_INDEX_ENABLED`, `GITHINTS_INDEX_LANGUAGES`,
 `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
 `GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_OBSIDIAN_WIKILINKS`.
+
+`GITHINTS_INDEX_LANGUAGES` takes a comma-separated list and replaces the
+configured set outright rather than adding to it. Names are trimmed and
+case-folded, so `Go, TypeScript` and `go,typescript` are equivalent:
+
+```sh
+GITHINTS_INDEX_LANGUAGES=go,typescript githints index
+```
+
+A value that parses to nothing is ignored, leaving the configured list in
+place.
 
 ## Pre-commit gate
 

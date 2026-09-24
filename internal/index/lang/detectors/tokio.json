@@ -1,0 +1,20 @@
+{
+  // Tokio. Spawned tasks and the async entry points that host them.
+  "framework": "tokio",
+  "languages": ["rust"],
+  "when_imports": ["tokio"],
+  "rules": [
+    {
+      // #[tokio::main] and #[tokio::test] mark the function on the next line;
+      // the attribute itself is what identifies the runtime entry point.
+      "facet": "job",
+      "requires": "#[tokio::",
+      "pattern": "#\\[tokio::(?P<name>main|test)"
+    },
+    {
+      "facet": "job",
+      "requires": "spawn",
+      "pattern": "tokio::(?P<name>spawn|spawn_blocking)\\s*\\("
+    }
+  ]
+}

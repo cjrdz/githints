@@ -251,6 +251,25 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 	)
 
 	addTool(
+		mcp.NewTool("find_facets",
+			mcp.WithDescription("Find framework constructs by the role they play, across languages. "+
+				"Facets are normalized: Django, GORM, Prisma, SQLAlchemy and Eloquent models are all "+
+				"'model'; chi, Flask, FastAPI, Spring and Laravel routes are all 'route'. Use this to "+
+				"answer 'where are the HTTP routes' or 'what are the database models' without knowing "+
+				"which frameworks the repo uses. Omit all filters to see everything detected."),
+			mcp.WithString("facet",
+				mcp.Description("Role to find: route, model, component, migration, job or test. Omit for all.")),
+			mcp.WithString("framework",
+				mcp.Description("Restrict to one framework, e.g. django. Omit for all.")),
+			mcp.WithString("file",
+				mcp.Description("Restrict to one repo-relative file path. Omit for all.")),
+			mcp.WithNumber("limit", mcp.Min(1), mcp.Max(500),
+				mcp.Description("Max facets to return (default 50)")),
+		),
+		handleFindFacets(idxDB),
+	)
+
+	addTool(
 		mcp.NewTool("get_index_summary",
 			mcp.WithDescription("Return the structural index summary: total files, total symbols, "+
 				"last indexed time, language breakdown, and the most imported (hub) files."),
@@ -712,6 +731,10 @@ func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 }
 
 func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
+	// Built once for the life of the server rather than per call: this reads
+	// the repository's own language specs, and the answer does not change
+	// between tool calls.
+	registry := lang.NewRegistryForRoot(root)
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
 			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
@@ -724,7 +747,7 @@ func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		importPath, err := lang.LocalImportPath(root, file)
+		importPath, err := registry.ImportPath(root, file)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("could not resolve import path for %s: %v", file, err)), nil
 		}
@@ -803,4 +826,73 @@ func formatIndexTime(ts int64) string {
 		return "never"
 	}
 	return time.Unix(ts, 0).Format(time.RFC3339)
+}
+
+func handleFindFacets(db *index.Store) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if db == nil {
+			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+		}
+		filter := index.FacetFilter{
+			Facet:     req.GetString("facet", ""),
+			Framework: req.GetString("framework", ""),
+			File:      req.GetString("file", ""),
+			Limit:     clampLimit(req.GetInt("limit", 50), 50, 500),
+		}
+		if filter.File != "" {
+			if err := recorder.ValidateFilePath(filter.File); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
+
+		found, err := db.Facets(filter)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		lastIndexedAt, _ := db.LastIndexedAt()
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Framework facets%s (last indexed: %s)\n\n",
+			describeFacetFilter(filter), formatIndexTime(lastIndexedAt))
+		if len(found) == 0 {
+			b.WriteString("_none detected_\n")
+			// Distinguish "nothing matched" from "nothing is detectable", which
+			// are very different answers to act on.
+			if total, err := db.FacetCount(); err == nil && total == 0 {
+				b.WriteString("\n_no framework constructs are indexed in this repo at all; " +
+					"githints may not ship a detector for its frameworks yet_\n")
+			}
+			return mcp.NewToolResultText(b.String()), nil
+		}
+		if len(found) == filter.Limit {
+			fmt.Fprintf(&b, "_showing the first %d; narrow with facet, framework or file_\n\n", filter.Limit)
+		}
+		for _, f := range found {
+			fmt.Fprintf(&b, "- **%s** `%s` (%s) in %s:%d", f.Facet, oneLine(f.Name), f.Framework, f.FilePath, f.Line)
+			if f.Detail != "" {
+				fmt.Fprintf(&b, " -> `%s`", oneLine(f.Detail))
+			}
+			b.WriteString("\n")
+		}
+		return mcp.NewToolResultText(b.String()), nil
+	}
+}
+
+// describeFacetFilter renders the active filters so the result says what was
+// asked, not just what was found.
+func describeFacetFilter(f index.FacetFilter) string {
+	var parts []string
+	if f.Facet != "" {
+		parts = append(parts, "facet="+f.Facet)
+	}
+	if f.Framework != "" {
+		parts = append(parts, "framework="+f.Framework)
+	}
+	if f.File != "" {
+		parts = append(parts, "file="+f.File)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
 }

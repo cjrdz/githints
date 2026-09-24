@@ -1,6 +1,10 @@
 package index
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -698,7 +702,7 @@ func TestIncrementalScanUpdatesOnlyChangedFiles(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "a.go")); err != nil {
 		t.Fatalf("remove a.go: %v", err)
 	}
-	if err := IncrementalScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, []string{"a.go", "b.go"}); err != nil {
+	if err := IncrementalScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}, []string{"a.go", "b.go"}, 0); err != nil {
 		t.Fatalf("IncrementalScan: %v", err)
 	}
 
@@ -723,6 +727,85 @@ func TestIncrementalScanUpdatesOnlyChangedFiles(t *testing.T) {
 	}
 	if meta.LastIndexedAt == 0 {
 		t.Error("LastIndexedAt should be refreshed")
+	}
+}
+
+// TestIncrementalScanSkipsUnknownLanguage is the regression guard for a silent
+// failure mode. config.json travels in clones, so a repo naming a language that
+// a teammate's older binary lacks used to abort the whole incremental scan.
+// The post-commit hook only warns on a scan error, so their commit succeeded
+// while the index stopped updating -- permanently, and near-invisibly.
+func TestIncrementalScanSkipsUnknownLanguage(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"go", "klingon"},
+		MaxFileSize:  1024,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := IncrementalScan(st, opts, []string{"a.go"}, 0); err != nil {
+		t.Fatalf("IncrementalScan should skip the unknown language, got: %v", err)
+	}
+
+	syms, err := st.SymbolsForFile("a.go")
+	if err != nil {
+		t.Fatalf("SymbolsForFile: %v", err)
+	}
+	if len(syms) != 1 {
+		t.Errorf("a.go symbols = %d, want 1; the known language must still be indexed", len(syms))
+	}
+}
+
+// TestIncrementalScanFailsWhenNoLanguageIsKnown pins the other half: skipping
+// every language would index nothing while reporting success, which is the
+// same silent failure in a different costume.
+func TestIncrementalScanFailsWhenNoLanguageIsKnown(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"klingon"},
+		MaxFileSize:  1024,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := IncrementalScan(st, opts, []string{"a.go"}, 0); err == nil {
+		t.Fatal("expected an error when no configured language is supported")
+	}
+}
+
+// TestFullScanStillRejectsUnknownLanguage pins the deliberate asymmetry: the
+// user ran this command, so the unsupported name is worth stopping for.
+func TestFullScanStillRejectsUnknownLanguage(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"go", "klingon"},
+		MaxFileSize:  1024,
+		ParseTimeout: 5 * time.Second,
+	}
+	err := FullScan(st, opts, false, 0)
+	if err == nil {
+		t.Fatal("FullScan should reject an unsupported language")
+	}
+	if !strings.Contains(err.Error(), "klingon") {
+		t.Errorf("error should name the unsupported language, got: %v", err)
 	}
 }
 
@@ -832,5 +915,889 @@ func TestVerifyIndexReportsDriftAndCoverage(t *testing.T) {
 	}
 	if string(data) != custom {
 		t.Errorf("preset was clobbered: %s", data)
+	}
+}
+
+// TestFullScanIndexesSpecDrivenLanguage is the end-to-end proof that a
+// language shipped as a JSON spec behaves like any other: it is selectable in
+// config, it is scanned, its symbols reach the database, and it renders a note
+// indistinguishable from a hand-written parser's.
+func TestFullScanIndexesSpecDrivenLanguage(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("app/service.py", "import os\n\nTIMEOUT = 30\n\nclass Service:\n    def run(self):\n        def inner():\n            pass\n        return inner\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"python"},
+		MaxFileSize:  1 << 20,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	syms, err := st.SymbolsForFile("app/service.py")
+	if err != nil {
+		t.Fatalf("SymbolsForFile: %v", err)
+	}
+	names := make([]string, 0, len(syms))
+	for _, s := range syms {
+		names = append(names, s.Name)
+	}
+	if len(names) != 3 {
+		t.Fatalf("symbols = %v, want TIMEOUT, Service and run", names)
+	}
+	for _, s := range syms {
+		if s.Name == "inner" {
+			t.Error("a function-local def reached the index")
+		}
+	}
+
+	meta, err := st.Meta()
+	if err != nil {
+		t.Fatalf("Meta: %v", err)
+	}
+	if meta.LanguageCounts["python"] != 1 {
+		t.Errorf("language counts = %v, want one python file", meta.LanguageCounts)
+	}
+
+	note, err := os.ReadFile(filepath.Join(root, ".githints", "index", "app", "service.py.md"))
+	if err != nil {
+		t.Fatalf("read rendered note: %v", err)
+	}
+	for _, want := range []string{"## Symbols", "Service", "run", "TIMEOUT"} {
+		if !strings.Contains(string(note), want) {
+			t.Errorf("note is missing %q:\n%s", want, note)
+		}
+	}
+}
+
+// TestSymbolsCarryLanguage pins the column added for cross-language queries.
+// Until now "every Python symbol" was not expressible: language was tracked
+// only in aggregate, in the meta row's counts.
+func TestSymbolsCarryLanguage(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.26\n")
+	writeGo(t, root, "a.go", "package main\n\nfunc FromGo() {}\n")
+	if err := os.WriteFile(filepath.Join(root, "b.py"), []byte("def from_python():\n    pass\n"), 0o644); err != nil {
+		t.Fatalf("write b.py: %v", err)
+	}
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"go", "python"},
+		MaxFileSize:  1 << 20,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	for _, tc := range []struct{ file, symbol, language string }{
+		{"a.go", "FromGo", "go"},
+		{"b.py", "from_python", "python"},
+	} {
+		syms, err := st.SymbolsForFile(tc.file)
+		if err != nil {
+			t.Fatalf("SymbolsForFile %s: %v", tc.file, err)
+		}
+		if len(syms) != 1 {
+			t.Fatalf("%s: symbols = %v", tc.file, syms)
+		}
+		if syms[0].Name != tc.symbol || syms[0].Language != tc.language {
+			t.Errorf("%s: got %s/%q, want %s/%q", tc.file, syms[0].Name, syms[0].Language, tc.symbol, tc.language)
+		}
+	}
+}
+
+// TestSchemaResetOnVersionChange covers the upgrade path every existing user
+// takes. CREATE TABLE IF NOT EXISTS cannot add a column, so a database written
+// by an older schema must be rebuilt rather than queried with the new columns.
+func TestSchemaResetOnVersionChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.db")
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := st.InsertSymbols([]lang.Symbol{
+		{Name: "Stale", Kind: lang.KindFunc, FilePath: "a.go", LineStart: 1, LineEnd: 1, Language: "go"},
+	}); err != nil {
+		t.Fatalf("InsertSymbols: %v", err)
+	}
+	if n, err := st.SymbolCount(); err != nil || n != 1 {
+		t.Fatalf("SymbolCount = %d, %v", n, err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Pretend it was written by an older githints.
+	stale, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if _, err := stale.db.Exec("UPDATE meta SET value = ? WHERE key = ?", "1", "schema_version"); err != nil {
+		t.Fatalf("downgrade version: %v", err)
+	}
+	if err := stale.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open after version change: %v", err)
+	}
+	defer reopened.Close()
+
+	if n, err := reopened.SymbolCount(); err != nil || n != 0 {
+		t.Errorf("SymbolCount = %d (err %v), want 0; stale rows survived a schema change", n, err)
+	}
+	// The new schema must be usable straight away.
+	if err := reopened.InsertSymbols([]lang.Symbol{
+		{Name: "Fresh", Kind: lang.KindFunc, FilePath: "b.py", LineStart: 1, LineEnd: 1, Language: "python"},
+	}); err != nil {
+		t.Fatalf("InsertSymbols after reset: %v", err)
+	}
+	syms, err := reopened.SymbolsForFile("b.py")
+	if err != nil || len(syms) != 1 || syms[0].Language != "python" {
+		t.Errorf("after reset: syms = %v, err = %v", syms, err)
+	}
+}
+
+// TestSchemaVersionIsRecorded stops a fresh database from being reset on the
+// very next open, which would make every scan rebuild from scratch.
+func TestSchemaVersionIsRecorded(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.db")
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := st.InsertSymbols([]lang.Symbol{
+		{Name: "Keep", Kind: lang.KindFunc, FilePath: "a.go", LineStart: 1, LineEnd: 1},
+	}); err != nil {
+		t.Fatalf("InsertSymbols: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	again, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer again.Close()
+	if n, err := again.SymbolCount(); err != nil || n != 1 {
+		t.Errorf("SymbolCount = %d (err %v), want the row to survive a plain reopen", n, err)
+	}
+}
+
+// TestPreVersioningSchemaResetIsAnnounced covers the upgrade every existing
+// user takes. Such a database has no schema_version row at all, so it looks
+// identical to a brand-new file unless the tables are inspected -- and
+// resetting someone's index silently is the one outcome worth avoiding.
+func TestPreVersioningSchemaResetIsAnnounced(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.db")
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := st.db.Exec("DELETE FROM meta WHERE key = ?", "schema_version"); err != nil {
+		t.Fatalf("remove version row: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	stderr, err := captureStderr(func() error {
+		reopened, err := Open(path)
+		if err != nil {
+			return err
+		}
+		return reopened.Close()
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !strings.Contains(stderr, "pre-versioning") {
+		t.Errorf("reset was not announced, stderr = %q", stderr)
+	}
+	if !strings.Contains(stderr, "githints index") {
+		t.Errorf("message should say how to rebuild, stderr = %q", stderr)
+	}
+}
+
+// TestFreshDatabaseResetIsSilent is the other half: a new index must not
+// announce a reset that did not happen.
+func TestFreshDatabaseResetIsSilent(t *testing.T) {
+	dir := t.TempDir()
+	stderr, err := captureStderr(func() error {
+		st, err := Open(filepath.Join(dir, "index.db"))
+		if err != nil {
+			return err
+		}
+		return st.Close()
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if stderr != "" {
+		t.Errorf("a fresh database should be silent, stderr = %q", stderr)
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn. Safe only for
+// small outputs: fn completes before the pipe is drained.
+func captureStderr(fn func() error) (string, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	orig := os.Stderr
+	os.Stderr = w
+
+	runErr := fn()
+
+	os.Stderr = orig
+	_ = w.Close()
+	out, readErr := io.ReadAll(r)
+	_ = r.Close()
+	if readErr != nil {
+		return "", readErr
+	}
+	return string(out), runErr
+}
+
+// TestFullScanDetectsFacets is the end-to-end proof that framework detection
+// reaches the database: a Django project must yield models and routes, and
+// incremental rescans must not duplicate or strand them.
+func TestFullScanDetectsFacets(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("app/models.py", "from django.db import models\n\nclass Article(models.Model):\n    pass\n")
+	write("app/urls.py", "from django.urls import path\n\nurlpatterns = [\n    path(\"articles/\", views.index),\n]\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"python"},
+		MaxFileSize:  1 << 20,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	models, err := st.Facets(FacetFilter{Facet: lang.FacetModel})
+	if err != nil {
+		t.Fatalf("Facets: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "Article" || models[0].Framework != "django" {
+		t.Errorf("models = %v", models)
+	}
+	routes, err := st.Facets(FacetFilter{Facet: lang.FacetRoute})
+	if err != nil {
+		t.Fatalf("Facets: %v", err)
+	}
+	if len(routes) != 1 || routes[0].Name != "articles/" {
+		t.Errorf("routes = %v", routes)
+	}
+
+	// Rescanning the same file must replace its facets, not add to them.
+	if err := IncrementalScan(st, opts, []string{"app/models.py"}, 0); err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	models, err = st.Facets(FacetFilter{Facet: lang.FacetModel})
+	if err != nil {
+		t.Fatalf("Facets: %v", err)
+	}
+	if len(models) != 1 {
+		t.Errorf("after rescan models = %v, want 1; facets were duplicated", models)
+	}
+
+	// Removing the model must remove its facet.
+	write("app/models.py", "from django.db import models\n\n# gone\n")
+	if err := IncrementalScan(st, opts, []string{"app/models.py"}, 0); err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	models, err = st.Facets(FacetFilter{Facet: lang.FacetModel})
+	if err != nil {
+		t.Fatalf("Facets: %v", err)
+	}
+	if len(models) != 0 {
+		t.Errorf("after removal models = %v, want none; the facet was stranded", models)
+	}
+
+	// The route in the untouched file must survive an unrelated rescan.
+	routes, err = st.Facets(FacetFilter{Facet: lang.FacetRoute})
+	if err != nil {
+		t.Fatalf("Facets: %v", err)
+	}
+	if len(routes) != 1 {
+		t.Errorf("routes = %v, want the untouched file's route to survive", routes)
+	}
+}
+
+// TestFacetOnlyFileIsRendered covers a file that declares nothing and imports
+// nothing but still matches a detector. Such a file held facet rows that no
+// note ever showed, because the rendered set came from symbols and imports
+// alone.
+func TestFacetOnlyFileIsRendered(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	if err := os.WriteFile(filepath.Join(root, "a.py"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := FullScan(st, lang.ScanOptions{
+		Root: root, Languages: []string{"python"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	// Inject a facet for a file with no symbols and no imports, the shape a
+	// path-gated detector produces.
+	if err := st.InsertFacets([]lang.Detected{{
+		FilePath: "a.py", Facet: lang.FacetMigration, Framework: "django", Name: "Migration", Line: 1,
+	}}); err != nil {
+		t.Fatalf("InsertFacets: %v", err)
+	}
+
+	files, err := st.AllIndexedFiles()
+	if err != nil {
+		t.Fatalf("AllIndexedFiles: %v", err)
+	}
+	found := false
+	for _, f := range files {
+		if f == "a.py" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a facet-only file is missing from AllIndexedFiles: %v", files)
+	}
+}
+
+// TestFacetQueryFilters pins the filtering the CLI and MCP tool rely on,
+// including that the limit is applied rather than advisory.
+func TestFacetQueryFilters(t *testing.T) {
+	st, _ := tempStore(t)
+	defer st.Close()
+
+	if err := st.InsertFacets([]lang.Detected{
+		{FilePath: "a.py", Facet: lang.FacetModel, Framework: "django", Name: "A", Line: 1},
+		{FilePath: "b.py", Facet: lang.FacetRoute, Framework: "django", Name: "/x", Line: 2},
+		{FilePath: "c.go", Facet: lang.FacetRoute, Framework: "chi", Name: "/y", Line: 3},
+	}); err != nil {
+		t.Fatalf("InsertFacets: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		filter FacetFilter
+		want   int
+	}{
+		{"all", FacetFilter{}, 3},
+		{"byFacet", FacetFilter{Facet: lang.FacetRoute}, 2},
+		{"byFramework", FacetFilter{Framework: "chi"}, 1},
+		{"byFile", FacetFilter{File: "a.py"}, 1},
+		{"combined", FacetFilter{Facet: lang.FacetRoute, Framework: "django"}, 1},
+		{"limited", FacetFilter{Limit: 2}, 2},
+		{"noMatch", FacetFilter{Framework: "rails"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := st.Facets(tc.filter)
+			if err != nil {
+				t.Fatalf("Facets: %v", err)
+			}
+			if len(got) != tc.want {
+				t.Errorf("got %d facets, want %d: %v", len(got), tc.want, got)
+			}
+		})
+	}
+
+	breakdown, err := st.FacetBreakdown()
+	if err != nil {
+		t.Fatalf("FacetBreakdown: %v", err)
+	}
+	if len(breakdown) != 3 {
+		t.Errorf("breakdown = %v, want one row per facet/framework pair", breakdown)
+	}
+}
+
+// TestBatchedIgnoreMatchesPerPath is the correctness proof for batching the
+// ignore check. The batched path is an optimization only if it answers exactly
+// what the per-path check answers, including the two-pass ordering that keeps
+// .githintsignore subtract-only.
+func TestBatchedIgnoreMatchesPerPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, root)
+
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	write(".gitignore", "*.gen.go\nvendor/\nsecret.txt\n")
+	// .githintsignore may only subtract further; it can never re-include a
+	// file .gitignore already excluded.
+	write(".githintsignore", "fixtures/\n!*.gen.go\n")
+
+	rels := []string{
+		"main.go",
+		"api.gen.go",
+		"vendor/dep.go",
+		"secret.txt",
+		"fixtures/sample.go",
+		"pkg/real.go",
+		"a file with spaces.go",
+	}
+	for _, rel := range rels {
+		write(rel, "package p\n")
+	}
+
+	batched := resolveIgnored(root, rels)
+	perPath := perPathIgnored(root, rels)
+
+	for _, rel := range rels {
+		if batched[rel] != perPath[rel] {
+			t.Errorf("%s: batched=%v per-path=%v", rel, batched[rel], perPath[rel])
+		}
+	}
+
+	// Spot-check the semantics themselves, so a change that broke both the
+	// same way would still be caught.
+	for rel, want := range map[string]bool{
+		"main.go":            false,
+		"api.gen.go":         true, // .gitignore
+		"vendor/dep.go":      true, // .gitignore
+		"secret.txt":         true, // .gitignore
+		"fixtures/sample.go": true, // .githintsignore
+		"pkg/real.go":        false,
+	} {
+		if batched[rel] != want {
+			t.Errorf("%s: ignored=%v, want %v", rel, batched[rel], want)
+		}
+	}
+}
+
+// TestBatchedIgnoreHandlesEmptyAndAllIgnored covers the edges of the batched
+// call: git exits 1 when nothing matches, which is an answer rather than a
+// failure.
+func TestBatchedIgnoreHandlesEmptyAndAllIgnored(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, root)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got := resolveIgnored(root, nil); len(got) != 0 {
+		t.Errorf("empty input returned %v", got)
+	}
+	// Nothing matches: git exits 1.
+	if got := resolveIgnored(root, []string{"a.go", "b.go"}); len(got) != 0 {
+		t.Errorf("nothing should be ignored, got %v", got)
+	}
+	// Everything matches.
+	got := resolveIgnored(root, []string{"a.log", "b.log"})
+	if !got["a.log"] || !got["b.log"] {
+		t.Errorf("both should be ignored, got %v", got)
+	}
+}
+
+// TestWithTxRollsBack pins the transaction that wraps every batch insert.
+// Before it each row was its own implicit transaction, so a failure partway
+// through left the earlier rows written -- a file half in the index, which no
+// caller could detect.
+//
+// The failure is injected rather than provoked with bad data: SQLite accepts
+// far more than the schema suggests (a NUL byte in a TEXT column inserts
+// happily), so a test relying on invalid input would pass without ever
+// exercising a rollback.
+func TestWithTxRollsBack(t *testing.T) {
+	st, _ := tempStore(t)
+	defer st.Close()
+
+	wantErr := errors.New("injected failure")
+	err := st.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(
+			"INSERT INTO symbols (name, kind, file_path, line_start, line_end, signature, language) VALUES (?,?,?,?,?,?,?)",
+			"Ghost", "func", "a.go", 1, 1, "", "go"); err != nil {
+			return err
+		}
+		// The row exists inside the transaction...
+		var n int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM symbols").Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			t.Errorf("inside the transaction SymbolCount = %d, want 1", n)
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("withTx returned %v, want the callback's error", err)
+	}
+
+	// ...and must be gone after the rollback.
+	if n, err := st.SymbolCount(); err != nil || n != 0 {
+		t.Errorf("SymbolCount = %d (err %v), want 0; the transaction did not roll back", n, err)
+	}
+}
+
+func TestWithTxCommits(t *testing.T) {
+	st, _ := tempStore(t)
+	defer st.Close()
+
+	if err := st.withTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"INSERT INTO symbols (name, kind, file_path, line_start, line_end, signature, language) VALUES (?,?,?,?,?,?,?)",
+			"Kept", "func", "a.go", 1, 1, "", "go")
+		return err
+	}); err != nil {
+		t.Fatalf("withTx: %v", err)
+	}
+	if n, err := st.SymbolCount(); err != nil || n != 1 {
+		t.Errorf("SymbolCount = %d (err %v), want 1", n, err)
+	}
+}
+
+// TestIncrementalScanReplacesFileRows checks the delete-then-insert rewrite
+// still produces the right rows now that each half runs in its own
+// transaction.
+func TestIncrementalScanReplacesFileRows(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\n\nfunc One() {}\nfunc Two() {}\n")
+
+	opts := lang.ScanOptions{
+		Root: root, Languages: []string{"go"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	writeGo(t, root, "a.go", "package main\n\nfunc One() {}\nfunc Two() {}\nfunc Three() {}\n")
+	if err := IncrementalScan(st, opts, []string{"a.go"}, 0); err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	syms, err := st.SymbolsForFile("a.go")
+	if err != nil {
+		t.Fatalf("SymbolsForFile: %v", err)
+	}
+	if len(syms) != 3 {
+		t.Errorf("symbols = %d, want 3 after the rewrite", len(syms))
+	}
+}
+
+// TestFullScanIsDeterministic is the guarantee parallel parsing must not
+// break. Rendered notes are committed in shared mode, so a scan that emitted
+// results in completion order would produce a different diff on every run for
+// no reason.
+//
+// Repeated because a race that reorders results may not show on one run.
+func TestFullScanIsDeterministic(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, root)
+
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("go.mod", "module example.com/m\n\ngo 1.26\n")
+
+	// Enough files, across enough directories, that a pool has real
+	// opportunity to finish out of order.
+	for i := range 60 {
+		write(fmt.Sprintf("pkg/p%d/file%d.go", i/10, i),
+			fmt.Sprintf("package p%d\n\nimport \"fmt\"\n\nfunc Fn%d() { fmt.Println(%d) }\n\ntype T%d struct{}\n", i/10, i, i, i))
+	}
+	for i := range 40 {
+		write(fmt.Sprintf("src/m%d/mod%d.ts", i/10, i),
+			fmt.Sprintf("export function fn%d(a: string): string { return a; }\nexport class K%d {}\n", i, i))
+	}
+
+	opts := lang.ScanOptions{
+		Root: root, Languages: []string{"go", "typescript"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}
+
+	snapshot := func() (string, map[string]string) {
+		t.Helper()
+		st, err := Open(filepath.Join(t.TempDir(), "index.db"))
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		defer st.Close()
+		if err := FullScan(st, opts, true, 0); err != nil {
+			t.Fatalf("FullScan: %v", err)
+		}
+
+		// Symbol order as stored, which is what the notes are rendered from.
+		files, err := st.AllIndexedFiles()
+		if err != nil {
+			t.Fatalf("AllIndexedFiles: %v", err)
+		}
+		var order strings.Builder
+		for _, f := range files {
+			syms, err := st.SymbolsForFile(f)
+			if err != nil {
+				t.Fatalf("SymbolsForFile: %v", err)
+			}
+			for _, s := range syms {
+				fmt.Fprintf(&order, "%s:%s:%d\n", s.FilePath, s.Name, s.LineStart)
+			}
+		}
+
+		notes := map[string]string{}
+		noteRoot := filepath.Join(root, ".githints", "index")
+		if err := filepath.WalkDir(noteRoot, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(noteRoot, path)
+			notes[filepath.ToSlash(rel)] = string(data)
+			return nil
+		}); err != nil {
+			t.Fatalf("walk notes: %v", err)
+		}
+		return order.String(), notes
+	}
+
+	firstOrder, firstNotes := snapshot()
+	if len(firstNotes) == 0 {
+		t.Fatal("no notes rendered")
+	}
+
+	// The checks above would hold even if results came back in completion
+	// order, because every read path sorts in SQL. Insertion order is the
+	// thing a worker pool can actually disturb, so assert it directly: rows
+	// must have been written in walk order.
+	assertInsertionOrder(t, root, opts)
+
+	for run := range 4 {
+		order, notes := snapshot()
+		if order != firstOrder {
+			t.Fatalf("run %d: symbol order differs from the first scan", run+2)
+		}
+		if len(notes) != len(firstNotes) {
+			t.Fatalf("run %d: %d notes, want %d", run+2, len(notes), len(firstNotes))
+		}
+		for name, body := range firstNotes {
+			if notes[name] != body {
+				t.Fatalf("run %d: note %s differs:\n--- first ---\n%s\n--- now ---\n%s", run+2, name, body, notes[name])
+			}
+		}
+	}
+}
+
+// assertInsertionOrder checks rows were written in walk order, which is the
+// property a worker pool can disturb and which the sorted read paths would
+// otherwise hide.
+func assertInsertionOrder(t *testing.T, root string, opts lang.ScanOptions) {
+	t.Helper()
+
+	st, err := Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+	if err := FullScan(st, opts, true, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	rows, err := st.db.Query("SELECT file_path FROM symbols ORDER BY id")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	var seen []string
+	last := ""
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if p != last {
+			seen = append(seen, p)
+			last = p
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected many files, saw %d", len(seen))
+	}
+	for i := 1; i < len(seen); i++ {
+		if seen[i] < seen[i-1] {
+			t.Fatalf("rows written out of walk order: %q came after %q", seen[i], seen[i-1])
+		}
+	}
+}
+
+// TestIncrementalScanEnforcesMaxBytes closes a gap the audit found: FullScan
+// has always enforced the cap, but IncrementalScan took no cap at all. That is
+// the path that runs on every commit, so an index could grow past the
+// configured limit indefinitely, one commit at a time -- which is the only way
+// an index actually gets large in practice.
+func TestIncrementalScanEnforcesMaxBytes(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.26\n")
+	for i := range 20 {
+		writeGo(t, root, fmt.Sprintf("f%d.go", i),
+			fmt.Sprintf("package main\n\nfunc Fn%d() {}\nfunc Gn%d() {}\n", i, i))
+	}
+
+	opts := lang.ScanOptions{
+		Root: root, Languages: []string{"go"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}
+	paths := make([]string, 0, 20)
+	for i := range 20 {
+		paths = append(paths, fmt.Sprintf("f%d.go", i))
+	}
+
+	// A cap far below the existing database refuses outright.
+	err := IncrementalScan(st, opts, paths, 1)
+	if err == nil {
+		t.Fatal("a scan under a cap smaller than the index should refuse")
+	}
+	// Specifically the up-front refusal, not the running-budget one: an index
+	// already over the cap should say so rather than reporting the first file
+	// it happened to reach.
+	if !strings.Contains(err.Error(), "at or over max_bytes") {
+		t.Errorf("error should be the up-front refusal, got: %v", err)
+	}
+
+	// No cap indexes everything.
+	if err := IncrementalScan(st, opts, paths, 0); err != nil {
+		t.Fatalf("uncapped IncrementalScan: %v", err)
+	}
+	full, err := st.SymbolCount()
+	if err != nil {
+		t.Fatalf("SymbolCount: %v", err)
+	}
+	if full != 40 {
+		t.Fatalf("SymbolCount = %d, want 40", full)
+	}
+}
+
+// TestIncrementalScanStopsAtTheCap checks the cap stops the scan partway
+// rather than only refusing up front, and that the message names the file it
+// stopped on.
+func TestIncrementalScanStopsAtTheCap(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.26\n")
+
+	// Many symbols per file, so the running budget is crossed mid-scan rather
+	// than on the first file.
+	var body strings.Builder
+	body.WriteString("package main\n\n")
+	for i := range 200 {
+		fmt.Fprintf(&body, "func LongerFunctionName%d() {}\n", i)
+	}
+	paths := make([]string, 0, 10)
+	for i := range 10 {
+		name := fmt.Sprintf("f%d.go", i)
+		writeGo(t, root, name, body.String())
+		paths = append(paths, name)
+	}
+
+	opts := lang.ScanOptions{
+		Root: root, Languages: []string{"go"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}
+
+	// Sized to admit some files but not all: the database starts near empty,
+	// and each file costs roughly 200 rows.
+	cap := int(currentIndexBytes(st)) + 120_000
+	err := IncrementalScan(st, opts, paths, cap)
+	if err == nil {
+		t.Fatal("expected the scan to stop at the cap")
+	}
+	if !strings.Contains(err.Error(), "max_bytes") || !strings.Contains(err.Error(), ".go") {
+		t.Errorf("error should name the cap and the file it stopped on, got: %v", err)
+	}
+
+	// What was written before the cap stays: the index is incomplete, not
+	// corrupt.
+	n, err := st.SymbolCount()
+	if err != nil {
+		t.Fatalf("SymbolCount: %v", err)
+	}
+	if n == 0 {
+		t.Error("nothing was indexed; the cap should stop the scan, not undo it")
+	}
+	if n >= 2000 {
+		t.Errorf("SymbolCount = %d; the cap did not stop the scan", n)
 	}
 }

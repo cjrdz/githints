@@ -321,3 +321,77 @@ func TestHandleGetIndexSummary(t *testing.T) {
 		t.Errorf("hub ranking missing internal/store:\n%s", text)
 	}
 }
+
+// facetText calls the find_facets handler and returns its text.
+func facetText(t *testing.T, db *index.Store, args map[string]any) string {
+	t.Helper()
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = args
+	resp, err := handleFindFacets(db)(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	return resp.Content[0].(mcp.TextContent).Text
+}
+
+func TestHandleFindFacets(t *testing.T) {
+	_, db := setupIndex(t)
+	if err := db.InsertFacets([]lang.Detected{
+		{FilePath: "app/models.py", Facet: lang.FacetModel, Framework: "django", Name: "Article", Line: 3},
+		{FilePath: "app/urls.py", Facet: lang.FacetRoute, Framework: "django", Name: "articles/", Detail: "views.index", Line: 5},
+	}); err != nil {
+		t.Fatalf("InsertFacets: %v", err)
+	}
+
+	out := facetText(t, db, map[string]any{"facet": "route"})
+	if !strings.Contains(out, "articles/") {
+		t.Errorf("route missing from output:\n%s", out)
+	}
+	if !strings.Contains(out, "views.index") {
+		t.Errorf("detail missing from output:\n%s", out)
+	}
+	if strings.Contains(out, "Article") {
+		t.Errorf("filter leaked a model into a route query:\n%s", out)
+	}
+	if !strings.Contains(out, "facet=route") {
+		t.Errorf("output should restate the filter that was applied:\n%s", out)
+	}
+}
+
+// TestHandleFindFacetsDistinguishesEmptyCases separates "nothing matched your
+// filter" from "nothing is detectable here", which call for different actions.
+func TestHandleFindFacetsDistinguishesEmptyCases(t *testing.T) {
+	_, db := setupIndex(t)
+
+	empty := facetText(t, db, map[string]any{})
+	if !strings.Contains(empty, "no framework constructs are indexed") {
+		t.Errorf("an index with no facets at all should say so:\n%s", empty)
+	}
+
+	if err := db.InsertFacets([]lang.Detected{
+		{FilePath: "a.py", Facet: lang.FacetModel, Framework: "django", Name: "A", Line: 1},
+	}); err != nil {
+		t.Fatalf("InsertFacets: %v", err)
+	}
+	noMatch := facetText(t, db, map[string]any{"facet": "route"})
+	if strings.Contains(noMatch, "no framework constructs are indexed") {
+		t.Errorf("a filter that matched nothing must not claim the repo has no facets:\n%s", noMatch)
+	}
+	if !strings.Contains(noMatch, "none detected") {
+		t.Errorf("expected an empty result, got:\n%s", noMatch)
+	}
+}
+
+func TestHandleFindFacetsNilDB(t *testing.T) {
+	if out := facetText(t, nil, map[string]any{}); !strings.Contains(out, "structural index is not available") {
+		t.Errorf("unexpected output: %s", out)
+	}
+}
+
+func TestHandleFindFacetsRejectsTraversal(t *testing.T) {
+	_, db := setupIndex(t)
+	out := facetText(t, db, map[string]any{"file": "../escape.py"})
+	if !strings.Contains(out, "..") {
+		t.Errorf("a traversal path should be rejected, got: %s", out)
+	}
+}

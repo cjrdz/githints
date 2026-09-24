@@ -2,6 +2,7 @@ package lang
 
 import (
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -36,7 +37,7 @@ func (TypeScriptParser) Parse(path string, src []byte) ([]Symbol, []Import, erro
 
 // tsCodeExtensions are the extensions stripped when normalizing a TS-family
 // file path to its import key. Order matters only for suffix matching.
-var tsCodeExtensions = []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".astro"}
+var tsCodeExtensions = []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".astro", ".vue"}
 
 // tsFileKey normalizes a repo-relative TS-family path to the key used to match
 // importers against files: the code extension is stripped, and a trailing
@@ -73,17 +74,6 @@ func resolveTSImport(importerFile, spec string) string {
 	}
 	joined := path.Join(path.Dir(importerFile), spec)
 	return tsFileKey(joined)
-}
-
-// isTSCodeExtension reports whether ext (with leading dot, lower case) is a
-// TS-family code extension. Used by LocalImportPath.
-func isTSCodeExtension(ext string) bool {
-	for _, e := range tsCodeExtensions {
-		if e == ext {
-			return true
-		}
-	}
-	return false
 }
 
 // --- import extraction -----------------------------------------------------
@@ -211,7 +201,7 @@ type ctxEntry struct {
 // added to every reported line number so embedded scripts (Svelte/Astro) can
 // report positions in the host file; pass 0 for standalone files.
 func parseTypeScript(file string, src []byte, baseLine int) []Symbol {
-	code := cleanTSLines(src)
+	code := tsBlanker.Blank(src)
 	var symbols []Symbol
 	var stack []ctxEntry
 	braceDepth := 0
@@ -449,183 +439,19 @@ func tsNextLineContinues(next string) bool {
 	return false
 }
 
-// --- line cleaning ---------------------------------------------------------
+// BeginScan installs the tsconfig path aliases this parser resolves against.
+func (TypeScriptParser) BeginScan(root string) func() { return beginTSScan(root) }
 
-// Lexer states for cleanTSLines.
-const (
-	tsStCode = iota
-	tsStLineComment
-	tsStBlockComment
-	tsStSingle
-	tsStDouble
-	tsStTemplate
-	tsStRegex
-)
-
-// cleanTSLines strips comments and blanks string/template/regex contents so
-// that symbol regexes and brace counting are not confused by their contents.
-// Template literal ${...} expressions are re-entered as code so braces inside
-// them stay balanced. Line count and ordering are preserved.
-func cleanTSLines(src []byte) []string {
-	raw := string(src)
-	lines := make([]string, 0, strings.Count(raw, "\n")+1)
-	var b strings.Builder
-
-	state := tsStCode
-	// templateStack holds the brace depth at each ${ so the matching } drops
-	// back to template state.
-	var templateStack []int
-	braceDepth := 0
-	prevSignificant := byte(0) // last non-space code byte, for regex vs division
-
-	flushLine := func() {
-		lines = append(lines, b.String())
-		b.Reset()
-	}
-
-	i := 0
-	for i < len(raw) {
-		c := raw[i]
-		if c == '\n' {
-			if state == tsStLineComment {
-				state = tsStCode
-			}
-			// A line continuation keeps single/double strings open across the
-			// newline; template literals span lines naturally.
-			if (state == tsStSingle || state == tsStDouble) && b.Len() > 0 {
-				s := b.String()
-				if strings.HasSuffix(s, "\\") {
-					// Stay in string state.
-				} else {
-					state = tsStCode
-				}
-			}
-			flushLine()
-			i++
-			continue
-		}
-
-		switch state {
-		case tsStLineComment:
-			// Drop comment bytes.
-		case tsStBlockComment:
-			if c == '*' && i+1 < len(raw) && raw[i+1] == '/' {
-				state = tsStCode
-				i++
-			}
-		case tsStSingle, tsStDouble:
-			quote := byte('\'')
-			if state == tsStDouble {
-				quote = '"'
-			}
-			if c == '\\' && i+1 < len(raw) {
-				i++ // skip escaped byte
-			} else if c == quote {
-				// Write the closing delimiter so cleaned lines keep strings
-				// balanced ("" rather than a dangling quote); contents stay
-				// blanked either way.
-				b.WriteByte(c)
-				state = tsStCode
-				prevSignificant = quote
-			}
-		case tsStTemplate:
-			if c == '\\' && i+1 < len(raw) {
-				i++
-			} else if c == '`' {
-				b.WriteByte(c) // keep the pair balanced, like quotes
-				state = tsStCode
-				prevSignificant = '`'
-			} else if c == '$' && i+1 < len(raw) && raw[i+1] == '{' {
-				templateStack = append(templateStack, braceDepth)
-				braceDepth++
-				b.WriteString("${")
-				state = tsStCode
-				prevSignificant = '{'
-				i++
-			}
-		case tsStRegex:
-			if c == '\\' && i+1 < len(raw) {
-				i++
-			} else if c == '[' {
-				// Character class: skip to its end so a / inside doesn't terminate.
-				for i+1 < len(raw) && raw[i+1] != ']' && raw[i+1] != '\n' {
-					i++
-					if raw[i] == '\\' {
-						i++
-					}
-				}
-			} else if c == '/' {
-				state = tsStCode
-				prevSignificant = '/'
-			}
-		default: // tsStCode
-			switch {
-			case c == '/' && i+1 < len(raw) && raw[i+1] == '/':
-				state = tsStLineComment
-				i++
-			case c == '/' && i+1 < len(raw) && raw[i+1] == '*':
-				state = tsStBlockComment
-				i++
-			case c == '\'':
-				state = tsStSingle
-				b.WriteByte(c)
-				prevSignificant = c
-			case c == '"':
-				state = tsStDouble
-				b.WriteByte(c)
-				prevSignificant = c
-			case c == '`':
-				state = tsStTemplate
-				b.WriteByte(c)
-				prevSignificant = c
-			case c == '/' && tsStartsRegex(prevSignificant):
-				state = tsStRegex
-				b.WriteByte(' ') // blank the regex body
-			case c == '{':
-				braceDepth++
-				b.WriteByte(c)
-				prevSignificant = c
-			case c == '}':
-				if len(templateStack) > 0 && braceDepth == templateStack[len(templateStack)-1]+1 {
-					// This } closes a ${...}: return to template state. Write it
-					// so the cleaned output keeps the ${...} pair balanced for
-					// downstream brace counting.
-					templateStack = templateStack[:len(templateStack)-1]
-					braceDepth--
-					b.WriteByte('}')
-					state = tsStTemplate
-					i++
-					continue
-				}
-				braceDepth--
-				b.WriteByte(c)
-				prevSignificant = c
-			default:
-				b.WriteByte(c)
-				if c != ' ' && c != '\t' && c != '\r' {
-					prevSignificant = c
-				}
-			}
-		}
-		i++
-	}
-	flushLine()
-	return lines
+// ImportPath maps the file to the key TypeScript importers resolve to:
+// the repo-relative path with the code extension and a trailing /index removed.
+func (TypeScriptParser) ImportPath(_, file string) (string, error) {
+	return tsFileKey(filepath.ToSlash(file)), nil
 }
 
-// tsStartsRegex guesses whether a '/' begins a regex literal rather than a
-// division: after an operand (identifier char, digit, ), ], }, quote) it is
-// division; after operators, punctuation, or at line start it is a regex.
-func tsStartsRegex(prev byte) bool {
-	if prev == 0 {
-		return true
-	}
-	if prev >= 'a' && prev <= 'z' || prev >= 'A' && prev <= 'Z' || prev >= '0' && prev <= '9' {
-		return false
-	}
-	switch prev {
-	case '_', '$', ')', ']', '}', '\'', '"', '`':
-		return false
-	}
-	return true
+// BlankLines returns the comment- and string-free view of the file.
+func (TypeScriptParser) BlankLines(src []byte) []string { return tsBlanker.Blank(src) }
+
+// BlankLinesKeepingStrings keeps string contents, which detectors need.
+func (TypeScriptParser) BlankLinesKeepingStrings(src []byte) []string {
+	return tsBlanker.BlankKeepingStrings(src)
 }

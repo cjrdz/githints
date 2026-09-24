@@ -1,0 +1,21 @@
+{
+  // FastAPI. Same decorator shape as Flask's shortcuts, told apart by the
+  // import gate rather than by the pattern.
+  "framework": "fastapi",
+  "languages": ["python"],
+  "when_imports": ["fastapi"],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "@",
+      "keep_strings": true,
+      "pattern": "@\\w+\\.(?P<detail>get|post|put|patch|delete|head|options|trace)\\(\\s*[\"'](?P<name>[^\"']*)[\"']"
+    },
+    {
+      "facet": "route",
+      "requires": "api_route",
+      "keep_strings": true,
+      "pattern": "@\\w+\\.api_route\\(\\s*[\"'](?P<name>[^\"']*)[\"']"
+    }
+  ]
+}

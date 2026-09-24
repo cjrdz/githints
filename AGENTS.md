@@ -59,10 +59,16 @@ CLI:
 
 When the repo has a structural index, orient yourself with code-level queries:
 
-- `list_symbols(file="...")` / `./githints index list-symbols -file="..."`
-- `get_dependents(file="...")` / `./githints index dependents -file="..."`
-- `find_symbol(name="...")` / `./githints index find-symbol -name="..."`
-- `get_index_summary(limit=10)` / `./githints index summary`
+- `list_symbols(file="...")` — what is defined in this file
+- `get_dependents(file="...")` — what breaks if you change it
+- `find_symbol(name="...")` — where something is defined
+- `get_index_summary(limit=10)` — totals, languages, and the hub files
+- `find_facets(facet="route")` — framework constructs by the role they play,
+  normalized across frameworks; also `./githints index facets -facet=route`
+
+The first four are MCP-only. Without the MCP server, read the rendered notes
+under `.githints/index/` and the `.githints/INDEX.md` rollup, which carry the
+same information.
 
 Every index tool response includes `last_indexed_at`, so you can decide whether
 the data is fresh enough or whether to re-index.
@@ -174,6 +180,10 @@ time.
     ./githints index verify       # report drift (stale notes, ghost rows,
                                   # uncovered source files with reasons); exits
                                   # non-zero on drift
+    ./githints index languages    # list the languages this binary can index,
+                                  # and which are enabled in this repo
+    ./githints index facets       # list detected framework constructs
+                                  # (-facet, -framework, -file, -limit)
     ./githints index --obsidian   # render index notes as Obsidian wikilinks
 
 The index is updated automatically by the post-commit hook when indexing is
@@ -194,17 +204,92 @@ Per-repo config lives in `.githints/config.json` under the `index` key:
       }
     }
 
+`max_bytes` caps the index size and is enforced on both scan paths. A full
+rebuild refuses up front; an incremental scan refuses if the index is already
+at the cap, and otherwise stops at the file that would cross it, leaving what
+it already wrote in place. Neither fails a commit -- the hook reports it on
+stderr and the commit succeeds -- so an index that stops growing is visible
+rather than silent. Raise `index.max_bytes`, or rebuild with
+`githints index --force`.
+
 Environment overrides: `GITHINTS_INDEX_ENABLED`, `GITHINTS_INDEX_LANGUAGES`,
 `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
 `GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_OBSIDIAN_WIKILINKS`.
 
+`GITHINTS_INDEX_LANGUAGES` is a comma-separated list that replaces the
+configured set outright; names are trimmed and case-folded.
+
 A repo selects from the languages the binary supports via `index.languages`
-(default `["go"]`). It cannot add new languages; language parsers live in the
-githints project itself under `internal/index/lang/` and are registered in
-`NewRegistry()`. Currently supported: `go`, `typescript` (including `.js`,
-`.jsx`, `.mts`, `.cts`), `svelte`, and `astro`.
+(default `["go"]`). Currently supported: `go`, `typescript` (including `.js`,
+`.jsx`, `.mts`, `.cts`), `svelte`, `astro`, `vue`, `python`, `rust`, `java`,
+`csharp`, `php`, `sql`, and `prisma`.
+
+Languages come from two places. A few ship as hand-written Go parsers under
+`internal/index/lang/`, registered in `NewRegistry()`. The rest ship as JSON
+specs under `internal/index/lang/specs/`, which the registry loads
+automatically -- adding one of those is adding a file, with no Go change. See
+`docs/extensibility.md`.
+
+That list is hand-maintained and can fall behind the binary you are running.
+`./githints index languages` reports the authoritative set, along with which
+languages the current repo has enabled.
+
+### Framework facets
+
+Alongside symbols, the index records *facets*: the role a construct plays,
+named independently of the framework that gave it that role. Django, GORM,
+Prisma, SQLAlchemy and Eloquent models are all `model`; chi, Flask, FastAPI,
+Spring and Laravel routes are all `route`. The facets are `route`, `model`,
+`component`, `migration`, `job` and `test`.
+
+That normalization is the point: ask for every HTTP route in a repo without
+knowing which frameworks it uses.
+
+Detectors shipped today: `django`, `flask`, `fastapi`, `sqlalchemy` (Python),
+`chi`, `gorm`, `bun` (Go), `react`, `vue` (TypeScript), `spring` (Java),
+`eloquent` (PHP), `entityframework` (C#), `tokio` (Rust), `prisma`.
+
+    find_facets(facet="route")                 # MCP
+    ./githints index facets -facet=route       # CLI
+
+Detection is gated on imports or file path, so a framework is only claimed
+when the file actually uses it, and matching runs over comment- and
+string-stripped lines so an example in a docstring is not reported as real
+code. Facets appear in each file's index note under `## Framework`.
+
+Note that a facet is not a symbol. A route is usually a call rather than a
+declaration, so facets are recorded separately and a file can have facets
+without having any symbols at all.
+
+### Repository-supplied languages
+
+A repo may add languages of its own by dropping JSON specs in
+`.githints/langs/`. They are picked up on the next scan with no rebuild:
+
+    .githints/langs/rubyish.json
+
+A repo spec can add a language but never redefine one the binary already
+provides, so `go` means the same thing in every checkout; a spec that clashes
+on a language name or file extension is reported on stderr and skipped. The
+same happens for a spec that fails to parse, so a bad file cannot fail a
+commit or stop the other languages from indexing.
+
+Limits: at most 32 spec files, 64 KiB each, and the per-spec limits on pattern
+length and rule count. Specs are data, not code -- the patterns are RE2, which
+has no catastrophic backtracking -- and they only ever feed the index, which is
+a derived cache you can delete and rebuild.
+
+`./githints index languages` marks these with `[from .githints/langs]`.
+
+See `docs/extensibility.md` for the spec format.
 
 ### Import resolution and tsconfig aliases
+
+Each language decides how its files map back to the key importers name them
+by, so a language that declares one takes part in "Imported by", cross-note
+links, and hub ranking. Python uses dotted module names (`app/service.py` is
+`app.service`, and `app/__init__.py` is `app`); Go uses the module path from
+`go.mod`; the TypeScript family uses the normalized file key.
 
 For TypeScript-family files, the index resolves relative imports and tsconfig
 `paths` aliases (e.g. `@core/x`, `@shared/x`, `@features/x`, `@api-types/x`)

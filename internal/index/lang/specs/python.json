@@ -1,0 +1,60 @@
+{
+  // Python. The first language shipped as data rather than as Go.
+  //
+  // Nesting is indentation, so a `def` inside another `def` is a local helper
+  // and is skipped, while a `def` inside a `class` is kept.
+  "language": "python",
+  "extensions": [".py", ".pyi"],
+  "depth_style": "indent",
+
+  "comments": { "line": ["#"] },
+
+  // Triple quotes are listed first only for readability; the Blanker orders by
+  // delimiter length, so `"""` wins over `"` regardless.
+  //
+  // f-strings are deliberately not given interpolation. Interpolation is
+  // matched by counting braces, and a brace is ordinary text in every string
+  // that is not an f-string, so enabling it would leave those strings looking
+  // permanently open. Blanking an f-string whole loses nothing here: the
+  // matcher only ever needs to know a string was present.
+  "strings": [
+    { "open": "\"\"\"", "close": "\"\"\"", "escape": "\\", "multiline": true },
+    { "open": "'''", "close": "'''", "escape": "\\", "multiline": true },
+    { "open": "\"", "close": "\"", "escape": "\\" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "symbols": [
+    // Methods are indistinguishable from functions on their own line, so both
+    // are "func". The enclosing class is visible from the line range.
+    {
+      "kind": "func",
+      "requires": "def",
+      "pattern": "^\\s*(?:async\\s+)?def\\s+(?P<name>\\w+)\\s*\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      "kind": "type",
+      "requires": "class",
+      "pattern": "^\\s*class\\s+(?P<name>\\w+)"
+    },
+    // Screaming snake case is the convention for a module constant, and the
+    // only signal available without evaluating the right-hand side.
+    {
+      "kind": "const",
+      "requires": "=",
+      "pattern": "^(?P<name>[A-Z_][A-Z0-9_]*)\\s*(?::[^=]+)?=[^=]"
+    }
+  ],
+
+  // A module is named by its path with dots: app/service.py is "app.service",
+  // and a package's __init__.py stands for the directory itself. This is the
+  // inverse of the import rules below, and what puts Python files in the
+  // dependency graph rather than only in the symbol list.
+  "import_path": "dotted",
+  "import_path_index_names": ["__init__"],
+
+  "imports": [
+    { "requires": "import", "pattern": "^\\s*from\\s+(?P<path>[.\\w]+)\\s+import\\b" },
+    { "requires": "import", "pattern": "^\\s*import\\s+(?P<path>[\\w.]+)" }
+  ]
+}

@@ -3,6 +3,7 @@ package lang
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -105,49 +106,166 @@ func TestGoParserHandlesEmptyFile(t *testing.T) {
 	}
 }
 
+// unregisteredLanguage is a name no parser will ever claim. Using a plausible
+// language here (this test used to use "rust") turns the negative assertions
+// into a tripwire that fires the day that language is added.
+const unregisteredLanguage = "definitely-not-a-language"
+
+// TestRegistry asserts the invariants that must hold for *any* registry,
+// whatever is registered in it. Nothing here counts parsers or names them, so
+// adding a language cannot break it; see TestRegistryRegistersKnownLanguages
+// for the coverage that a specific parser is still wired up.
 func TestRegistry(t *testing.T) {
 	r := NewRegistry()
-	got := r.Languages()
-	if len(got) != 4 {
-		t.Errorf("Languages = %v, want 4 languages", got)
+
+	names := r.Languages()
+	if len(names) == 0 {
+		t.Fatal("Languages() is empty; no parsers registered")
 	}
-	for _, name := range []string{"go", "typescript", "svelte", "astro"} {
-		if p := r.ForLanguage(name); p == nil {
-			t.Errorf("ForLanguage(%s) = nil", name)
-		}
-	}
-	if p := r.ForPath("foo.go"); p == nil {
-		t.Error("ForPath(foo.go) = nil")
-	}
-	if p := r.ForPath("foo.ts"); p == nil {
-		t.Error("ForPath(foo.ts) = nil")
-	}
-	if p := r.ForPath("foo.svelte"); p == nil {
-		t.Error("ForPath(foo.svelte) = nil")
-	}
-	if p := r.ForPath("foo.astro"); p == nil {
-		t.Error("ForPath(foo.astro) = nil")
-	}
-	if p := r.ForLanguage("rust"); p != nil {
-		t.Error("ForLanguage(rust) should be nil")
+	if len(names) != len(r.AllParsers()) {
+		t.Errorf("Languages() = %d names but AllParsers() = %d parsers", len(names), len(r.AllParsers()))
 	}
 
-	parsers, err := r.ResolveLanguages([]string{"go"})
+	seenExt := make(map[string]string)
+	for _, name := range names {
+		p := r.ForLanguage(name)
+		if p == nil {
+			t.Errorf("ForLanguage(%q) = nil for a name Languages() reported", name)
+			continue
+		}
+		if got := strings.ToLower(p.Language()); got != name {
+			t.Errorf("Languages() reported %q but parser calls itself %q", name, got)
+		}
+
+		// A name is typed into config.json and GITHINTS_INDEX_LANGUAGES, both
+		// comma-separated, so a comma or whitespace would make the language
+		// unselectable.
+		if strings.ContainsAny(name, " \t,") {
+			t.Errorf("language %q contains whitespace or ',', so it could not be selected in config", name)
+		}
+
+		// Case-insensitive lookup is relied on by config, where users type
+		// the language name by hand.
+		if r.ForLanguage(strings.ToUpper(name)) != p {
+			t.Errorf("ForLanguage(%q) is case-sensitive", name)
+		}
+
+		exts := p.Extensions()
+		if len(exts) == 0 {
+			t.Errorf("%s claims no extensions, so no file can ever select it", name)
+		}
+		for _, ext := range exts {
+			if !strings.HasPrefix(ext, ".") || ext != strings.ToLower(ext) {
+				t.Errorf("%s: extension %q must be lower-case and dot-prefixed", name, ext)
+			}
+			if owner, dup := seenExt[ext]; dup {
+				t.Errorf("extension %q claimed by both %s and %s", ext, owner, name)
+			}
+			seenExt[ext] = name
+			if got := r.ForPath("foo" + ext); got != p {
+				t.Errorf("ForPath(foo%s) did not resolve back to %s", ext, name)
+			}
+		}
+	}
+
+	if p := r.ForLanguage(unregisteredLanguage); p != nil {
+		t.Errorf("ForLanguage(%q) = %v, want nil", unregisteredLanguage, p)
+	}
+
+	// ResolveLanguages must accept everything the registry advertises, and
+	// preserve the caller's order.
+	parsers, err := r.ResolveLanguages(names)
 	if err != nil {
-		t.Fatalf("ResolveLanguages: %v", err)
+		t.Fatalf("ResolveLanguages(%v): %v", names, err)
 	}
-	if len(parsers) != 1 {
-		t.Fatalf("parsers = %d", len(parsers))
+	if len(parsers) != len(names) {
+		t.Fatalf("ResolveLanguages returned %d parsers for %d names", len(parsers), len(names))
 	}
-	parsers, err = r.ResolveLanguages([]string{"typescript", "svelte", "astro"})
-	if err != nil {
-		t.Fatalf("ResolveLanguages: %v", err)
+	for i, name := range names {
+		if strings.ToLower(parsers[i].Language()) != name {
+			t.Errorf("ResolveLanguages[%d] = %s, want %s (order not preserved)", i, parsers[i].Language(), name)
+		}
 	}
-	if len(parsers) != 3 {
-		t.Fatalf("parsers = %d", len(parsers))
-	}
-	if _, err := r.ResolveLanguages([]string{"go", "rust"}); err == nil {
+
+	if _, err := r.ResolveLanguages([]string{names[0], unregisteredLanguage}); err == nil {
 		t.Error("expected unsupported language error")
+	}
+}
+
+// TestLanguagesIsSorted pins the ordering. Languages() is built by ranging a
+// map, so without an explicit sort the CLI listing and the ResolveLanguages
+// error message would both shuffle between runs.
+func TestLanguagesIsSorted(t *testing.T) {
+	got := NewRegistry().Languages()
+	for i := 1; i < len(got); i++ {
+		if got[i-1] > got[i] {
+			t.Fatalf("Languages() not sorted: %v", got)
+		}
+	}
+}
+
+// TestResolveLanguagesErrorListsSupported checks the error is actionable. The
+// user who sees it has, by definition, guessed wrong about what is supported.
+func TestResolveLanguagesErrorListsSupported(t *testing.T) {
+	r := NewRegistry()
+	_, err := r.ResolveLanguages([]string{unregisteredLanguage})
+	if err == nil {
+		t.Fatal("expected an error for an unsupported language")
+	}
+	if !strings.Contains(err.Error(), unregisteredLanguage) {
+		t.Errorf("error should name the rejected language, got: %v", err)
+	}
+	for _, name := range r.Languages() {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error should list supported language %q, got: %v", name, err)
+		}
+	}
+}
+
+func TestResolveKnownLanguagesSkipsUnknown(t *testing.T) {
+	r := NewRegistry()
+	known := r.Languages()[0]
+
+	parsers, unknown, err := r.ResolveKnownLanguages([]string{known, unregisteredLanguage})
+	if err != nil {
+		t.Fatalf("ResolveKnownLanguages: %v", err)
+	}
+	if len(parsers) != 1 || strings.ToLower(parsers[0].Language()) != known {
+		t.Errorf("parsers = %v, want just %s", parsers, known)
+	}
+	if len(unknown) != 1 || unknown[0] != unregisteredLanguage {
+		t.Errorf("unknown = %v, want [%s]", unknown, unregisteredLanguage)
+	}
+}
+
+// TestResolveKnownLanguagesErrorsWhenNoneKnown guards against degrading into a
+// scan with no parsers, which would index nothing and report success.
+func TestResolveKnownLanguagesErrorsWhenNoneKnown(t *testing.T) {
+	r := NewRegistry()
+	if _, _, err := r.ResolveKnownLanguages([]string{unregisteredLanguage}); err == nil {
+		t.Fatal("expected an error when no configured language is supported")
+	}
+}
+
+// TestRegistryRegistersKnownLanguages pins that the parsers shipped today are
+// still wired into the registry. It is a subset check on purpose: adding a
+// language must not require editing it.
+func TestRegistryRegistersKnownLanguages(t *testing.T) {
+	r := NewRegistry()
+	for _, tc := range []struct{ language, path string }{
+		{"go", "foo.go"},
+		{"typescript", "foo.ts"},
+		{"svelte", "foo.svelte"},
+		{"astro", "foo.astro"},
+	} {
+		p := r.ForLanguage(tc.language)
+		if p == nil {
+			t.Errorf("ForLanguage(%s) = nil", tc.language)
+			continue
+		}
+		if got := r.ForPath(tc.path); got != p {
+			t.Errorf("ForPath(%s) did not resolve to the %s parser", tc.path, tc.language)
+		}
 	}
 }
 
@@ -234,5 +352,115 @@ func TestNoteLinkObsidianIgnoresFromDir(t *testing.T) {
 	got := NoteLink("index/pkg", "label", "dir/b.go", true)
 	if want := "[[dir/b.go.md|label]]"; got != want {
 		t.Errorf("NoteLink = %q, want %q", got, want)
+	}
+}
+
+// fakeHookParser records whether its scan hook ran, so BeginScans can be
+// tested without depending on a real parser's project configuration.
+type fakeHookParser struct {
+	began *int
+	ended *int
+}
+
+func (fakeHookParser) Language() string     { return "fakehook" }
+func (fakeHookParser) Extensions() []string { return []string{".fakehook"} }
+func (fakeHookParser) Parse(string, []byte) ([]Symbol, []Import, error) {
+	return nil, nil, nil
+}
+func (f fakeHookParser) BeginScan(string) func() {
+	*f.began++
+	return func() { *f.ended++ }
+}
+
+func TestBeginScansRunsHookOncePerParser(t *testing.T) {
+	var began, ended int
+	p := fakeHookParser{began: &began, ended: &ended}
+
+	// The same parser listed twice, as happens when a family shares one.
+	done := BeginScans([]LanguageParser{p, p, GoParser{}}, "/repo")
+	if began != 1 {
+		t.Errorf("BeginScan ran %d times, want 1", began)
+	}
+	if ended != 0 {
+		t.Errorf("teardown ran before the scan finished")
+	}
+	done()
+	if ended != 1 {
+		t.Errorf("teardown ran %d times, want 1", ended)
+	}
+}
+
+func TestBeginScansIgnoresParsersWithoutHooks(t *testing.T) {
+	// GoParser has no per-scan state; this must not panic or misbehave.
+	BeginScans([]LanguageParser{GoParser{}}, "/repo")()
+}
+
+// TestTSFamilyParsersShareTheScanHook pins that a Svelte- or Astro-only scan
+// still installs the tsconfig aliases. Those parsers resolve imports through
+// the TypeScript machinery, so without the hook their aliases would silently
+// stop resolving whenever typescript itself was not in the enabled set.
+func TestTSFamilyParsersShareTheScanHook(t *testing.T) {
+	for _, p := range []LanguageParser{TypeScriptParser{}, SvelteParser{}, AstroParser{}} {
+		if _, ok := p.(ScanHook); !ok {
+			t.Errorf("%s does not implement ScanHook", p.Language())
+		}
+	}
+}
+
+// TestLanguageCountsRoundTripExoticNames pins the constraint this encoding
+// removed. The previous format joined "name:count" pairs with commas, which
+// made both characters illegal in a language name -- and only the colon was
+// checked, so a comma corrupted the record silently.
+func TestLanguageCountsRoundTripExoticNames(t *testing.T) {
+	want := map[string]int{
+		"c:sharp":       3, // a colon, previously rejected
+		"f#":            1,
+		"objective-c++": 2,
+		"go":            7,
+	}
+	encoded, err := EncodeLanguageCounts(want)
+	if err != nil {
+		t.Fatalf("EncodeLanguageCounts: %v", err)
+	}
+	got, err := DecodeLanguageCounts(encoded)
+	if err != nil {
+		t.Fatalf("DecodeLanguageCounts: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%q = %d, want %d", k, got[k], v)
+		}
+	}
+}
+
+// TestLanguageCountsReadsLegacyFormat matters because the meta row survives
+// the schema reset that drops the data tables, so an upgraded index still
+// holds counts written by the old encoder.
+func TestLanguageCountsReadsLegacyFormat(t *testing.T) {
+	got, err := DecodeLanguageCounts("go:12,typescript:5")
+	if err != nil {
+		t.Fatalf("DecodeLanguageCounts: %v", err)
+	}
+	if got["go"] != 12 || got["typescript"] != 5 {
+		t.Errorf("legacy decode = %v", got)
+	}
+}
+
+// TestLanguageCountsCommaNoLongerCorrupts is the silent failure the old format
+// allowed: a comma in a name was not rejected, and split the record in two.
+func TestLanguageCountsCommaNoLongerCorrupts(t *testing.T) {
+	encoded, err := EncodeLanguageCounts(map[string]int{"a,b": 4})
+	if err != nil {
+		t.Fatalf("EncodeLanguageCounts: %v", err)
+	}
+	got, err := DecodeLanguageCounts(encoded)
+	if err != nil {
+		t.Fatalf("DecodeLanguageCounts: %v", err)
+	}
+	if len(got) != 1 || got["a,b"] != 4 {
+		t.Errorf("got %v, want a single entry for %q", got, "a,b")
 	}
 }

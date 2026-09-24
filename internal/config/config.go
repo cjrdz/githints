@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Ollama holds the optional local-LLM summarization settings. Every field has
@@ -146,6 +147,16 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("GITHINTS_INDEX_ENABLED"); v != "" {
 		cfg.Index.Enabled = truthy(v)
 	}
+	if v := os.Getenv("GITHINTS_INDEX_LANGUAGES"); v != "" {
+		// A value that parses to nothing ("," or "  ") is treated as garbage
+		// and ignored, matching how the numeric overrides above ignore input
+		// strconv rejects. Blanking the list instead would surface as
+		// "index.languages is empty", which points at config.json and would
+		// send the user looking in the wrong place.
+		if langs := parseLanguageList(v); len(langs) > 0 {
+			cfg.Index.Languages = langs
+		}
+	}
 	if v := os.Getenv("GITHINTS_INDEX_MAX_BYTES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Index.MaxBytes = n
@@ -164,6 +175,26 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("GITHINTS_INDEX_OBSIDIAN_WIKILINKS"); v != "" {
 		cfg.Index.ObsidianWikilinks = truthy(v)
 	}
+}
+
+// parseLanguageList splits the comma-separated form used by
+// GITHINTS_INDEX_LANGUAGES. Names are trimmed and lower-cased so "Go, TypeScript"
+// and "go,typescript" agree, and duplicates are dropped. Empty entries are
+// skipped rather than becoming a language named "", which would be reported
+// later as an unsupported language with an empty name.
+func parseLanguageList(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		name := strings.ToLower(strings.TrimSpace(part))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
 }
 
 func truthy(s string) bool {

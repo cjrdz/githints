@@ -5,10 +5,12 @@
 package lang
 
 import (
+	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,6 +34,10 @@ type Symbol struct {
 	LineStart int
 	LineEnd   int
 	Signature string // optional, e.g. "func (r *Receiver) MethodName(p Type) Return"
+
+	// Language is stamped by the scan layer from the parser that produced the
+	// symbol, rather than by each parser, so no parser can forget to set it.
+	Language string
 }
 
 // Import is one import statement in a source file. The ImportedPath is the
@@ -61,19 +67,72 @@ type LanguageParser interface {
 type Registry struct {
 	parsers map[string]LanguageParser
 	byExt   map[string]LanguageParser
+	// origin records where each language came from, so the CLI can show a
+	// user which of their languages the repository supplied.
+	origin map[string]string
 }
+
+// Origins reported by Registry.Origin.
+const (
+	OriginBuiltin = "built-in"
+	OriginRepo    = "repo"
+)
 
 // NewRegistry creates a registry pre-loaded with all supported parsers.
 func NewRegistry() *Registry {
 	r := &Registry{
 		parsers: make(map[string]LanguageParser),
 		byExt:   make(map[string]LanguageParser),
+		origin:  make(map[string]string),
 	}
 	r.register(GoParser{})
 	r.register(TypeScriptParser{})
 	r.register(SvelteParser{})
 	r.register(AstroParser{})
+	r.register(VueParser{})
+
+	// Languages shipped as data. These register after the native parsers, so
+	// a spec cannot displace a hand-written parser -- it is reported as a
+	// clash and skipped instead.
+	parsers, errs := EmbeddedParsers()
+	for _, err := range errs {
+		warnf("built-in language spec ignored: %v", err)
+	}
+	for _, p := range parsers {
+		if err := r.registerSpecParser(p, OriginBuiltin); err != nil {
+			warnf("built-in language %s ignored: %v", p.Language(), err)
+		}
+	}
 	return r
+}
+
+// NewRegistryForRoot is NewRegistry plus any language specs the repository
+// ships in .githints/langs.
+//
+// Repository specs register last, so they can extend the set but never
+// displace a language the binary already provides: a clash is reported and the
+// repository's spec skipped. That keeps `go` meaning the same thing in every
+// checkout.
+func NewRegistryForRoot(root string) *Registry {
+	r := NewRegistry()
+	if root == "" {
+		return r
+	}
+	parsers, errs := LoadUserSpecs(root)
+	for _, err := range errs {
+		warnf("repository language spec ignored: %v", err)
+	}
+	for _, p := range parsers {
+		if err := r.registerSpecParser(p, OriginRepo); err != nil {
+			warnf("repository language %s ignored: %v", p.Language(), err)
+		}
+	}
+	return r
+}
+
+// Origin reports where a language came from: OriginBuiltin or OriginRepo.
+func (r *Registry) Origin(name string) string {
+	return r.origin[strings.ToLower(name)]
 }
 
 // register adds a parser to the registry. It panics if two parsers claim the same
@@ -84,6 +143,7 @@ func (r *Registry) register(p LanguageParser) {
 		panic(fmt.Sprintf("duplicate language parser: %s", name))
 	}
 	r.parsers[name] = p
+	r.origin[name] = OriginBuiltin
 	for _, ext := range p.Extensions() {
 		e := strings.ToLower(ext)
 		if existing, ok := r.byExt[e]; ok {
@@ -113,28 +173,67 @@ func (r *Registry) AllParsers() []LanguageParser {
 	return out
 }
 
-// Languages reports every supported language name.
+// Languages reports every supported language name, sorted. The order is
+// deterministic because it reaches users directly: `githints index languages`
+// prints it, and ResolveLanguages puts it in an error message.
 func (r *Registry) Languages() []string {
 	out := make([]string, 0, len(r.parsers))
 	for name := range r.parsers {
 		out = append(out, name)
 	}
+	sort.Strings(out)
 	return out
 }
 
 // ResolveLanguages validates a list of configured languages against the
 // registry and returns a parser slice in the same order. It returns an error
 // if any language is unsupported.
+//
+// The error names the supported set. Without it a user who configured a
+// language this binary does not have gets told only that their choice is
+// wrong, with nothing in the CLI to tell them what would be right.
+//
+// Use this for work the user invoked directly, where stopping with a clear
+// error is the helpful answer. Unattended callers should use
+// ResolveKnownLanguages instead.
 func (r *Registry) ResolveLanguages(names []string) ([]LanguageParser, error) {
-	out := make([]LanguageParser, 0, len(names))
-	for _, name := range names {
-		p := r.ForLanguage(name)
-		if p == nil {
-			return nil, fmt.Errorf("unsupported index language: %q", name)
-		}
-		out = append(out, p)
+	parsers, unknown, err := r.ResolveKnownLanguages(names)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("unsupported index language: %q (supported: %s)",
+			unknown[0], strings.Join(r.Languages(), ", "))
+	}
+	return parsers, nil
+}
+
+// ResolveKnownLanguages returns parsers for every name it recognizes and
+// reports the rest, rather than failing on the first unknown one. It errors
+// only when nothing was recognized, because a scan with no parsers would index
+// nothing while reporting success.
+//
+// This exists for callers that run unattended. config.json travels in clones,
+// so a repo naming a language that some teammate's older binary does not have
+// would otherwise stop that teammate's index dead: the post-commit hook only
+// warns on a scan error, so the commit succeeds and the index silently never
+// updates again. Skipping the unknown name and indexing the rest keeps the
+// failure visible without making it fatal.
+func (r *Registry) ResolveKnownLanguages(names []string) ([]LanguageParser, []string, error) {
+	parsers := make([]LanguageParser, 0, len(names))
+	var unknown []string
+	for _, name := range names {
+		if p := r.ForLanguage(name); p != nil {
+			parsers = append(parsers, p)
+			continue
+		}
+		unknown = append(unknown, name)
+	}
+	if len(parsers) == 0 {
+		return nil, unknown, fmt.Errorf("no supported index language configured: %q (supported: %s)",
+			names, strings.Join(r.Languages(), ", "))
+	}
+	return parsers, unknown, nil
 }
 
 // ExtensionOf returns the lower-case extension of path, or empty string.
@@ -178,47 +277,59 @@ type ScanOptions struct {
 	Obsidian     bool
 }
 
-// LocalImportPath returns the in-repo import path for a source file. For Go
-// files this is the module path from go.mod joined with the file's directory.
-// For TypeScript-family files (.ts/.tsx/.js/.../.svelte/.astro) it is the
-// normalized file key that importers resolve to: the repo-relative path with
-// the code extension and a trailing "/index" stripped, matching how the
-// TypeScript parser stores relative import specifiers. If the language cannot
-// be determined, it returns an error. This is used by the get_dependents MCP
-// tool to map a repo-relative file path back to the import path other files
-// use to import it.
-func LocalImportPath(root, file string) (string, error) {
-	ext := strings.ToLower(filepath.Ext(file))
-	switch {
-	case ext == ".go":
-		module, err := readModulePath(root)
-		if err != nil {
-			return "", fmt.Errorf("read module path: %w", err)
-		}
-		dir := filepath.ToSlash(filepath.Dir(file))
-		if dir == "." || dir == "" {
-			return module, nil
-		}
-		return module + "/" + dir, nil
-	case isTSCodeExtension(ext):
-		return tsFileKey(filepath.ToSlash(file)), nil
-	}
-	return "", fmt.Errorf("unsupported language for import path resolution: %s", ext)
+// ImportPathResolver is implemented by parsers whose language has a notion of
+// the key other files import a file by: a Go module path, a TypeScript file
+// key, a Python dotted module. Implementing it is what lets a language appear
+// in a note's "Imported by" section, be linked from another file's "Imports",
+// and rank as a hub in INDEX.md.
+//
+// It is the inverse of Parse: Parse produces Import.ImportedPath, and this
+// turns a file back into the value importers would have written. Nothing
+// enforces that the two agree, so a language that implements one should be
+// tested against the other.
+type ImportPathResolver interface {
+	ImportPath(root, file string) (string, error)
 }
 
-func readModulePath(root string) (string, error) {
-	path := filepath.Join(root, "go.mod")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+// ImportPath returns the in-repo import path for a source file by asking the
+// parser that owns it.
+//
+// This used to be a closed switch over ".go" and the TypeScript extensions,
+// which meant a new language could not participate in the dependency graph at
+// all: its files indexed symbols but contributed no edges, and get_dependents
+// reported an error for them.
+func (r *Registry) ImportPath(root, file string) (string, error) {
+	p := r.ForPath(file)
+	if p == nil {
+		return "", fmt.Errorf("no parser for %s", file)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "module" {
-			return fields[1], nil
-		}
+	resolver, ok := p.(ImportPathResolver)
+	if !ok {
+		return "", fmt.Errorf("language %s does not resolve import paths", p.Language())
 	}
-	return "", fmt.Errorf("no module directive found in %s", path)
+	return resolver.ImportPath(root, file)
+}
+
+// LocalImportPath resolves against the built-in languages only.
+//
+// Callers that can reach a repository root should prefer
+// NewRegistryForRoot(root).ImportPath, which also sees languages the
+// repository supplies in .githints/langs.
+func LocalImportPath(root, file string) (string, error) {
+	return defaultRegistry().ImportPath(root, file)
+}
+
+// defaultRegistry is the built-in-only registry, built once. LocalImportPath
+// is called once per file during a render, so constructing a registry per call
+// would reload and recompile every spec each time.
+var (
+	defaultRegistryOnce sync.Once
+	defaultRegistryVal  *Registry
+)
+
+func defaultRegistry() *Registry {
+	defaultRegistryOnce.Do(func() { defaultRegistryVal = NewRegistry() })
+	return defaultRegistryVal
 }
 
 // IndexMeta is metadata about the most recent scan.
@@ -303,19 +414,8 @@ func SortedKeys(m map[string]int) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	stringsSort(keys)
+	sort.Strings(keys)
 	return keys
-}
-
-func stringsSort(a []string) {
-	// shadow sort to avoid importing sort package
-	for i := 0; i < len(a); i++ {
-		for j := i + 1; j < len(a); j++ {
-			if a[i] > a[j] {
-				a[i], a[j] = a[j], a[i]
-			}
-		}
-	}
 }
 
 // EscapeMarkdown is a minimal escape used for Obsidian display text in Phase 6.
@@ -389,26 +489,47 @@ func encodeMarkdownTarget(s string) string {
 	return r.Replace(s)
 }
 
-// encodeLanguageCounts serializes a map to a comma-separated string.
+// EncodeLanguageCounts serializes the per-language file counts for the meta
+// row.
+//
+// This is JSON rather than the "name:count" pairs joined by commas it used to
+// be. That format made both characters illegal in a language name -- and only
+// the colon was checked, so a name containing a comma corrupted the record
+// silently. JSON has no such reserved characters, so a language may be called
+// c:sharp or f# without the storage format having an opinion.
 func EncodeLanguageCounts(m map[string]int) (string, error) {
 	if len(m) == 0 {
 		return "", nil
 	}
-	parts := make([]string, 0, len(m))
-	for k, v := range m {
-		if strings.Contains(k, ":") {
-			return "", fmt.Errorf("language name %q contains separator ':'", k)
-		}
-		parts = append(parts, fmt.Sprintf("%s:%d", k, v))
+	data, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("encode language_counts: %w", err)
 	}
-	return strings.Join(parts, ","), nil
+	return string(data), nil
 }
 
-// DecodeLanguageCounts parses a string serialized by EncodeLanguageCounts.
+// DecodeLanguageCounts parses what EncodeLanguageCounts wrote.
+//
+// It also reads the legacy "name:count" form, because the meta row survives
+// the schema reset that drops the data tables and would otherwise be read back
+// with the wrong parser after an upgrade.
 func DecodeLanguageCounts(s string) (map[string]int, error) {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
 	}
+	if strings.HasPrefix(s, "{") {
+		m := make(map[string]int)
+		if err := json.Unmarshal([]byte(s), &m); err != nil {
+			return nil, fmt.Errorf("decode language_counts: %w", err)
+		}
+		return m, nil
+	}
+	return decodeLegacyLanguageCounts(s)
+}
+
+// decodeLegacyLanguageCounts reads the pre-JSON "go:12,typescript:5" form.
+func decodeLegacyLanguageCounts(s string) (map[string]int, error) {
 	m := make(map[string]int)
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
@@ -419,13 +540,11 @@ func DecodeLanguageCounts(s string) (map[string]int, error) {
 		if idx < 0 {
 			return nil, fmt.Errorf("decode language_counts: missing ':' in %q", part)
 		}
-		lang := part[:idx]
-		countStr := part[idx+1:]
 		var count int
-		if _, err := fmt.Sscanf(countStr, "%d", &count); err != nil {
+		if _, err := fmt.Sscanf(part[idx+1:], "%d", &count); err != nil {
 			return nil, fmt.Errorf("decode language_counts: %w", err)
 		}
-		m[lang] = count
+		m[part[:idx]] = count
 	}
 	return m, nil
 }
@@ -446,4 +565,42 @@ func EscapeLike(s string) string {
 type FileInDegreeSummary struct {
 	File       string
 	Dependents int
+}
+
+// ScanHook is implemented by parsers that need state for the duration of a
+// scan -- typically a project configuration that maps import aliases, which
+// the Parse signature has no room to carry.
+//
+// BeginScan installs that state and returns its teardown. The scan layer calls
+// it once per participating parser and defers the result, so a language can be
+// added without touching the scan layer at all.
+type ScanHook interface {
+	BeginScan(root string) func()
+}
+
+// BeginScans runs the hook for every parser that has one and returns a single
+// teardown that unwinds them in reverse.
+//
+// Parsers are deduplicated, so a family sharing one hook installs it once, and
+// only the languages actually enabled for this scan take part -- the previous
+// arrangement installed the TypeScript configuration even for a Go-only scan.
+func BeginScans(parsers []LanguageParser, root string) func() {
+	var teardowns []func()
+	seen := make(map[LanguageParser]struct{}, len(parsers))
+	for _, p := range parsers {
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		if hook, ok := p.(ScanHook); ok {
+			if done := hook.BeginScan(root); done != nil {
+				teardowns = append(teardowns, done)
+			}
+		}
+	}
+	return func() {
+		for i := len(teardowns) - 1; i >= 0; i-- {
+			teardowns[i]()
+		}
+	}
 }

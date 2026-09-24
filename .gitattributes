@@ -9,6 +9,25 @@
 *.json text eol=lf
 *.sh text eol=lf
 
+# Test fixtures for the language parsers. These are compared byte-for-byte
+# against a golden file, so a CRLF checkout puts a trailing \r on every line
+# and fails the comparison on Windows for reasons that have nothing to do with
+# the parser. Add a line here whenever a fixture uses a new extension.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.svelte text eol=lf
+*.astro text eol=lf
+*.vue text eol=lf
+*.py text eol=lf
+*.rs text eol=lf
+*.java text eol=lf
+*.cs text eol=lf
+*.php text eol=lf
+*.sql text eol=lf
+*.prisma text eol=lf
+
 # Binary files should never be normalized.
 *.db binary
 *.salt binary
