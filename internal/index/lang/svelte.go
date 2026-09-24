@@ -85,3 +85,6 @@ func extractScriptBlocks(src []byte) []scriptBlock {
 	}
 	return blocks
 }
+
+// BeginScan installs the tsconfig path aliases this parser resolves against.
+func (SvelteParser) BeginScan(root string) func() { return beginTSScan(root) }

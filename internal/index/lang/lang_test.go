@@ -354,3 +354,55 @@ func TestNoteLinkObsidianIgnoresFromDir(t *testing.T) {
 		t.Errorf("NoteLink = %q, want %q", got, want)
 	}
 }
+
+// fakeHookParser records whether its scan hook ran, so BeginScans can be
+// tested without depending on a real parser's project configuration.
+type fakeHookParser struct {
+	began *int
+	ended *int
+}
+
+func (fakeHookParser) Language() string     { return "fakehook" }
+func (fakeHookParser) Extensions() []string { return []string{".fakehook"} }
+func (fakeHookParser) Parse(string, []byte) ([]Symbol, []Import, error) {
+	return nil, nil, nil
+}
+func (f fakeHookParser) BeginScan(string) func() {
+	*f.began++
+	return func() { *f.ended++ }
+}
+
+func TestBeginScansRunsHookOncePerParser(t *testing.T) {
+	var began, ended int
+	p := fakeHookParser{began: &began, ended: &ended}
+
+	// The same parser listed twice, as happens when a family shares one.
+	done := BeginScans([]LanguageParser{p, p, GoParser{}}, "/repo")
+	if began != 1 {
+		t.Errorf("BeginScan ran %d times, want 1", began)
+	}
+	if ended != 0 {
+		t.Errorf("teardown ran before the scan finished")
+	}
+	done()
+	if ended != 1 {
+		t.Errorf("teardown ran %d times, want 1", ended)
+	}
+}
+
+func TestBeginScansIgnoresParsersWithoutHooks(t *testing.T) {
+	// GoParser has no per-scan state; this must not panic or misbehave.
+	BeginScans([]LanguageParser{GoParser{}}, "/repo")()
+}
+
+// TestTSFamilyParsersShareTheScanHook pins that a Svelte- or Astro-only scan
+// still installs the tsconfig aliases. Those parsers resolve imports through
+// the TypeScript machinery, so without the hook their aliases would silently
+// stop resolving whenever typescript itself was not in the enabled set.
+func TestTSFamilyParsersShareTheScanHook(t *testing.T) {
+	for _, p := range []LanguageParser{TypeScriptParser{}, SvelteParser{}, AstroParser{}} {
+		if _, ok := p.(ScanHook); !ok {
+			t.Errorf("%s does not implement ScanHook", p.Language())
+		}
+	}
+}

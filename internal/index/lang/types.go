@@ -539,3 +539,41 @@ type FileInDegreeSummary struct {
 	File       string
 	Dependents int
 }
+
+// ScanHook is implemented by parsers that need state for the duration of a
+// scan -- typically a project configuration that maps import aliases, which
+// the Parse signature has no room to carry.
+//
+// BeginScan installs that state and returns its teardown. The scan layer calls
+// it once per participating parser and defers the result, so a language can be
+// added without touching the scan layer at all.
+type ScanHook interface {
+	BeginScan(root string) func()
+}
+
+// BeginScans runs the hook for every parser that has one and returns a single
+// teardown that unwinds them in reverse.
+//
+// Parsers are deduplicated, so a family sharing one hook installs it once, and
+// only the languages actually enabled for this scan take part -- the previous
+// arrangement installed the TypeScript configuration even for a Go-only scan.
+func BeginScans(parsers []LanguageParser, root string) func() {
+	var teardowns []func()
+	seen := make(map[LanguageParser]struct{}, len(parsers))
+	for _, p := range parsers {
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		if hook, ok := p.(ScanHook); ok {
+			if done := hook.BeginScan(root); done != nil {
+				teardowns = append(teardowns, done)
+			}
+		}
+	}
+	return func() {
+		for i := len(teardowns) - 1; i >= 0; i-- {
+			teardowns[i]()
+		}
+	}
+}

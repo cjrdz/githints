@@ -32,10 +32,10 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	set := lang.ParserSet(parsers)
 	extMap := lang.ExtensionMap(set)
 
-	// tsconfig path aliases (if any) apply to every TS-family parser for the
-	// duration of this scan; cleared when the scan returns.
-	lang.SetActiveTSPathsConfig(lang.LoadTSPathsConfig(opts.Root))
-	defer lang.SetActiveTSPathsConfig(nil)
+	// Let each enabled parser install whatever per-scan state it needs, such
+	// as the TypeScript path aliases. Adding a language with its own project
+	// configuration no longer means editing this function.
+	defer lang.BeginScans(parsers, opts.Root)()
 
 	meta := lang.IndexMeta{LanguageCounts: make(map[string]int)}
 
@@ -321,10 +321,10 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 	set := lang.ParserSet(parsers)
 	extMap := lang.ExtensionMap(set)
 
-	// tsconfig path aliases (if any) apply to every TS-family parser for the
-	// duration of this scan; cleared when the scan returns.
-	lang.SetActiveTSPathsConfig(lang.LoadTSPathsConfig(opts.Root))
-	defer lang.SetActiveTSPathsConfig(nil)
+	// Let each enabled parser install whatever per-scan state it needs, such
+	// as the TypeScript path aliases. Adding a language with its own project
+	// configuration no longer means editing this function.
+	defer lang.BeginScans(parsers, opts.Root)()
 
 	for _, path := range paths {
 		if err := recorder.ValidateFilePath(path); err != nil {

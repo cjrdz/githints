@@ -46,3 +46,6 @@ func parseAstroFrontmatter(file string, src []byte) ([]Symbol, []Import) {
 	imports := extractTSImports(file, []byte(code))
 	return symbols, imports
 }
+
+// BeginScan installs the tsconfig path aliases this parser resolves against.
+func (AstroParser) BeginScan(root string) func() { return beginTSScan(root) }

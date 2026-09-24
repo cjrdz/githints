@@ -448,3 +448,6 @@ func tsNextLineContinues(next string) bool {
 	}
 	return false
 }
+
+// BeginScan installs the tsconfig path aliases this parser resolves against.
+func (TypeScriptParser) BeginScan(root string) func() { return beginTSScan(root) }
