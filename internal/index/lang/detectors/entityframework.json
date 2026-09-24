@@ -1,0 +1,19 @@
+{
+  // Entity Framework Core. A model is a DbSet on the context, which names the
+  // entity type in a single line.
+  "framework": "entityframework",
+  "languages": ["csharp"],
+  "when_imports": ["Microsoft.EntityFrameworkCore", "System.Data.Entity"],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "DbSet<",
+      "pattern": "DbSet<(?P<name>[\\w.]+)>"
+    },
+    {
+      "facet": "migration",
+      "requires": "Migration",
+      "pattern": "^\\s*(?:(?:public|internal|partial|sealed)\\s+)*class\\s+(?P<name>\\w+)\\s*:\\s*Migration\\b"
+    }
+  ]
+}

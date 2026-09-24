@@ -212,7 +212,8 @@ configured set outright; names are trimmed and case-folded.
 
 A repo selects from the languages the binary supports via `index.languages`
 (default `["go"]`). Currently supported: `go`, `typescript` (including `.js`,
-`.jsx`, `.mts`, `.cts`), `svelte`, `astro`, and `python`.
+`.jsx`, `.mts`, `.cts`), `svelte`, `astro`, `vue`, `python`, `rust`, `java`,
+`csharp`, `php`, `sql`, and `prisma`.
 
 Languages come from two places. A few ship as hand-written Go parsers under
 `internal/index/lang/`, registered in `NewRegistry()`. The rest ship as JSON
@@ -236,7 +237,8 @@ That normalization is the point: ask for every HTTP route in a repo without
 knowing which frameworks it uses.
 
 Detectors shipped today: `django`, `flask`, `fastapi`, `sqlalchemy` (Python),
-`chi`, `gorm`, `bun` (Go), `react`, `vue` (TypeScript).
+`chi`, `gorm`, `bun` (Go), `react`, `vue` (TypeScript), `spring` (Java),
+`eloquent` (PHP), `entityframework` (C#), `tokio` (Rust), `prisma`.
 
     find_facets(facet="route")                 # MCP
     ./githints index facets -facet=route       # CLI

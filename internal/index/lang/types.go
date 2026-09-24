@@ -88,6 +88,7 @@ func NewRegistry() *Registry {
 	r.register(TypeScriptParser{})
 	r.register(SvelteParser{})
 	r.register(AstroParser{})
+	r.register(VueParser{})
 
 	// Languages shipped as data. These register after the native parsers, so
 	// a spec cannot displace a hand-written parser -- it is reported as a

@@ -1,0 +1,24 @@
+{
+  // Spring Boot. Controllers and their endpoints, plus JPA entities.
+  "framework": "spring",
+  "languages": ["java"],
+  "when_imports": ["org.springframework", "jakarta.persistence", "javax.persistence"],
+  "rules": [
+    {
+      // @GetMapping("/users") and @RequestMapping("/api")
+      "facet": "route",
+      "requires": "Mapping",
+      "keep_strings": true,
+      "pattern": "@(?P<detail>Get|Post|Put|Patch|Delete|Request)Mapping\\(\\s*(?:value\\s*=\\s*)?[\"'](?P<name>[^\"']*)[\"']"
+    },
+    {
+      // A class annotated @Entity is a persisted model. The annotation and the
+      // class name are usually on different lines, so the table name is taken
+      // where it is given and the class name otherwise.
+      "facet": "model",
+      "requires": "@Table",
+      "keep_strings": true,
+      "pattern": "@Table\\(\\s*name\\s*=\\s*[\"'](?P<name>[^\"']+)[\"']"
+    }
+  ]
+}

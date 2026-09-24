@@ -323,7 +323,10 @@ func importMatches(imported, pattern string) bool {
 	if imported == pattern {
 		return true
 	}
-	for _, sep := range []string{".", "/"} {
+	// Submodule separators differ by ecosystem: dots in Python and Java,
+	// slashes in Go module paths, double colons in Rust, backslashes in PHP
+	// namespaces. A gate of "tokio" must match "tokio::task".
+	for _, sep := range []string{".", "/", "::", "\\"} {
 		if strings.HasPrefix(imported, pattern+sep) {
 			return true
 		}

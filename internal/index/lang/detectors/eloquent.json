@@ -1,0 +1,20 @@
+{
+  // Laravel: Eloquent models and route registrations.
+  "framework": "eloquent",
+  "languages": ["php"],
+  "when_imports": ["Illuminate\\Database\\Eloquent", "Illuminate\\Support\\Facades\\Route"],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "class",
+      "pattern": "^\\s*(?:(?:abstract|final|readonly)\\s+)*class\\s+(?P<name>\\w+)\\s+extends\\s+(?:\\\\?Illuminate\\\\Database\\\\Eloquent\\\\)?Model\\b"
+    },
+    {
+      // Route::get('/users', ...) and Route::post(...)
+      "facet": "route",
+      "requires": "Route::",
+      "keep_strings": true,
+      "pattern": "Route::(?P<detail>get|post|put|patch|delete|options|any|match|resource|apiResource)\\(\\s*['\"](?P<name>[^'\"]*)['\"]"
+    }
+  ]
+}

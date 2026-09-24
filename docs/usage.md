@@ -360,6 +360,13 @@ into the binary:
 | `svelte` | `.svelte` (`<script>` blocks) | heuristic, via the TypeScript parser |
 | `astro` | `.astro` (frontmatter + `<script>` blocks) | heuristic, via the TypeScript parser |
 | `python` | `.py` `.pyi` | spec-driven, `specs/python.json` |
+| `rust` | `.rs` | spec-driven |
+| `java` | `.java` | spec-driven |
+| `csharp` | `.cs` | spec-driven |
+| `php` | `.php` | spec-driven |
+| `sql` | `.sql` | spec-driven |
+| `prisma` | `.prisma` | spec-driven |
+| `vue` | `.vue` (`<script>` blocks) | heuristic, via the TypeScript parser |
 
 This table is hand-maintained. To see what the binary you are running actually
 supports — and which of those languages this repo has enabled:

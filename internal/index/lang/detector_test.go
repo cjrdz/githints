@@ -166,6 +166,9 @@ func TestImportMatches(t *testing.T) {
 		{"djangorestframework", "django.*", false}, // not a submodule
 		{"github.com/go-chi/chi/v5", "github.com/go-chi/chi", true},
 		{"other.db", "django.db", false},
+		{"tokio::task", "tokio", true},                                          // Rust
+		{"Illuminate\\Database\\Eloquent\\Model", "Illuminate\\Database", true}, // PHP
+		{"tokiox::task", "tokio", false},
 	} {
 		if got := importMatches(tc.imported, tc.pattern); got != tc.want {
 			t.Errorf("importMatches(%q, %q) = %v, want %v", tc.imported, tc.pattern, got, tc.want)

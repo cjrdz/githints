@@ -304,3 +304,117 @@ func TestPHPSpec(t *testing.T) {
 		t.Errorf("imports = %v, want %v", importPaths(imports), want)
 	}
 }
+
+func TestVueParser(t *testing.T) {
+	src := "" +
+		"<template>\n" +
+		"  <div class=\"card\">{{ title }}</div>\n" +
+		"</template>\n" +
+		"\n" +
+		"<script setup lang=\"ts\">\n" +
+		"import { ref } from \"vue\";\n" +
+		"import Helper from \"./Helper.vue\";\n" +
+		"\n" +
+		"export function useCard() {\n" +
+		"  return ref(1);\n" +
+		"}\n" +
+		"</script>\n" +
+		"\n" +
+		"<style scoped>\n" +
+		".card { color: red; }\n" +
+		"</style>\n"
+
+	symbols, imports := parseWith(t, "vue", "ui/Card.vue", src)
+	got := kindsByName(symbols)
+	if got["useCard"] != KindFunc {
+		t.Errorf("useCard not indexed: %v", got)
+	}
+	// Line numbers must be host-file coordinates, not script-block ones.
+	for _, s := range symbols {
+		if s.Name == "useCard" && s.LineStart != 9 {
+			t.Errorf("useCard LineStart = %d, want 9 (host-file line)", s.LineStart)
+		}
+	}
+	if want := []string{"vue", "ui/Helper"}; !equalStringSlices(importPaths(imports), want) {
+		t.Errorf("imports = %v, want %v", importPaths(imports), want)
+	}
+}
+
+// TestVueJoinsTheTypeScriptImportKeyspace checks a .vue file can be found by
+// the files that import it, the way .svelte and .astro already are.
+func TestVueJoinsTheTypeScriptImportKeyspace(t *testing.T) {
+	r := NewRegistry()
+	resolver, ok := r.ForLanguage("vue").(ImportPathResolver)
+	if !ok {
+		t.Fatal("vue does not resolve import paths")
+	}
+	got, err := resolver.ImportPath("/repo", "ui/Card.vue")
+	if err != nil {
+		t.Fatalf("ImportPath: %v", err)
+	}
+
+	// A TypeScript file importing "./Card.vue" must resolve to the same key.
+	_, imports, err := r.ForLanguage("typescript").Parse("ui/app.ts", []byte("import Card from \"./Card.vue\";\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(imports) != 1 {
+		t.Fatalf("imports = %v", imports)
+	}
+	if imports[0].ImportedPath != got {
+		t.Errorf("importer sees %q but ImportPath yields %q; the graph would never connect",
+			imports[0].ImportedPath, got)
+	}
+}
+
+func TestPrismaSpec(t *testing.T) {
+	src := "" +
+		"// a comment mentioning model Ghost {\n" +
+		"datasource db {\n" +
+		"  provider = \"postgresql\"\n" +
+		"}\n" +
+		"\n" +
+		"generator client {\n" +
+		"  provider = \"prisma-client-js\"\n" +
+		"}\n" +
+		"\n" +
+		"model User {\n" +
+		"  id    Int    @id @default(autoincrement())\n" +
+		"  posts Post[]\n" +
+		"}\n" +
+		"\n" +
+		"enum Role {\n" +
+		"  USER\n" +
+		"  ADMIN\n" +
+		"}\n"
+
+	symbols, _ := parseWith(t, "prisma", "prisma/schema.prisma", src)
+	got := kindsByName(symbols)
+
+	for name, want := range map[string]SymbolKind{
+		"User":   KindType,
+		"Role":   KindType,
+		"db":     KindVar,
+		"client": KindVar,
+	} {
+		if got[name] != want {
+			t.Errorf("%s: kind %q, want %q", name, got[name], want)
+		}
+	}
+	if _, found := got["Ghost"]; found {
+		t.Error("a model named in a comment was indexed")
+	}
+}
+
+// TestPrismaDetectorUsesPathGlob covers the gate for a language that has no
+// imports at all: the file path is the only signal a detector can use.
+func TestPrismaDetectorUsesPathGlob(t *testing.T) {
+	src := "model User {\n  id Int @id\n}\n\nview ActiveUser {\n  id Int\n}\n"
+	found := detectIn(t, "prisma", "prisma/schema.prisma", src)
+	wantNames(t, named(found, "prisma", FacetModel), []string{"User", "ActiveUser"})
+
+	// A file that is not a schema must not be claimed.
+	if other := detectIn(t, "prisma", "notes.txt", src); len(other) != 0 {
+		t.Errorf("detected %v in a file the glob should not match", other)
+	}
+}

@@ -1,0 +1,25 @@
+{
+  // Prisma schema files.
+  //
+  // A schema declares no imports and is imported by nothing, so it
+  // contributes symbols and framework facets but no graph edges.
+  "language": "prisma",
+  "extensions": [".prisma"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["//"] },
+  "strings": [{ "open": "\"", "close": "\"", "escape": "\\" }],
+
+  "import_path": "",
+
+  "symbols": [
+    { "kind": "type", "requires": "model", "pattern": "^\\s*model\\s+(?P<name>\\w+)\\s*\\{" },
+    { "kind": "type", "requires": "enum", "pattern": "^\\s*enum\\s+(?P<name>\\w+)\\s*\\{" },
+    { "kind": "type", "requires": "type", "pattern": "^\\s*type\\s+(?P<name>\\w+)\\s*\\{" },
+    { "kind": "type", "requires": "view", "pattern": "^\\s*view\\s+(?P<name>\\w+)\\s*\\{" },
+    { "kind": "var", "requires": "datasource", "pattern": "^\\s*datasource\\s+(?P<name>\\w+)\\s*\\{" },
+    { "kind": "var", "requires": "generator", "pattern": "^\\s*generator\\s+(?P<name>\\w+)\\s*\\{" }
+  ],
+
+  "imports": []
+}

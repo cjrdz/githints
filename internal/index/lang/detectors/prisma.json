@@ -1,0 +1,12 @@
+{
+  // Prisma. Gated on the file rather than on imports: a schema imports
+  // nothing, so a path glob is the only signal available -- which is why
+  // detectors accept one.
+  "framework": "prisma",
+  "languages": ["prisma"],
+  "path_globs": ["*.prisma"],
+  "rules": [
+    { "facet": "model", "requires": "model", "pattern": "^\\s*model\\s+(?P<name>\\w+)\\s*\\{" },
+    { "facet": "model", "requires": "view", "pattern": "^\\s*view\\s+(?P<name>\\w+)\\s*\\{" }
+  ]
+}

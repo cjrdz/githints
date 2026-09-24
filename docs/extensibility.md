@@ -337,6 +337,15 @@ own extraction. `TestPythonImportPathRoundTrip` is the pattern.
 ### Phase 6 — Languages
 
 18. One task per language: python, rust, java, c#, php, sql, vue, prisma.
+    *(done)* All are specs except `vue`, which is a hand-written parser: a
+    single-file component needs the opposite of line matching -- keep one
+    region and discard the rest -- so it shares Svelte's and Astro's machinery
+    instead.
+
+    Adding these unblocked the last four detectors (spring, eloquent,
+    entityframework, tokio), which were inert while their languages had no
+    parser to produce blanked views and imports. A test now fails if a
+    detector names a language that cannot produce them.
 
 ## Verification
 

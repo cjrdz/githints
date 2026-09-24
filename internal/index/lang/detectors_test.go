@@ -270,3 +270,88 @@ func TestDetectorKeepsDistinctDetails(t *testing.T) {
 		t.Errorf("routes = %v, want GET and POST kept separate", got)
 	}
 }
+
+func TestSpringDetector(t *testing.T) {
+	src := "" +
+		"package com.example;\n\n" +
+		"import org.springframework.web.bind.annotation.GetMapping;\n\n" +
+		"@RestController\n" +
+		"@RequestMapping(\"/api\")\n" +
+		"public class UserController {\n" +
+		"    @GetMapping(\"/users\")\n" +
+		"    public List<User> list() { return null; }\n" +
+		"}\n"
+
+	found := detectIn(t, "java", "src/main/java/com/example/UserController.java", src,
+		"org.springframework.web.bind.annotation.GetMapping")
+	// Ordered by line: @RequestMapping on the class precedes @GetMapping on
+	// the method.
+	wantNames(t, named(found, "spring", FacetRoute), []string{"/api", "/users"})
+}
+
+func TestEloquentDetector(t *testing.T) {
+	src := "" +
+		"<?php\n\n" +
+		"use Illuminate\\Database\\Eloquent\\Model;\n" +
+		"use Illuminate\\Support\\Facades\\Route;\n\n" +
+		"class User extends Model {}\n\n" +
+		"Route::get('/users', [UserController::class, 'index']);\n" +
+		"Route::post('/users', [UserController::class, 'store']);\n"
+
+	found := detectIn(t, "php", "app/Models/User.php", src,
+		`Illuminate\Database\Eloquent\Model`, `Illuminate\Support\Facades\Route`)
+	wantNames(t, named(found, "eloquent", FacetModel), []string{"User"})
+	wantNames(t, named(found, "eloquent", FacetRoute), []string{"/users", "/users"})
+}
+
+func TestEntityFrameworkDetector(t *testing.T) {
+	src := "" +
+		"using Microsoft.EntityFrameworkCore;\n\n" +
+		"public class AppContext : DbContext\n" +
+		"{\n" +
+		"    public DbSet<User> Users { get; set; }\n" +
+		"    public DbSet<Order> Orders { get; set; }\n" +
+		"}\n"
+
+	found := detectIn(t, "csharp", "Data/AppContext.cs", src, "Microsoft.EntityFrameworkCore")
+	wantNames(t, named(found, "entityframework", FacetModel), []string{"User", "Order"})
+}
+
+func TestTokioDetector(t *testing.T) {
+	src := "" +
+		"use tokio::task;\n\n" +
+		"#[tokio::main]\n" +
+		"async fn main() {\n" +
+		"    tokio::spawn(async { work().await });\n" +
+		"}\n"
+
+	found := detectIn(t, "rust", "src/main.rs", src, "tokio::task")
+	got := named(found, "tokio", FacetJob)
+	if len(got) != 2 {
+		t.Errorf("tokio jobs = %v, want the entry point and the spawn", got)
+	}
+}
+
+// TestEveryDetectorHasAWorkingLanguage guards the sequencing problem that held
+// these four back: detection needs a parser to produce blanked views and
+// imports, so a detector naming a language githints cannot read is inert.
+func TestEveryDetectorHasAWorkingLanguage(t *testing.T) {
+	set, _ := EmbeddedDetectors()
+	r := NewRegistry()
+	for _, d := range set.detectors {
+		for language := range d.languages {
+			p := r.ForLanguage(language)
+			if p == nil {
+				t.Errorf("detector %s targets %q, which is not a registered language", d.framework, language)
+				continue
+			}
+			if _, ok := p.(interface {
+				BlankLines([]byte) []string
+				BlankLinesKeepingStrings([]byte) []string
+			}); !ok {
+				t.Errorf("detector %s targets %s, which exposes no blanked views, so it can never match",
+					d.framework, language)
+			}
+		}
+	}
+}

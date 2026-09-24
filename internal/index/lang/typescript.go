@@ -37,7 +37,7 @@ func (TypeScriptParser) Parse(path string, src []byte) ([]Symbol, []Import, erro
 
 // tsCodeExtensions are the extensions stripped when normalizing a TS-family
 // file path to its import key. Order matters only for suffix matching.
-var tsCodeExtensions = []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".astro"}
+var tsCodeExtensions = []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".astro", ".vue"}
 
 // tsFileKey normalizes a repo-relative TS-family path to the key used to match
 // importers against files: the code extension is stripped, and a trailing
