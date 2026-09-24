@@ -1,7 +1,9 @@
 package index
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/recorder"
 )
@@ -43,6 +46,15 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	for _, err := range detectorErrs {
 		fmt.Fprintf(os.Stderr, "githints: framework detector ignored: %v\n", err)
 	}
+
+	// candidate is a file the walk accepted, held until the batched ignore
+	// check can rule on all of them at once.
+	type candidate struct {
+		rel    string
+		abs    string
+		parser lang.LanguageParser
+	}
+	var candidates []candidate
 
 	var allSymbols []lang.Symbol
 	var allImports []lang.Import
@@ -93,10 +105,10 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 			return nil
 		}
 
-		if shouldIgnoreFile(opts.Root, rel) {
-			return nil
-		}
-
+		// Parser selection first: it is a map lookup, and it discards most of
+		// a typical repository. The ignore check that used to run here cost
+		// 1.3ms per path in process startup, so asking it about assets nobody
+		// can parse was most of a full scan.
 		parser := lang.SelectParser(extMap, rel)
 		if parser == nil {
 			meta.UnsupportedCount++
@@ -110,18 +122,39 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 			return nil
 		}
 
+		candidates = append(candidates, candidate{rel: rel, abs: path, parser: parser})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walk: %w", err)
+	}
+
+	// One pair of git invocations for every candidate, rather than one pair
+	// each.
+	rels := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		rels = append(rels, c.rel)
+	}
+	ignored := resolveIgnored(opts.Root, rels)
+
+	for _, c := range candidates {
+		if ignored[c.rel] {
+			continue
+		}
+		rel, path, parser := c.rel, c.abs, c.parser
+
 		src, err := os.ReadFile(path)
 		if err != nil {
 			meta.SkippedCount++
 			fmt.Fprintf(os.Stderr, "githints: index skipped (read error): %s: %v\n", rel, err)
-			return nil
+			continue
 		}
 
 		symbols, imports, err := parseWithTimeout(parser, rel, src, opts.ParseTimeout)
 		if err != nil {
 			meta.SkippedCount++
 			fmt.Fprintf(os.Stderr, "githints: index skipped (parse error): %s: %v\n", rel, err)
-			return nil
+			continue
 		}
 
 		// Record language only for files that actually produced symbols.
@@ -133,11 +166,6 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 		}
 		allImports = append(allImports, imports...)
 		allFacets = append(allFacets, detectFacets(detectors, parser, rel, src, imports)...)
-
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("walk: %w", err)
 	}
 
 	if err := guardWrite(db, allSymbols, allImports, force, maxBytes); err != nil {
@@ -347,6 +375,9 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 	// configuration no longer means editing this function.
 	defer lang.BeginScans(parsers, opts.Root)()
 
+	// Files whose rows were written and which therefore need a note.
+	var rendered []string
+
 	for _, path := range paths {
 		if err := recorder.ValidateFilePath(path); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index skipped (invalid path): %s: %v\n", path, err)
@@ -422,7 +453,20 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
 			fmt.Fprintf(os.Stderr, "githints: index insert facets failed: %s: %v\n", path, err)
 			continue
 		}
-		if err := renderFileNote(db, opts.Root, path, opts.Obsidian, resolveImportPaths(db, opts.Root, registry), registry); err != nil {
+		rendered = append(rendered, path)
+	}
+
+	// resolveImportPaths reads every indexed file and resolves each one's
+	// import path, so calling it per changed file made an incremental scan
+	// cost O(changed x indexed): the same twenty files took 51ms, 146ms and
+	// 1.08s as the index grew. It is computed once here instead.
+	//
+	// It has to come after the write loop, not before: the map must include
+	// the rows this scan just inserted, or a new file would render without
+	// its own links.
+	importToFile := resolveImportPaths(db, opts.Root, registry)
+	for _, path := range rendered {
+		if err := renderFileNote(db, opts.Root, path, opts.Obsidian, importToFile, registry); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index note render failed: %s: %v\n", path, err)
 		}
 	}
@@ -471,4 +515,110 @@ func detectFacets(set *lang.DetectorSet, parser lang.LanguageParser, rel string,
 		Code:     bl.BlankLines(src),
 		Strings:  bl.BlankLinesKeepingStrings(src),
 	})
+}
+
+// ignoreSet is the resolved ignore status of a batch of paths.
+type ignoreSet map[string]bool
+
+// resolveIgnored asks git about every path in one pair of invocations instead
+// of one pair per path.
+//
+// `git check-ignore` costs roughly 1.3ms per call, nearly all of it process
+// startup, which made it three quarters of a full scan. Batching removes the
+// per-path cost entirely; the semantics are unchanged because the two passes
+// are kept separate, which is what keeps .githintsignore subtract-only: the
+// second pass only ever sees paths the first said were not ignored.
+//
+// On failure it falls back to the per-path check rather than guessing, since
+// guessing "not ignored" would index files the user excluded.
+func resolveIgnored(root string, rels []string) ignoreSet {
+	if len(rels) == 0 {
+		return ignoreSet{}
+	}
+
+	ignored, err := batchCheckIgnore(root, rels, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "githints: batched ignore check failed (%v); falling back to per-path\n", err)
+		return perPathIgnored(root, rels)
+	}
+
+	hintsIgnore := filepath.Join(root, ".githintsignore")
+	if fileExists(hintsIgnore) {
+		var remaining []string
+		for _, rel := range rels {
+			if !ignored[rel] {
+				remaining = append(remaining, rel)
+			}
+		}
+		extra, err := batchCheckIgnore(root, remaining, hintsIgnore)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "githints: batched .githintsignore check failed (%v); falling back to per-path\n", err)
+			return perPathIgnored(root, rels)
+		}
+		for rel := range extra {
+			ignored[rel] = true
+		}
+	}
+	return ignored
+}
+
+func perPathIgnored(root string, rels []string) ignoreSet {
+	out := make(ignoreSet, len(rels))
+	for _, rel := range rels {
+		if shouldIgnoreFile(root, rel) {
+			out[rel] = true
+		}
+	}
+	return out
+}
+
+// batchCheckIgnore runs one `git check-ignore` over every path and returns the
+// ones git excludes.
+func batchCheckIgnore(root string, rels []string, excludesFile string) (ignoreSet, error) {
+	out := make(ignoreSet)
+	if len(rels) == 0 {
+		return out, nil
+	}
+
+	args := []string{}
+	if excludesFile != "" {
+		args = append(args, "-c", "core.excludesFile="+excludesFile)
+	}
+	// -z on both sides: a path may legitimately contain a newline, and a
+	// mis-split line would silently mark the wrong file ignored.
+	args = append(args, "check-ignore", "--no-index", "--stdin", "-z")
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+
+	var stdin bytes.Buffer
+	for _, rel := range rels {
+		stdin.WriteString(rel)
+		stdin.WriteByte(0)
+	}
+	cmd.Stdin = &stdin
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	// Exit status 1 means "nothing matched", which is a normal answer rather
+	// than a failure. Anything else with output on stderr is a real problem.
+	if err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+	}
+	if stdout.Len() > gitutil.MaxOutputBytes {
+		return nil, fmt.Errorf("check-ignore produced %d bytes, over the cap of %d", stdout.Len(), gitutil.MaxOutputBytes)
+	}
+
+	for _, p := range strings.Split(stdout.String(), "\x00") {
+		if p != "" {
+			out[p] = true
+		}
+	}
+	return out, nil
 }

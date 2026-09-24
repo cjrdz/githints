@@ -1360,3 +1360,89 @@ func TestFacetQueryFilters(t *testing.T) {
 		t.Errorf("breakdown = %v, want one row per facet/framework pair", breakdown)
 	}
 }
+
+// TestBatchedIgnoreMatchesPerPath is the correctness proof for batching the
+// ignore check. The batched path is an optimization only if it answers exactly
+// what the per-path check answers, including the two-pass ordering that keeps
+// .githintsignore subtract-only.
+func TestBatchedIgnoreMatchesPerPath(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, root)
+
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	write(".gitignore", "*.gen.go\nvendor/\nsecret.txt\n")
+	// .githintsignore may only subtract further; it can never re-include a
+	// file .gitignore already excluded.
+	write(".githintsignore", "fixtures/\n!*.gen.go\n")
+
+	rels := []string{
+		"main.go",
+		"api.gen.go",
+		"vendor/dep.go",
+		"secret.txt",
+		"fixtures/sample.go",
+		"pkg/real.go",
+		"a file with spaces.go",
+	}
+	for _, rel := range rels {
+		write(rel, "package p\n")
+	}
+
+	batched := resolveIgnored(root, rels)
+	perPath := perPathIgnored(root, rels)
+
+	for _, rel := range rels {
+		if batched[rel] != perPath[rel] {
+			t.Errorf("%s: batched=%v per-path=%v", rel, batched[rel], perPath[rel])
+		}
+	}
+
+	// Spot-check the semantics themselves, so a change that broke both the
+	// same way would still be caught.
+	for rel, want := range map[string]bool{
+		"main.go":            false,
+		"api.gen.go":         true, // .gitignore
+		"vendor/dep.go":      true, // .gitignore
+		"secret.txt":         true, // .gitignore
+		"fixtures/sample.go": true, // .githintsignore
+		"pkg/real.go":        false,
+	} {
+		if batched[rel] != want {
+			t.Errorf("%s: ignored=%v, want %v", rel, batched[rel], want)
+		}
+	}
+}
+
+// TestBatchedIgnoreHandlesEmptyAndAllIgnored covers the edges of the batched
+// call: git exits 1 when nothing matches, which is an answer rather than a
+// failure.
+func TestBatchedIgnoreHandlesEmptyAndAllIgnored(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, root)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got := resolveIgnored(root, nil); len(got) != 0 {
+		t.Errorf("empty input returned %v", got)
+	}
+	// Nothing matches: git exits 1.
+	if got := resolveIgnored(root, []string{"a.go", "b.go"}); len(got) != 0 {
+		t.Errorf("nothing should be ignored, got %v", got)
+	}
+	// Everything matches.
+	got := resolveIgnored(root, []string{"a.log", "b.log"})
+	if !got["a.log"] || !got["b.log"] {
+		t.Errorf("both should be ignored, got %v", got)
+	}
+}
