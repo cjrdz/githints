@@ -477,6 +477,10 @@ func cleanTSLines(src []byte) []string {
 	var templateStack []int
 	braceDepth := 0
 	prevSignificant := byte(0) // last non-space code byte, for regex vs division
+	// pendingContinuation is set when a '\\' is seen immediately before a
+	// newline inside a quoted string, so the newline handler knows the string
+	// continues rather than being unterminated.
+	pendingContinuation := false
 
 	flushLine := func() {
 		lines = append(lines, b.String())
@@ -491,11 +495,12 @@ func cleanTSLines(src []byte) []string {
 				state = tsStCode
 			}
 			// A line continuation keeps single/double strings open across the
-			// newline; template literals span lines naturally.
-			if (state == tsStSingle || state == tsStDouble) && b.Len() > 0 {
-				s := b.String()
-				if strings.HasSuffix(s, "\\") {
-					// Stay in string state.
+			// newline; template literals span lines naturally. Anything else
+			// in string state at a newline is unterminated, and recovering to
+			// code confines the damage to the one line.
+			if state == tsStSingle || state == tsStDouble {
+				if pendingContinuation {
+					pendingContinuation = false
 				} else {
 					state = tsStCode
 				}
@@ -519,7 +524,15 @@ func cleanTSLines(src []byte) []string {
 				quote = '"'
 			}
 			if c == '\\' && i+1 < len(raw) {
-				i++ // skip escaped byte
+				// Hand a continuation's newline to the top of the loop so the
+				// cleaned output keeps one line per source line. Consuming it
+				// here merged the two lines and shifted the reported line
+				// number of every symbol below the string.
+				if raw[i+1] == '\n' {
+					pendingContinuation = true
+				} else {
+					i++ // skip escaped byte
+				}
 			} else if c == quote {
 				// Write the closing delimiter so cleaned lines keep strings
 				// balanced ("" rather than a dangling quote); contents stay
