@@ -1,8 +1,9 @@
 {
   // Prisma schema files.
   //
-  // A schema declares no imports and is imported by nothing, so it
-  // contributes symbols and framework facets but no graph edges.
+  // A schema is imported by nothing, so it has no inbound key. Relations
+  // between models are real outbound edges and are recorded; they point at
+  // models rather than files, so they render as plain text.
   "language": "prisma",
   "extensions": [".prisma"],
   "depth_style": "brace",
@@ -21,5 +22,19 @@
     { "kind": "var", "requires": "generator", "pattern": "^\\s*generator\\s+(?P<name>\\w+)\\s*\\{" }
   ],
 
-  "imports": []
+  "imports": [
+    {
+      // A list relation: `posts Post[]`.
+      "requires": "[]",
+      "pattern": "^\\s+\\w+\\s+(?P<path>[A-Z]\\w*)\\[\\]"
+    },
+    {
+      // An explicit relation: `author User @relation(...)`. Matching on
+      // @relation is what separates a model reference from a scalar field;
+      // RE2 has no lookahead, so excluding Int, String and the rest by
+      // negation is not available.
+      "requires": "@relation",
+      "pattern": "^\\s+\\w+\\s+(?P<path>[A-Z]\\w*)\\??\\s+@relation"
+    }
+  ]
 }

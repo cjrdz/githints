@@ -377,14 +377,36 @@ Per-phase, additionally:
 
 ## Limits
 
-- **Fidelity drops.** Regex over blanked lines gets roughly 85-95% symbol
-  recall against a real parse. Go keeps `go/parser` and stays exact. Treat the
-  spec path as the reach tier, not a replacement.
-- **SQL and Prisma have no import graph.** They populate symbols and facets but
-  contribute no edges, so "Imported by" will not work for them.
-- **Language names are constrained.** `EncodeLanguageCounts` (`types.go:393`)
-  rejects `:` in a name and uses `,` as its record separator, so both are
-  illegal in a spec's `language` field. Validate on load.
-- **Auxiliary notes get pruned.** `pruneStaleNotes` (`render.go:71`) deletes
-  every `.md` under `.githints/index/` not produced by the current render, so a
-  detector cannot emit side files without changing that.
+- **Fidelity is lower than a real parse**, though less so than it was.
+  Declarations spanning lines are handled by folding continuation lines
+  together, which closed the largest systematic gap. What remains is genuinely
+  shape-dependent: a construct identifiable only by something on an adjacent
+  line is invisible to a line matcher. GORM models recognisable solely by
+  embedding `gorm.Model` on the following line are the clearest example, and
+  Java and C# methods are required to carry an access modifier because
+  `foo(bar)` and `void foo(bar)` differ only by a return type. Go keeps
+  `go/parser` and stays exact; treat the spec path as the reach tier.
+
+- **SQL and Prisma have no inbound import key.** `ImportPath` maps a *file* to
+  the key importers name it by, and a schema usually defines many tables in one
+  file, so there is no single key to give it. They do contribute outbound
+  edges: a foreign key or a model relation is a real dependency, recorded and
+  ranked, so "what references `users`" is answerable. Those edges resolve to a
+  table rather than a file and render as plain text.
+
+  Making them resolve would mean symbol-level rather than file-level import
+  keys, which is a larger change to the data model than it first appears --
+  `imports` is keyed by file path throughout, as is every consumer of it.
+
+- **A language name may not contain whitespace or a comma.** Not a storage
+  limit any more: counts are JSON. It is a selection limit, because
+  `index.languages` and `GITHINTS_INDEX_LANGUAGES` are comma-separated lists,
+  so a name containing either could not be chosen. Colons are fine.
+
+- **Everything under `.githints/index/` is regenerated.** `pruneStaleNotes`
+  deletes any `.md` the current render did not produce, which is what keeps a
+  renamed or deleted file from leaving a stale note behind. A detector wanting
+  to emit a side file would need somewhere outside that tree; nothing does
+  today, and adding an exemption before something needs one would only weaken
+  the guarantee that the directory matches the index.
+

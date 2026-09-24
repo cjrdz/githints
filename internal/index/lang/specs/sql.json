@@ -17,7 +17,13 @@
     { "open": "\"", "close": "\"" }
   ],
 
-  // SQL files are not imported by anything.
+  // A SQL file is not imported by anything, so it has no inbound key. It can
+  // still contribute outbound edges: a foreign key is a dependency, and one
+  // table referencing another is exactly the relationship the index exists to
+  // record. Those edges do not resolve to a file -- a schema usually defines
+  // many tables in one -- so they render as plain text and rank the referenced
+  // table as a hub, which answers "what depends on users" without pretending
+  // to link somewhere.
   "import_path": "",
 
   "symbols": [
@@ -43,5 +49,9 @@
     }
   ],
 
-  "imports": []
+  "imports": [
+    {
+      "pattern": "(?i)references\\s+(?P<path>[\\w.\"]+)"
+    }
+  ]
 }

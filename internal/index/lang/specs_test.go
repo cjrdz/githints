@@ -418,3 +418,67 @@ func TestPrismaDetectorUsesPathGlob(t *testing.T) {
 		t.Errorf("detected %v in a file the glob should not match", other)
 	}
 }
+
+// TestSQLForeignKeysAreEdges covers the half of the import graph a schema can
+// actually supply. A SQL file has no inbound key -- nothing imports it -- but
+// a foreign key is a dependency, and recording it answers "what references
+// users" even though the edge resolves to a table rather than a file.
+func TestSQLForeignKeysAreEdges(t *testing.T) {
+	src := "" +
+		"CREATE TABLE orders (\n" +
+		"  id SERIAL PRIMARY KEY,\n" +
+		"  user_id INT REFERENCES users(id),\n" +
+		"  FOREIGN KEY (shop_id) references shops (id)\n" +
+		");\n" +
+		"-- REFERENCES ghosts(id)\n"
+
+	symbols, imports := parseWith(t, "sql", "schema.sql", src)
+	if got := kindsByName(symbols)["orders"]; got != KindType {
+		t.Errorf("orders not indexed: %v", symbols)
+	}
+	if want := []string{"users", "shops"}; !equalStringSlices(importPaths(imports), want) {
+		t.Errorf("imports = %v, want %v", importPaths(imports), want)
+	}
+}
+
+func TestPrismaRelationsAreEdges(t *testing.T) {
+	src := "" +
+		"model User {\n" +
+		"  id    Int    @id\n" +
+		"  name  String\n" +
+		"  posts Post[]\n" +
+		"}\n" +
+		"\n" +
+		"model Post {\n" +
+		"  id       Int  @id\n" +
+		"  author   User @relation(fields: [authorId], references: [id])\n" +
+		"  authorId Int\n" +
+		"}\n"
+
+	symbols, imports := parseWith(t, "prisma", "schema.prisma", src)
+	got := kindsByName(symbols)
+	if got["User"] != KindType || got["Post"] != KindType {
+		t.Errorf("models = %v", got)
+	}
+	// Scalar fields must not be mistaken for relations.
+	if want := []string{"Post", "User"}; !equalStringSlices(importPaths(imports), want) {
+		t.Errorf("imports = %v, want %v; a scalar field was read as a relation", importPaths(imports), want)
+	}
+}
+
+// TestSQLRepeatedForeignKeyIsOneEdge pins the deduplication. Two foreign keys
+// to the same table are one dependency, and counting both would overstate that
+// table's place in the hub ranking.
+func TestSQLRepeatedForeignKeyIsOneEdge(t *testing.T) {
+	src := "" +
+		"CREATE TABLE payments (\n" +
+		"  order_id INT REFERENCES orders(id),\n" +
+		"  payer_id INT REFERENCES users(id),\n" +
+		"  payee_id INT REFERENCES users(id)\n" +
+		");\n"
+
+	_, imports := parseWith(t, "sql", "schema.sql", src)
+	if want := []string{"orders", "users"}; !equalStringSlices(importPaths(imports), want) {
+		t.Errorf("imports = %v, want %v", importPaths(imports), want)
+	}
+}

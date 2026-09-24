@@ -117,6 +117,11 @@ func (p *SpecParser) Parse(path string, src []byte) ([]Symbol, []Import, error) 
 
 	var symbols []Symbol
 	var imports []Import
+	// One file referencing the same target twice is still one dependency.
+	// Most languages cannot repeat an import, but a schema can: two foreign
+	// keys to the same table are two lines and one edge, and counting both
+	// would inflate that table's standing in the hub ranking.
+	seenImport := make(map[string]bool)
 
 	// funcOpen holds the depth of each enclosing function body. A line is
 	// inside a function when anything is on the stack.
@@ -135,7 +140,8 @@ func (p *SpecParser) Parse(path string, src []byte) ([]Symbol, []Import, error) 
 
 		for _, rule := range p.imports {
 			if m := rule.match(importLines[i]); m != nil {
-				if v := m[rule.valueIdx]; v != "" {
+				if v := m[rule.valueIdx]; v != "" && !seenImport[v] {
+					seenImport[v] = true
 					imports = append(imports, Import{FilePath: path, ImportedPath: v})
 				}
 			}
