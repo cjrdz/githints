@@ -162,9 +162,15 @@ preserving line count and ordering, and it re-enters `${...}` as code so braces
 stay balanced. Every language needs exactly that pass before line regexes are
 safe.
 
-Generalize it into a `Blanker` parameterized by comment and string delimiters
-and a `depth_style` of `brace`, `indent` or `none`. After that, no future
-language re-solves "don't match inside a string".
+Generalize it into a `Blanker` parameterized by comment delimiters and string
+rules (escape byte, multiline, escape-continuation, interpolation). After that,
+no future language re-solves "don't match inside a string".
+
+The `depth_style` of `brace`/`indent`/`none` originally planned here moved to
+Phase 3. Blanking does not need it -- the Blanker tracks braces only to match
+interpolation -- and the consumer is `SpecParser`, which needs to know whether
+a declaration is top-level. Adding the enum before anything read it would have
+been speculative.
 
 ### 3. Framework detectors and facets
 
@@ -263,7 +269,8 @@ Small, verified fixes that must exist before anything else adds a language.
 
 ### Phase 3 — Spec-driven parsers
 
-7. The `Spec` type plus a JSONC loader reusing `stripJSONC`.
+7. The `Spec` type plus a JSONC loader reusing `stripJSONC`, including the
+   `depth_style` deferred from Phase 2.
 8. `SpecParser`, a generic `LanguageParser` driven by a `Spec`.
 9. Registry loads embedded specs from a `go:embed` FS alongside native parsers.
 10. Port the 48-line Astro parser to a spec as proof, keeping its tests green.
