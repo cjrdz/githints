@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // GoParser uses the standard library go/parser to extract top-level symbols and
@@ -255,10 +256,57 @@ func exprString(e ast.Expr) string {
 	}
 }
 
+// activeGoModule caches the module path for the duration of a scan.
+//
+// resolveImportPaths asks for the import path of every indexed file, and each
+// answer re-read and re-parsed go.mod: ten thousand files meant ten thousand
+// reads of the same unchanged file. It is scoped to a scan through BeginScan
+// rather than cached forever, so a go.mod edited between scans is picked up.
+var activeGoModule struct {
+	mu     sync.RWMutex
+	loaded bool
+	root   string
+	path   string
+	err    error
+}
+
+// BeginScan loads the module path once for the scan.
+func (GoParser) BeginScan(root string) func() {
+	module, err := readModulePath(root)
+
+	activeGoModule.mu.Lock()
+	activeGoModule.loaded = true
+	activeGoModule.root = root
+	activeGoModule.path = module
+	activeGoModule.err = err
+	activeGoModule.mu.Unlock()
+
+	return func() {
+		activeGoModule.mu.Lock()
+		activeGoModule.loaded = false
+		activeGoModule.mu.Unlock()
+	}
+}
+
+// modulePath returns the cached module path when a scan installed one for this
+// root, and reads go.mod otherwise. The root is checked rather than assumed:
+// the MCP server resolves import paths outside any scan, and a stale answer
+// for a different repository would be worse than a re-read.
+func modulePath(root string) (string, error) {
+	activeGoModule.mu.RLock()
+	loaded, cachedRoot, path, err := activeGoModule.loaded, activeGoModule.root, activeGoModule.path, activeGoModule.err
+	activeGoModule.mu.RUnlock()
+
+	if loaded && cachedRoot == root {
+		return path, err
+	}
+	return readModulePath(root)
+}
+
 // ImportPath maps a Go file back to the package path importers write: the
 // module path from go.mod joined with the file's directory.
 func (GoParser) ImportPath(root, file string) (string, error) {
-	module, err := readModulePath(root)
+	module, err := modulePath(root)
 	if err != nil {
 		return "", fmt.Errorf("read module path: %w", err)
 	}

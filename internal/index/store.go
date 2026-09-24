@@ -30,9 +30,23 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open index db: %w", err)
 	}
+	// auto_vacuum only takes effect on an empty database, so this must run
+	// before the schema. It is what makes incremental_vacuum usable in place
+	// of a full rewrite on every scan.
+	if _, err := db.Exec("PRAGMA auto_vacuum = INCREMENTAL;"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set index db auto_vacuum: %w", err)
+	}
 	if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("set index db wal mode: %w", err)
+	}
+	// The index is a derived cache, gitignored and rebuilt from source, so
+	// full durability buys nothing: the worst a lost write costs is a rescan.
+	// Deliberate -- do not "fix" this to FULL.
+	if _, err := db.Exec("PRAGMA synchronous = NORMAL;"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set index db synchronous mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000;"); err != nil {
 		_ = db.Close()
@@ -334,42 +348,62 @@ func (s *Store) DeleteFile(path string) error {
 	return nil
 }
 
-// InsertSymbols writes a batch of symbols.
+// withTx runs fn inside a transaction, rolling back on error.
+//
+// Every insert used to run in its own implicit transaction, which meant a WAL
+// commit and an fsync per row: ten thousand symbols took 211ms to write.
+func (s *Store) withTx(fn func(*sql.Tx) error) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin index transaction: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		// The original error is what the caller needs; a rollback failure on
+		// top of it would only obscure the cause.
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// InsertSymbols writes a batch of symbols in one transaction.
 func (s *Store) InsertSymbols(symbols []lang.Symbol) error {
 	if len(symbols) == 0 {
 		return nil
 	}
-	stmt, err := s.db.Prepare("INSERT INTO symbols (name, kind, file_path, line_start, line_end, signature, language) VALUES (?, ?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare symbols insert: %w", err)
-	}
-	defer stmt.Close()
-	for _, sym := range symbols {
-		_, err := stmt.Exec(sym.Name, string(sym.Kind), sym.FilePath, sym.LineStart, sym.LineEnd, sym.Signature, sym.Language)
+	return s.withTx(func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare("INSERT INTO symbols (name, kind, file_path, line_start, line_end, signature, language) VALUES (?, ?, ?, ?, ?, ?, ?)")
 		if err != nil {
-			return fmt.Errorf("insert symbol %s in %s: %w", sym.Name, sym.FilePath, err)
+			return fmt.Errorf("prepare symbols insert: %w", err)
 		}
-	}
-	return nil
+		defer stmt.Close()
+		for _, sym := range symbols {
+			if _, err := stmt.Exec(sym.Name, string(sym.Kind), sym.FilePath, sym.LineStart, sym.LineEnd, sym.Signature, sym.Language); err != nil {
+				return fmt.Errorf("insert symbol %s in %s: %w", sym.Name, sym.FilePath, err)
+			}
+		}
+		return nil
+	})
 }
 
-// InsertImports writes a batch of imports.
+// InsertImports writes a batch of imports in one transaction.
 func (s *Store) InsertImports(imports []lang.Import) error {
 	if len(imports) == 0 {
 		return nil
 	}
-	stmt, err := s.db.Prepare("INSERT INTO imports (file_path, imported_path) VALUES (?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare imports insert: %w", err)
-	}
-	defer stmt.Close()
-	for _, imp := range imports {
-		_, err := stmt.Exec(imp.FilePath, imp.ImportedPath)
+	return s.withTx(func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare("INSERT INTO imports (file_path, imported_path) VALUES (?, ?)")
 		if err != nil {
-			return fmt.Errorf("insert import %s in %s: %w", imp.ImportedPath, imp.FilePath, err)
+			return fmt.Errorf("prepare imports insert: %w", err)
 		}
-	}
-	return nil
+		defer stmt.Close()
+		for _, imp := range imports {
+			if _, err := stmt.Exec(imp.FilePath, imp.ImportedPath); err != nil {
+				return fmt.Errorf("insert import %s in %s: %w", imp.ImportedPath, imp.FilePath, err)
+			}
+		}
+		return nil
+	})
 }
 
 // SymbolCount returns the total number of symbols.
@@ -528,22 +562,38 @@ func (s *Store) Vacuum() error {
 	return err
 }
 
+// ReclaimSpace returns pages freed by the previous scan's Clear to the
+// filesystem.
+//
+// A full VACUUM rewrites the entire database file, which a scan does not need:
+// it clears and refills the same tables, so the page count barely changes.
+// Incremental vacuum reuses the freelist instead. `githints index --vacuum`
+// still offers the full rewrite for a database that has genuinely shrunk.
+func (s *Store) ReclaimSpace() error {
+	if _, err := s.db.Exec("PRAGMA incremental_vacuum"); err != nil {
+		return fmt.Errorf("incremental vacuum: %w", err)
+	}
+	return nil
+}
+
 // InsertFacets writes a batch of detected facets.
 func (s *Store) InsertFacets(facets []lang.Detected) error {
 	if len(facets) == 0 {
 		return nil
 	}
-	stmt, err := s.db.Prepare("INSERT INTO facets (file_path, facet, framework, name, detail, line) VALUES (?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		return fmt.Errorf("prepare facets insert: %w", err)
-	}
-	defer stmt.Close()
-	for _, f := range facets {
-		if _, err := stmt.Exec(f.FilePath, f.Facet, f.Framework, f.Name, f.Detail, f.Line); err != nil {
-			return fmt.Errorf("insert facet %s in %s: %w", f.Facet, f.FilePath, err)
+	return s.withTx(func(tx *sql.Tx) error {
+		stmt, err := tx.Prepare("INSERT INTO facets (file_path, facet, framework, name, detail, line) VALUES (?, ?, ?, ?, ?, ?)")
+		if err != nil {
+			return fmt.Errorf("prepare facets insert: %w", err)
 		}
-	}
-	return nil
+		defer stmt.Close()
+		for _, f := range facets {
+			if _, err := stmt.Exec(f.FilePath, f.Facet, f.Framework, f.Name, f.Detail, f.Line); err != nil {
+				return fmt.Errorf("insert facet %s in %s: %w", f.Facet, f.FilePath, err)
+			}
+		}
+		return nil
+	})
 }
 
 // FacetsForFile returns every facet detected in one file.

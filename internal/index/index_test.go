@@ -1,6 +1,8 @@
 package index
 
 import (
+	"database/sql"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -1444,5 +1446,94 @@ func TestBatchedIgnoreHandlesEmptyAndAllIgnored(t *testing.T) {
 	got := resolveIgnored(root, []string{"a.log", "b.log"})
 	if !got["a.log"] || !got["b.log"] {
 		t.Errorf("both should be ignored, got %v", got)
+	}
+}
+
+// TestWithTxRollsBack pins the transaction that wraps every batch insert.
+// Before it each row was its own implicit transaction, so a failure partway
+// through left the earlier rows written -- a file half in the index, which no
+// caller could detect.
+//
+// The failure is injected rather than provoked with bad data: SQLite accepts
+// far more than the schema suggests (a NUL byte in a TEXT column inserts
+// happily), so a test relying on invalid input would pass without ever
+// exercising a rollback.
+func TestWithTxRollsBack(t *testing.T) {
+	st, _ := tempStore(t)
+	defer st.Close()
+
+	wantErr := errors.New("injected failure")
+	err := st.withTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(
+			"INSERT INTO symbols (name, kind, file_path, line_start, line_end, signature, language) VALUES (?,?,?,?,?,?,?)",
+			"Ghost", "func", "a.go", 1, 1, "", "go"); err != nil {
+			return err
+		}
+		// The row exists inside the transaction...
+		var n int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM symbols").Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			t.Errorf("inside the transaction SymbolCount = %d, want 1", n)
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("withTx returned %v, want the callback's error", err)
+	}
+
+	// ...and must be gone after the rollback.
+	if n, err := st.SymbolCount(); err != nil || n != 0 {
+		t.Errorf("SymbolCount = %d (err %v), want 0; the transaction did not roll back", n, err)
+	}
+}
+
+func TestWithTxCommits(t *testing.T) {
+	st, _ := tempStore(t)
+	defer st.Close()
+
+	if err := st.withTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec(
+			"INSERT INTO symbols (name, kind, file_path, line_start, line_end, signature, language) VALUES (?,?,?,?,?,?,?)",
+			"Kept", "func", "a.go", 1, 1, "", "go")
+		return err
+	}); err != nil {
+		t.Fatalf("withTx: %v", err)
+	}
+	if n, err := st.SymbolCount(); err != nil || n != 1 {
+		t.Errorf("SymbolCount = %d (err %v), want 1", n, err)
+	}
+}
+
+// TestIncrementalScanReplacesFileRows checks the delete-then-insert rewrite
+// still produces the right rows now that each half runs in its own
+// transaction.
+func TestIncrementalScanReplacesFileRows(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "a.go", "package main\n\nfunc One() {}\nfunc Two() {}\n")
+
+	opts := lang.ScanOptions{
+		Root: root, Languages: []string{"go"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	writeGo(t, root, "a.go", "package main\n\nfunc One() {}\nfunc Two() {}\nfunc Three() {}\n")
+	if err := IncrementalScan(st, opts, []string{"a.go"}); err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	syms, err := st.SymbolsForFile("a.go")
+	if err != nil {
+		t.Fatalf("SymbolsForFile: %v", err)
+	}
+	if len(syms) != 3 {
+		t.Errorf("symbols = %d, want 3 after the rewrite", len(syms))
 	}
 }

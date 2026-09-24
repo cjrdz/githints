@@ -188,7 +188,7 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	if err := db.SetMeta(meta); err != nil {
 		return err
 	}
-	if err := db.Vacuum(); err != nil {
+	if err := db.ReclaimSpace(); err != nil {
 		// Vacuum is purely an optimization; log and continue.
 		fmt.Fprintf(os.Stderr, "githints: index vacuum: %v\n", err)
 	}

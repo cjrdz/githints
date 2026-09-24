@@ -18,6 +18,12 @@ func RenderNotes(db *Store, root string, obsidian bool) error {
 	// own specs for every note. Repo-aware so a language the checkout supplies
 	// takes part in the graph like any other.
 	registry := lang.NewRegistryForRoot(root)
+
+	// Let parsers install per-scan state for the render too. resolveImportPaths
+	// asks every indexed file for its import path, and without this a
+	// standalone `githints render` re-reads go.mod once per file. Inside a
+	// scan the hook is already active and installing it again is harmless.
+	defer lang.BeginScans(registry.AllParsers(), root)()
 	files, err := db.AllIndexedFiles()
 	if err != nil {
 		return fmt.Errorf("list indexed files: %w", err)
