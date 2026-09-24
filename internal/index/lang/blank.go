@@ -101,8 +101,23 @@ type interpFrame struct {
 	rule       int
 }
 
-// Blank returns one cleaned line per source line.
+// Blank returns one cleaned line per source line, with comments removed and
+// string bodies emptied. This is the view symbol rules and depth counting use.
 func (bl *Blanker) Blank(src []byte) []string {
+	return bl.blank(src, false)
+}
+
+// BlankKeepingStrings removes comments but keeps string contents.
+//
+// Import paths live inside string literals in most languages -- `require
+// "set"`, `import "fmt"`, `from "./x"` -- so matching imports against the
+// fully blanked view would find an empty path every time. Comments still have
+// to go, or a commented-out import would be indexed as a real dependency.
+func (bl *Blanker) BlankKeepingStrings(src []byte) []string {
+	return bl.blank(src, true)
+}
+
+func (bl *Blanker) blank(src []byte, keepStrings bool) []string {
 	raw := string(src)
 	lines := make([]string, 0, strings.Count(raw, "\n")+1)
 	var b strings.Builder
@@ -162,6 +177,10 @@ func (bl *Blanker) Blank(src []byte) []string {
 				if raw[i+1] == '\n' {
 					pendingContinuation = rule.ContinueOnEscape
 				} else {
+					if keepStrings {
+						b.WriteByte(c)
+						b.WriteByte(raw[i+1])
+					}
 					i++
 				}
 			case strings.HasPrefix(raw[i:], rule.Close):
@@ -176,6 +195,10 @@ func (bl *Blanker) Blank(src []byte) []string {
 				prevSignificant = rule.InterpOpen[len(rule.InterpOpen)-1]
 				state = bsCode
 				i += len(rule.InterpOpen) - 1
+			default:
+				if keepStrings {
+					b.WriteByte(c)
+				}
 			}
 
 		case bsRegex:

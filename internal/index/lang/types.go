@@ -61,13 +61,23 @@ type LanguageParser interface {
 type Registry struct {
 	parsers map[string]LanguageParser
 	byExt   map[string]LanguageParser
+	// origin records where each language came from, so the CLI can show a
+	// user which of their languages the repository supplied.
+	origin map[string]string
 }
+
+// Origins reported by Registry.Origin.
+const (
+	OriginBuiltin = "built-in"
+	OriginRepo    = "repo"
+)
 
 // NewRegistry creates a registry pre-loaded with all supported parsers.
 func NewRegistry() *Registry {
 	r := &Registry{
 		parsers: make(map[string]LanguageParser),
 		byExt:   make(map[string]LanguageParser),
+		origin:  make(map[string]string),
 	}
 	r.register(GoParser{})
 	r.register(TypeScriptParser{})
@@ -82,11 +92,40 @@ func NewRegistry() *Registry {
 		warnf("built-in language spec ignored: %v", err)
 	}
 	for _, p := range parsers {
-		if err := r.registerSpecParser(p); err != nil {
+		if err := r.registerSpecParser(p, OriginBuiltin); err != nil {
 			warnf("built-in language %s ignored: %v", p.Language(), err)
 		}
 	}
 	return r
+}
+
+// NewRegistryForRoot is NewRegistry plus any language specs the repository
+// ships in .githints/langs.
+//
+// Repository specs register last, so they can extend the set but never
+// displace a language the binary already provides: a clash is reported and the
+// repository's spec skipped. That keeps `go` meaning the same thing in every
+// checkout.
+func NewRegistryForRoot(root string) *Registry {
+	r := NewRegistry()
+	if root == "" {
+		return r
+	}
+	parsers, errs := LoadUserSpecs(root)
+	for _, err := range errs {
+		warnf("repository language spec ignored: %v", err)
+	}
+	for _, p := range parsers {
+		if err := r.registerSpecParser(p, OriginRepo); err != nil {
+			warnf("repository language %s ignored: %v", p.Language(), err)
+		}
+	}
+	return r
+}
+
+// Origin reports where a language came from: OriginBuiltin or OriginRepo.
+func (r *Registry) Origin(name string) string {
+	return r.origin[strings.ToLower(name)]
 }
 
 // register adds a parser to the registry. It panics if two parsers claim the same
@@ -97,6 +136,7 @@ func (r *Registry) register(p LanguageParser) {
 		panic(fmt.Sprintf("duplicate language parser: %s", name))
 	}
 	r.parsers[name] = p
+	r.origin[name] = OriginBuiltin
 	for _, ext := range p.Extensions() {
 		e := strings.ToLower(ext)
 		if existing, ok := r.byExt[e]; ok {

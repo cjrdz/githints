@@ -888,13 +888,13 @@ func cmdIndexLanguages(args []string) error {
 		return fmt.Errorf("unknown index languages argument: %s", args[0])
 	}
 
-	r := lang.NewRegistry()
-
 	// Best-effort: outside a repo, or with an unreadable config, the plain
 	// list is still the correct answer to "what does this binary support".
 	enabled := map[string]bool{}
 	haveConfig := false
-	if root, err := gitutil.RepoRoot(); err == nil {
+	root := ""
+	if found, err := gitutil.RepoRoot(); err == nil {
+		root = found
 		if cfg, err := config.Load(root); err == nil {
 			haveConfig = true
 			for _, name := range cfg.Index.Languages {
@@ -902,6 +902,7 @@ func cmdIndexLanguages(args []string) error {
 			}
 		}
 	}
+	r := lang.NewRegistryForRoot(root)
 
 	fmt.Println("languages this githints binary can index:")
 	for _, name := range r.Languages() {
@@ -910,6 +911,9 @@ func cmdIndexLanguages(args []string) error {
 		sort.Strings(exts)
 
 		line := fmt.Sprintf("  %-12s %s", name, strings.Join(exts, " "))
+		if r.Origin(name) == lang.OriginRepo {
+			line += "  [from " + lang.UserSpecDir + "]"
+		}
 		if haveConfig {
 			if enabled[name] {
 				line += "  [enabled]"

@@ -78,7 +78,7 @@ func loadEmbedded() {
 // panicking. Native parsers keep the panic: those are wired up in code, so a
 // collision is a mistake that cannot reach a user. A spec can arrive from a
 // file, so it gets an error path.
-func (r *Registry) registerSpecParser(p *SpecParser) error {
+func (r *Registry) registerSpecParser(p *SpecParser, origin string) error {
 	name := p.Language()
 	if _, taken := r.parsers[name]; taken {
 		return fmt.Errorf("language %q is already registered", name)
@@ -89,6 +89,7 @@ func (r *Registry) registerSpecParser(p *SpecParser) error {
 		}
 	}
 	r.parsers[name] = p
+	r.origin[name] = origin
 	for _, ext := range p.Extensions() {
 		r.byExt[ext] = p
 	}

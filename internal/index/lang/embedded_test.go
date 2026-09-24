@@ -68,7 +68,7 @@ func TestSpecCannotDisplaceNativeParser(t *testing.T) {
 		t.Fatalf("NewSpecParser: %v", err)
 	}
 
-	err = r.registerSpecParser(p)
+	err = r.registerSpecParser(p, OriginRepo)
 	if err == nil {
 		t.Fatal("a spec was allowed to claim .go")
 	}
@@ -94,7 +94,7 @@ func TestSpecCannotDuplicateLanguageName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSpecParser: %v", err)
 	}
-	if err := r.registerSpecParser(p); err == nil {
+	if err := r.registerSpecParser(p, OriginRepo); err == nil {
 		t.Fatal("a second parser was allowed to claim the name python")
 	}
 }

@@ -270,11 +270,24 @@ Small, verified fixes that must exist before anything else adds a language.
 ### Phase 3 — Spec-driven parsers
 
 7. The `Spec` type plus a JSONC loader reusing `stripJSONC`, including the
-   `depth_style` deferred from Phase 2.
-8. `SpecParser`, a generic `LanguageParser` driven by a `Spec`.
+   `depth_style` deferred from Phase 2. *(done)*
+8. `SpecParser`, a generic `LanguageParser` driven by a `Spec`. *(done)*
 9. Registry loads embedded specs from a `go:embed` FS alongside native parsers.
-10. Port the 48-line Astro parser to a spec as proof, keeping its tests green.
-11. Load user specs from `.githints/langs/`, with caps.
+   *(done)*
+10. ~~Port the 48-line Astro parser to a spec as proof~~ — **ship Python
+    instead.** *(done)* Astro extracts frontmatter and `<script>` blocks and
+    delegates to the TypeScript parser: inverted blanking, keep a region and
+    discard the rest, which a line-oriented spec cannot express. Porting it
+    would have meant contorting the format or weakening the parser. Python
+    exercises the same path honestly and is a language that was asked for.
+11. Load user specs from `.githints/langs/`, with caps. *(done)*
+
+Two things surfaced during the work and are now part of the design. Imports
+are matched against a second blanked view that keeps string contents, because
+an import path is almost always inside a string literal and the fully blanked
+view shows an empty one; comments are still stripped there, so a commented-out
+import is not recorded as a dependency. And repository specs register last, so
+they can add a language but never redefine one the binary provides.
 
 ### Phase 4 — Import resolution and scan hooks
 

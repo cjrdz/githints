@@ -273,3 +273,51 @@ func TestSpecParserSignatureIsBlanked(t *testing.T) {
 		t.Errorf("signature = %q, want the string contents blanked", got)
 	}
 }
+
+// TestSpecParserImportsSeeStringContents covers the reason imports are matched
+// against a separate view. Most languages put the import path inside a string
+// literal, so matching against the fully blanked view would find an empty path
+// every time.
+func TestSpecParserImportsSeeStringContents(t *testing.T) {
+	p := mustSpecParser(t, goishSpecJSON)
+
+	symbols, imports, err := p.Parse("a.goish", []byte("\t\"fmt\"\n\t\"os/exec\"\n\nfunc A() {}\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got := make([]string, 0, len(imports))
+	for _, im := range imports {
+		got = append(got, im.ImportedPath)
+	}
+	if !equalStringSlices(got, []string{"fmt", "os/exec"}) {
+		t.Errorf("imports = %v, want [fmt os/exec]", got)
+	}
+	if !equalStringSlices(symbolNames(symbols), []string{"A"}) {
+		t.Errorf("symbols = %v", symbolNames(symbols))
+	}
+}
+
+// TestSpecParserIgnoresCommentedImports is the other half: the import view
+// keeps strings but must still drop comments, or a commented-out import would
+// be recorded as a real dependency and show up in "Imported by".
+func TestSpecParserIgnoresCommentedImports(t *testing.T) {
+	p := mustSpecParser(t, goishSpecJSON)
+
+	src := []byte("" +
+		"\t\"real\"\n" +
+		"\t// \"commented\"\n" +
+		"\t/* \"blocked\" */\n" +
+		"func A() {}\n")
+
+	_, imports, err := p.Parse("a.goish", src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got := make([]string, 0, len(imports))
+	for _, im := range imports {
+		got = append(got, im.ImportedPath)
+	}
+	if !equalStringSlices(got, []string{"real"}) {
+		t.Errorf("imports = %v, want only [real]; a commented-out import was indexed", got)
+	}
+}

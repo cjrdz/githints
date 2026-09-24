@@ -221,6 +221,28 @@ That list is hand-maintained and can fall behind the binary you are running.
 `./githints index languages` reports the authoritative set, along with which
 languages the current repo has enabled.
 
+### Repository-supplied languages
+
+A repo may add languages of its own by dropping JSON specs in
+`.githints/langs/`. They are picked up on the next scan with no rebuild:
+
+    .githints/langs/rubyish.json
+
+A repo spec can add a language but never redefine one the binary already
+provides, so `go` means the same thing in every checkout; a spec that clashes
+on a language name or file extension is reported on stderr and skipped. The
+same happens for a spec that fails to parse, so a bad file cannot fail a
+commit or stop the other languages from indexing.
+
+Limits: at most 32 spec files, 64 KiB each, and the per-spec limits on pattern
+length and rule count. Specs are data, not code -- the patterns are RE2, which
+has no catastrophic backtracking -- and they only ever feed the index, which is
+a derived cache you can delete and rebuild.
+
+`./githints index languages` marks these with `[from .githints/langs]`.
+
+See `docs/extensibility.md` for the spec format.
+
 ### Import resolution and tsconfig aliases
 
 For TypeScript-family files, the index resolves relative imports and tsconfig

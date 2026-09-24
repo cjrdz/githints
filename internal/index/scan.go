@@ -21,7 +21,7 @@ import (
 // a smaller one (partial-write guard) and refuses to write data that would exceed
 // maxBytes. Use force to override either guard.
 func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error {
-	registry := lang.NewRegistry()
+	registry := lang.NewRegistryForRoot(opts.Root)
 	// Strict on purpose. The user ran `githints index`, so an unsupported
 	// language is worth stopping for, and the error names the supported set.
 	// IncrementalScan is deliberately lenient; see the comment there.
@@ -303,7 +303,7 @@ func parseWithTimeout(p lang.LanguageParser, rel string, src []byte, timeout tim
 // when their path no longer exists on disk; existing files are parsed and
 // their rows replaced. This is the hook path used in Phase 2.
 func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string) error {
-	registry := lang.NewRegistry()
+	registry := lang.NewRegistryForRoot(opts.Root)
 	// Lenient on purpose: this runs from the post-commit hook, which only
 	// warns on a scan error, so a hard failure here means the commit succeeds
 	// while the index silently stops updating forever. FullScan and

@@ -98,6 +98,15 @@ func (p *SpecParser) Parse(path string, src []byte) ([]Symbol, []Import, error) 
 	lines := p.blanker.Blank(src)
 	depths := p.lineDepths(lines)
 
+	// Imports are matched against a view that keeps string contents: an import
+	// path is almost always inside a string literal, and the fully blanked
+	// view would show an empty one. Comments are still stripped there, so a
+	// commented-out import is not indexed as a real dependency.
+	importLines := lines
+	if len(p.imports) > 0 {
+		importLines = p.blanker.BlankKeepingStrings(src)
+	}
+
 	var symbols []Symbol
 	var imports []Import
 
@@ -117,7 +126,7 @@ func (p *SpecParser) Parse(path string, src []byte) ([]Symbol, []Import, error) 
 		inFunction := len(funcOpen) > 0
 
 		for _, rule := range p.imports {
-			if m := rule.match(line); m != nil {
+			if m := rule.match(importLines[i]); m != nil {
 				if v := m[rule.valueIdx]; v != "" {
 					imports = append(imports, Import{FilePath: path, ImportedPath: v})
 				}

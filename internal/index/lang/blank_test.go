@@ -292,3 +292,47 @@ func TestBlankerEscapeNeverConsumesNewline(t *testing.T) {
 		})
 	}
 }
+
+// TestBlankKeepingStrings pins the second view: string contents survive,
+// comments do not, and the line count contract still holds.
+func TestBlankKeepingStrings(t *testing.T) {
+	bl := NewBlanker(TypeScriptBlankSpec())
+
+	src := "" +
+		"import x from \"./mod\"; // trailing\n" +
+		"const s = 'keep me';\n" +
+		"/* gone */ const t = `tpl ${v}`;\n"
+
+	got := bl.BlankKeepingStrings([]byte(src))
+	want := []string{
+		`import x from "./mod"; `,
+		"const s = 'keep me';",
+		" const t = `tpl ${v}`;",
+		"",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("lines = %d, want %d: %q", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d:\n got: %q\nwant: %q", i+1, got[i], want[i])
+		}
+	}
+}
+
+// TestBlankKeepingStringsPreservesLineCount checks the contract holds for the
+// second view too, including across escaped line breaks.
+func TestBlankKeepingStringsPreservesLineCount(t *testing.T) {
+	bl := NewBlanker(TypeScriptBlankSpec())
+	for name, src := range blankerCorpus(t) {
+		want := 1
+		for i := 0; i < len(src); i++ {
+			if src[i] == '\n' {
+				want++
+			}
+		}
+		if got := len(bl.BlankKeepingStrings([]byte(src))); got != want {
+			t.Errorf("%s: %d lines, want %d", name, got, want)
+		}
+	}
+}
