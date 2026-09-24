@@ -359,6 +359,7 @@ into the binary:
 | `typescript` | `.ts` `.tsx` `.mts` `.cts` `.js` `.jsx` `.mjs` `.cjs` | heuristic, stdlib-only |
 | `svelte` | `.svelte` (`<script>` blocks) | heuristic, via the TypeScript parser |
 | `astro` | `.astro` (frontmatter + `<script>` blocks) | heuristic, via the TypeScript parser |
+| `python` | `.py` `.pyi` | spec-driven, `specs/python.json` |
 
 This table is hand-maintained. To see what the binary you are running actually
 supports — and which of those languages this repo has enabled:

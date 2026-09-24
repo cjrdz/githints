@@ -913,3 +913,72 @@ func TestVerifyIndexReportsDriftAndCoverage(t *testing.T) {
 		t.Errorf("preset was clobbered: %s", data)
 	}
 }
+
+// TestFullScanIndexesSpecDrivenLanguage is the end-to-end proof that a
+// language shipped as a JSON spec behaves like any other: it is selectable in
+// config, it is scanned, its symbols reach the database, and it renders a note
+// indistinguishable from a hand-written parser's.
+func TestFullScanIndexesSpecDrivenLanguage(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("app/service.py", "import os\n\nTIMEOUT = 30\n\nclass Service:\n    def run(self):\n        def inner():\n            pass\n        return inner\n")
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"python"},
+		MaxFileSize:  1 << 20,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	syms, err := st.SymbolsForFile("app/service.py")
+	if err != nil {
+		t.Fatalf("SymbolsForFile: %v", err)
+	}
+	names := make([]string, 0, len(syms))
+	for _, s := range syms {
+		names = append(names, s.Name)
+	}
+	if len(names) != 3 {
+		t.Fatalf("symbols = %v, want TIMEOUT, Service and run", names)
+	}
+	for _, s := range syms {
+		if s.Name == "inner" {
+			t.Error("a function-local def reached the index")
+		}
+	}
+
+	meta, err := st.Meta()
+	if err != nil {
+		t.Fatalf("Meta: %v", err)
+	}
+	if meta.LanguageCounts["python"] != 1 {
+		t.Errorf("language counts = %v, want one python file", meta.LanguageCounts)
+	}
+
+	note, err := os.ReadFile(filepath.Join(root, ".githints", "index", "app", "service.py.md"))
+	if err != nil {
+		t.Fatalf("read rendered note: %v", err)
+	}
+	for _, want := range []string{"## Symbols", "Service", "run", "TIMEOUT"} {
+		if !strings.Contains(string(note), want) {
+			t.Errorf("note is missing %q:\n%s", want, note)
+		}
+	}
+}

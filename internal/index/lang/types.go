@@ -73,6 +73,19 @@ func NewRegistry() *Registry {
 	r.register(TypeScriptParser{})
 	r.register(SvelteParser{})
 	r.register(AstroParser{})
+
+	// Languages shipped as data. These register after the native parsers, so
+	// a spec cannot displace a hand-written parser -- it is reported as a
+	// clash and skipped instead.
+	parsers, errs := EmbeddedParsers()
+	for _, err := range errs {
+		warnf("built-in language spec ignored: %v", err)
+	}
+	for _, p := range parsers {
+		if err := r.registerSpecParser(p); err != nil {
+			warnf("built-in language %s ignored: %v", p.Language(), err)
+		}
+	}
 	return r
 }
 

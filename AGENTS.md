@@ -208,10 +208,14 @@ Environment overrides: `GITHINTS_INDEX_ENABLED`, `GITHINTS_INDEX_LANGUAGES`,
 configured set outright; names are trimmed and case-folded.
 
 A repo selects from the languages the binary supports via `index.languages`
-(default `["go"]`). It cannot add new languages; language parsers live in the
-githints project itself under `internal/index/lang/` and are registered in
-`NewRegistry()`. Currently supported: `go`, `typescript` (including `.js`,
-`.jsx`, `.mts`, `.cts`), `svelte`, and `astro`.
+(default `["go"]`). Currently supported: `go`, `typescript` (including `.js`,
+`.jsx`, `.mts`, `.cts`), `svelte`, `astro`, and `python`.
+
+Languages come from two places. A few ship as hand-written Go parsers under
+`internal/index/lang/`, registered in `NewRegistry()`. The rest ship as JSON
+specs under `internal/index/lang/specs/`, which the registry loads
+automatically -- adding one of those is adding a file, with no Go change. See
+`docs/extensibility.md`.
 
 That list is hand-maintained and can fall behind the binary you are running.
 `./githints index languages` reports the authoritative set, along with which
