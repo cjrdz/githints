@@ -86,6 +86,8 @@ Usage:
   githints index status           show index statistics
   githints index verify           report drift between the index and the repo
   githints index languages        list the languages this binary can index
+  githints index facets [-facet=] [-framework=] [-file=] [-limit=]
+                                  list detected framework constructs
   githints version                print the githints version`
 
 func cmdVersion() error {
@@ -822,6 +824,9 @@ func cmdIndex(args []string) error {
 	if len(args) > 0 && args[0] == "languages" {
 		return cmdIndexLanguages(args[1:])
 	}
+	if len(args) > 0 && args[0] == "facets" {
+		return cmdIndexFacets(args[1:])
+	}
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
 	obsidian := fs.Bool("obsidian", false, "render Obsidian wikilinks in index notes")
@@ -934,6 +939,83 @@ func cmdIndexLanguages(args []string) error {
 	return nil
 }
 
+// cmdIndexFacets lists detected framework constructs: routes, models,
+// components and the rest, normalized across frameworks.
+func cmdIndexFacets(args []string) error {
+	fs := flag.NewFlagSet("index facets", flag.ExitOnError)
+	facet := fs.String("facet", "", "role to list: route, model, component, migration, job, test")
+	framework := fs.String("framework", "", "restrict to one framework, e.g. django")
+	file := fs.String("file", "", "restrict to one repo-relative file path")
+	limit := fs.Int("limit", 50, "maximum facets to list")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if rest := fs.Args(); len(rest) > 0 {
+		return fmt.Errorf("unknown argument: %s", rest[0])
+	}
+
+	root, err := gitutil.RepoRoot()
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(root)
+	if err != nil {
+		return err
+	}
+	if !cfg.Index.Enabled {
+		fmt.Println("indexing is disabled in .githints/config.json")
+		return nil
+	}
+
+	db, err := index.Open(lang.IndexDBPath(root))
+	if err != nil {
+		return fmt.Errorf("open index db: %w", err)
+	}
+	defer db.Close()
+
+	found, err := db.Facets(index.FacetFilter{
+		Facet:     *facet,
+		Framework: *framework,
+		File:      *file,
+		Limit:     clampCLILimit(*limit),
+	})
+	if err != nil {
+		return err
+	}
+	if len(found) == 0 {
+		total, err := db.FacetCount()
+		if err != nil {
+			return err
+		}
+		if total == 0 {
+			fmt.Println("no framework constructs detected in this repo")
+		} else {
+			fmt.Println("no facets match those filters")
+		}
+		return nil
+	}
+	for _, f := range found {
+		line := fmt.Sprintf("%-10s %-12s %s:%d  %s", f.Facet, f.Framework, f.FilePath, f.Line, f.Name)
+		if f.Detail != "" {
+			line += "  -> " + f.Detail
+		}
+		fmt.Println(line)
+	}
+	return nil
+}
+
+// clampCLILimit keeps a CLI limit in the same range the MCP tools enforce, so
+// the two surfaces cannot disagree about what is allowed.
+func clampCLILimit(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > 500 {
+		return 500
+	}
+	return n
+}
+
 // cmdIndexStatus prints a quick dashboard of the structural index.
 func cmdIndexStatus(args []string) error {
 	if len(args) > 0 && args[0] != "status" {
@@ -995,6 +1077,12 @@ func cmdIndexStatus(args []string) error {
 		fmt.Println("language breakdown:")
 		for _, lang := range sortedStringKeys(meta.LanguageCounts) {
 			fmt.Printf("  - %s: %d\n", lang, meta.LanguageCounts[lang])
+		}
+	}
+	if facets, err := db.FacetBreakdown(); err == nil && len(facets) > 0 {
+		fmt.Println("framework facets:")
+		for _, f := range facets {
+			fmt.Printf("  - %s (%s): %d\n", f.Facet, f.Framework, f.Count)
 		}
 	}
 	if meta.SkippedCount > 0 {

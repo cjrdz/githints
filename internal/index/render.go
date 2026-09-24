@@ -154,6 +154,25 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 		b.WriteString("\n")
 	}
 
+	// Framework constructs are not symbols -- a route is a call, not a
+	// declaration -- so they get their own section rather than being folded in
+	// above.
+	facets, err := db.FacetsForFile(src)
+	if err != nil {
+		return fmt.Errorf("load facets: %w", err)
+	}
+	if len(facets) > 0 {
+		b.WriteString("## Framework\n\n")
+		for _, f := range facets {
+			fmt.Fprintf(&b, "- %s `%s` (%s) line %d", f.Facet, lang.EscapeMarkdown(f.Name), f.Framework, f.Line)
+			if f.Detail != "" {
+				fmt.Fprintf(&b, " — `%s`", lang.EscapeMarkdown(f.Detail))
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
 	outbound, err := db.ImportsForFile(src)
 	if err != nil {
 		return fmt.Errorf("load imports: %w", err)

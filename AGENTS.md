@@ -63,6 +63,7 @@ When the repo has a structural index, orient yourself with code-level queries:
 - `get_dependents(file="...")`
 - `find_symbol(name="...")`
 - `get_index_summary(limit=10)`
+- `find_facets(facet="route")` — framework constructs by the role they play
 
 These four are MCP-only; there is no CLI equivalent. Without the MCP server,
 read the rendered notes under `.githints/index/` and the `.githints/INDEX.md`
@@ -180,6 +181,8 @@ time.
                                   # non-zero on drift
     ./githints index languages    # list the languages this binary can index,
                                   # and which are enabled in this repo
+    ./githints index facets       # list detected framework constructs
+                                  # (-facet, -framework, -file, -limit)
     ./githints index --obsidian   # render index notes as Obsidian wikilinks
 
 The index is updated automatically by the post-commit hook when indexing is
@@ -220,6 +223,29 @@ automatically -- adding one of those is adding a file, with no Go change. See
 That list is hand-maintained and can fall behind the binary you are running.
 `./githints index languages` reports the authoritative set, along with which
 languages the current repo has enabled.
+
+### Framework facets
+
+Alongside symbols, the index records *facets*: the role a construct plays,
+named independently of the framework that gave it that role. Django, GORM,
+Prisma, SQLAlchemy and Eloquent models are all `model`; chi, Flask, FastAPI,
+Spring and Laravel routes are all `route`. The facets are `route`, `model`,
+`component`, `migration`, `job` and `test`.
+
+That normalization is the point: ask for every HTTP route in a repo without
+knowing which frameworks it uses.
+
+    find_facets(facet="route")                 # MCP
+    ./githints index facets -facet=route       # CLI
+
+Detection is gated on imports or file path, so a framework is only claimed
+when the file actually uses it, and matching runs over comment- and
+string-stripped lines so an example in a docstring is not reported as real
+code. Facets appear in each file's index note under `## Framework`.
+
+Note that a facet is not a symbol. A route is usually a call rather than a
+declaration, so facets are recorded separately and a file can have facets
+without having any symbols at all.
 
 ### Repository-supplied languages
 

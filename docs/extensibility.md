@@ -308,9 +308,16 @@ own extraction. `TestPythonImportPathRoundTrip` is the pattern.
 
 ### Phase 5 — Facets
 
-14. Schema: `facets` table plus a `language` column on `symbols`.
-15. Framework detector spec type and registry.
-16. MCP tool and CLI for querying facets.
+14. Schema: `language` column on `symbols`, with schema versioning. *(done)*
+    The `facets` table moved to task 15 so it would land with the code that
+    writes it, rather than sitting empty.
+15. Framework detector spec type and registry, plus the `facets` table.
+    *(done)* Detectors match **lines, not symbols**: a route is usually a call
+    rather than a declaration, so hanging facets off symbols would have covered
+    models and missed routes entirely.
+16. MCP tool and CLI for querying facets. *(done)* `find_facets` and
+    `githints index facets`, plus a `## Framework` section in each note and a
+    breakdown in `index status`.
 17. Detector specs for the listed frameworks and ORMs.
 
 ### Phase 6 — Languages

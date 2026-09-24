@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/cjrdz/githints/internal/index/lang"
 	_ "modernc.org/sqlite"
@@ -483,7 +484,10 @@ func (s *Store) TopFilesByInDegree(limit int) ([]lang.FileInDegreeSummary, error
 // Import-only files (barrel re-exports, pages with no declarations) are
 // included so they get notes and can act as link targets for dependents.
 func (s *Store) AllIndexedFiles() ([]string, error) {
-	rows, err := s.db.Query("SELECT file_path FROM symbols UNION SELECT file_path FROM imports ORDER BY file_path")
+	// Facets are part of the union: a path-gated detector can match a file
+	// that declares nothing and imports nothing, and such a file would
+	// otherwise hold rows that never render a note.
+	rows, err := s.db.Query("SELECT file_path FROM symbols UNION SELECT file_path FROM imports UNION SELECT file_path FROM facets ORDER BY file_path")
 	if err != nil {
 		return nil, err
 	}
@@ -544,18 +548,77 @@ func (s *Store) InsertFacets(facets []lang.Detected) error {
 
 // FacetsForFile returns every facet detected in one file.
 func (s *Store) FacetsForFile(path string) ([]lang.Detected, error) {
-	return s.queryFacets("SELECT file_path, facet, framework, name, detail, line FROM facets WHERE file_path = ? ORDER BY line", path)
+	return s.Facets(FacetFilter{File: path})
 }
 
-// FacetsByName returns facets of one kind across the repository, newest
-// nothing -- ordered by file then line so the result reads like a listing.
-// An empty facet returns every facet, which is how a caller asks "what
-// frameworks are in here at all".
-func (s *Store) FacetsByName(facet string) ([]lang.Detected, error) {
-	if facet == "" {
-		return s.queryFacets("SELECT file_path, facet, framework, name, detail, line FROM facets ORDER BY facet, file_path, line")
+// FacetFilter narrows a facet query. Every field is optional; the zero value
+// asks for everything, which is how a caller finds out what frameworks are in
+// a repository at all.
+type FacetFilter struct {
+	Facet     string
+	Framework string
+	File      string
+	Limit     int
+}
+
+// Facets returns detected facets matching a filter.
+//
+// The limit is applied in SQL rather than by slicing the result, so a query
+// against a large repository does not materialize every row to return twenty.
+func (s *Store) Facets(f FacetFilter) ([]lang.Detected, error) {
+	query := "SELECT file_path, facet, framework, name, detail, line FROM facets"
+	var (
+		where []string
+		args  []any
+	)
+	if f.Facet != "" {
+		where = append(where, "facet = ?")
+		args = append(args, f.Facet)
 	}
-	return s.queryFacets("SELECT file_path, facet, framework, name, detail, line FROM facets WHERE facet = ? ORDER BY file_path, line", facet)
+	if f.Framework != "" {
+		where = append(where, "framework = ?")
+		args = append(args, f.Framework)
+	}
+	if f.File != "" {
+		where = append(where, "file_path = ?")
+		args = append(args, f.File)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY facet, file_path, line"
+	if f.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, f.Limit)
+	}
+	return s.queryFacets(query, args...)
+}
+
+// FacetSummary is one row of the facet breakdown.
+type FacetSummary struct {
+	Facet     string
+	Framework string
+	Count     int
+}
+
+// FacetBreakdown counts facets by kind and framework, which is the fastest
+// answer to "what is this repository built with".
+func (s *Store) FacetBreakdown() ([]FacetSummary, error) {
+	rows, err := s.db.Query("SELECT facet, framework, COUNT(*) FROM facets GROUP BY facet, framework ORDER BY facet, framework")
+	if err != nil {
+		return nil, fmt.Errorf("query facet breakdown: %w", err)
+	}
+	defer rows.Close()
+
+	var out []FacetSummary
+	for rows.Next() {
+		var r FacetSummary
+		if err := rows.Scan(&r.Facet, &r.Framework, &r.Count); err != nil {
+			return nil, fmt.Errorf("scan facet breakdown: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) queryFacets(query string, args ...any) ([]lang.Detected, error) {

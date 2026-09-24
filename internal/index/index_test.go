@@ -1221,16 +1221,16 @@ func TestFullScanDetectsFacets(t *testing.T) {
 		t.Fatalf("FullScan: %v", err)
 	}
 
-	models, err := st.FacetsByName(lang.FacetModel)
+	models, err := st.Facets(FacetFilter{Facet: lang.FacetModel})
 	if err != nil {
-		t.Fatalf("FacetsByName: %v", err)
+		t.Fatalf("Facets: %v", err)
 	}
 	if len(models) != 1 || models[0].Name != "Article" || models[0].Framework != "django" {
 		t.Errorf("models = %v", models)
 	}
-	routes, err := st.FacetsByName(lang.FacetRoute)
+	routes, err := st.Facets(FacetFilter{Facet: lang.FacetRoute})
 	if err != nil {
-		t.Fatalf("FacetsByName: %v", err)
+		t.Fatalf("Facets: %v", err)
 	}
 	if len(routes) != 1 || routes[0].Name != "articles/" {
 		t.Errorf("routes = %v", routes)
@@ -1240,9 +1240,9 @@ func TestFullScanDetectsFacets(t *testing.T) {
 	if err := IncrementalScan(st, opts, []string{"app/models.py"}); err != nil {
 		t.Fatalf("IncrementalScan: %v", err)
 	}
-	models, err = st.FacetsByName(lang.FacetModel)
+	models, err = st.Facets(FacetFilter{Facet: lang.FacetModel})
 	if err != nil {
-		t.Fatalf("FacetsByName: %v", err)
+		t.Fatalf("Facets: %v", err)
 	}
 	if len(models) != 1 {
 		t.Errorf("after rescan models = %v, want 1; facets were duplicated", models)
@@ -1253,20 +1253,110 @@ func TestFullScanDetectsFacets(t *testing.T) {
 	if err := IncrementalScan(st, opts, []string{"app/models.py"}); err != nil {
 		t.Fatalf("IncrementalScan: %v", err)
 	}
-	models, err = st.FacetsByName(lang.FacetModel)
+	models, err = st.Facets(FacetFilter{Facet: lang.FacetModel})
 	if err != nil {
-		t.Fatalf("FacetsByName: %v", err)
+		t.Fatalf("Facets: %v", err)
 	}
 	if len(models) != 0 {
 		t.Errorf("after removal models = %v, want none; the facet was stranded", models)
 	}
 
 	// The route in the untouched file must survive an unrelated rescan.
-	routes, err = st.FacetsByName(lang.FacetRoute)
+	routes, err = st.Facets(FacetFilter{Facet: lang.FacetRoute})
 	if err != nil {
-		t.Fatalf("FacetsByName: %v", err)
+		t.Fatalf("Facets: %v", err)
 	}
 	if len(routes) != 1 {
 		t.Errorf("routes = %v, want the untouched file's route to survive", routes)
+	}
+}
+
+// TestFacetOnlyFileIsRendered covers a file that declares nothing and imports
+// nothing but still matches a detector. Such a file held facet rows that no
+// note ever showed, because the rendered set came from symbols and imports
+// alone.
+func TestFacetOnlyFileIsRendered(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	if err := os.WriteFile(filepath.Join(root, "a.py"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := FullScan(st, lang.ScanOptions{
+		Root: root, Languages: []string{"python"},
+		MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second,
+	}, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	// Inject a facet for a file with no symbols and no imports, the shape a
+	// path-gated detector produces.
+	if err := st.InsertFacets([]lang.Detected{{
+		FilePath: "a.py", Facet: lang.FacetMigration, Framework: "django", Name: "Migration", Line: 1,
+	}}); err != nil {
+		t.Fatalf("InsertFacets: %v", err)
+	}
+
+	files, err := st.AllIndexedFiles()
+	if err != nil {
+		t.Fatalf("AllIndexedFiles: %v", err)
+	}
+	found := false
+	for _, f := range files {
+		if f == "a.py" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a facet-only file is missing from AllIndexedFiles: %v", files)
+	}
+}
+
+// TestFacetQueryFilters pins the filtering the CLI and MCP tool rely on,
+// including that the limit is applied rather than advisory.
+func TestFacetQueryFilters(t *testing.T) {
+	st, _ := tempStore(t)
+	defer st.Close()
+
+	if err := st.InsertFacets([]lang.Detected{
+		{FilePath: "a.py", Facet: lang.FacetModel, Framework: "django", Name: "A", Line: 1},
+		{FilePath: "b.py", Facet: lang.FacetRoute, Framework: "django", Name: "/x", Line: 2},
+		{FilePath: "c.go", Facet: lang.FacetRoute, Framework: "chi", Name: "/y", Line: 3},
+	}); err != nil {
+		t.Fatalf("InsertFacets: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		filter FacetFilter
+		want   int
+	}{
+		{"all", FacetFilter{}, 3},
+		{"byFacet", FacetFilter{Facet: lang.FacetRoute}, 2},
+		{"byFramework", FacetFilter{Framework: "chi"}, 1},
+		{"byFile", FacetFilter{File: "a.py"}, 1},
+		{"combined", FacetFilter{Facet: lang.FacetRoute, Framework: "django"}, 1},
+		{"limited", FacetFilter{Limit: 2}, 2},
+		{"noMatch", FacetFilter{Framework: "rails"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := st.Facets(tc.filter)
+			if err != nil {
+				t.Fatalf("Facets: %v", err)
+			}
+			if len(got) != tc.want {
+				t.Errorf("got %d facets, want %d: %v", len(got), tc.want, got)
+			}
+		})
+	}
+
+	breakdown, err := st.FacetBreakdown()
+	if err != nil {
+		t.Fatalf("FacetBreakdown: %v", err)
+	}
+	if len(breakdown) != 3 {
+		t.Errorf("breakdown = %v, want one row per facet/framework pair", breakdown)
 	}
 }
