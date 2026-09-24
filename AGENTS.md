@@ -59,15 +59,16 @@ CLI:
 
 When the repo has a structural index, orient yourself with code-level queries:
 
-- `list_symbols(file="...")`
-- `get_dependents(file="...")`
-- `find_symbol(name="...")`
-- `get_index_summary(limit=10)`
-- `find_facets(facet="route")` — framework constructs by the role they play
+- `list_symbols(file="...")` — what is defined in this file
+- `get_dependents(file="...")` — what breaks if you change it
+- `find_symbol(name="...")` — where something is defined
+- `get_index_summary(limit=10)` — totals, languages, and the hub files
+- `find_facets(facet="route")` — framework constructs by the role they play,
+  normalized across frameworks; also `./githints index facets -facet=route`
 
-These four are MCP-only; there is no CLI equivalent. Without the MCP server,
-read the rendered notes under `.githints/index/` and the `.githints/INDEX.md`
-rollup, which carry the same information.
+The first four are MCP-only. Without the MCP server, read the rendered notes
+under `.githints/index/` and the `.githints/INDEX.md` rollup, which carry the
+same information.
 
 Every index tool response includes `last_indexed_at`, so you can decide whether
 the data is fresh enough or whether to re-index.
