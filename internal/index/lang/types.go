@@ -33,6 +33,10 @@ type Symbol struct {
 	LineStart int
 	LineEnd   int
 	Signature string // optional, e.g. "func (r *Receiver) MethodName(p Type) Return"
+
+	// Language is stamped by the scan layer from the parser that produced the
+	// symbol, rather than by each parser, so no parser can forget to set it.
+	Language string
 }
 
 // Import is one import statement in a source file. The ImportedPath is the

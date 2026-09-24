@@ -1,6 +1,7 @@
 package index
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -981,4 +982,209 @@ func TestFullScanIndexesSpecDrivenLanguage(t *testing.T) {
 			t.Errorf("note is missing %q:\n%s", want, note)
 		}
 	}
+}
+
+// TestSymbolsCarryLanguage pins the column added for cross-language queries.
+// Until now "every Python symbol" was not expressible: language was tracked
+// only in aggregate, in the meta row's counts.
+func TestSymbolsCarryLanguage(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.26\n")
+	writeGo(t, root, "a.go", "package main\n\nfunc FromGo() {}\n")
+	if err := os.WriteFile(filepath.Join(root, "b.py"), []byte("def from_python():\n    pass\n"), 0o644); err != nil {
+		t.Fatalf("write b.py: %v", err)
+	}
+
+	opts := lang.ScanOptions{
+		Root:         root,
+		Languages:    []string{"go", "python"},
+		MaxFileSize:  1 << 20,
+		ParseTimeout: 5 * time.Second,
+	}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+
+	for _, tc := range []struct{ file, symbol, language string }{
+		{"a.go", "FromGo", "go"},
+		{"b.py", "from_python", "python"},
+	} {
+		syms, err := st.SymbolsForFile(tc.file)
+		if err != nil {
+			t.Fatalf("SymbolsForFile %s: %v", tc.file, err)
+		}
+		if len(syms) != 1 {
+			t.Fatalf("%s: symbols = %v", tc.file, syms)
+		}
+		if syms[0].Name != tc.symbol || syms[0].Language != tc.language {
+			t.Errorf("%s: got %s/%q, want %s/%q", tc.file, syms[0].Name, syms[0].Language, tc.symbol, tc.language)
+		}
+	}
+}
+
+// TestSchemaResetOnVersionChange covers the upgrade path every existing user
+// takes. CREATE TABLE IF NOT EXISTS cannot add a column, so a database written
+// by an older schema must be rebuilt rather than queried with the new columns.
+func TestSchemaResetOnVersionChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.db")
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := st.InsertSymbols([]lang.Symbol{
+		{Name: "Stale", Kind: lang.KindFunc, FilePath: "a.go", LineStart: 1, LineEnd: 1, Language: "go"},
+	}); err != nil {
+		t.Fatalf("InsertSymbols: %v", err)
+	}
+	if n, err := st.SymbolCount(); err != nil || n != 1 {
+		t.Fatalf("SymbolCount = %d, %v", n, err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Pretend it was written by an older githints.
+	stale, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if _, err := stale.db.Exec("UPDATE meta SET value = ? WHERE key = ?", "1", "schema_version"); err != nil {
+		t.Fatalf("downgrade version: %v", err)
+	}
+	if err := stale.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open after version change: %v", err)
+	}
+	defer reopened.Close()
+
+	if n, err := reopened.SymbolCount(); err != nil || n != 0 {
+		t.Errorf("SymbolCount = %d (err %v), want 0; stale rows survived a schema change", n, err)
+	}
+	// The new schema must be usable straight away.
+	if err := reopened.InsertSymbols([]lang.Symbol{
+		{Name: "Fresh", Kind: lang.KindFunc, FilePath: "b.py", LineStart: 1, LineEnd: 1, Language: "python"},
+	}); err != nil {
+		t.Fatalf("InsertSymbols after reset: %v", err)
+	}
+	syms, err := reopened.SymbolsForFile("b.py")
+	if err != nil || len(syms) != 1 || syms[0].Language != "python" {
+		t.Errorf("after reset: syms = %v, err = %v", syms, err)
+	}
+}
+
+// TestSchemaVersionIsRecorded stops a fresh database from being reset on the
+// very next open, which would make every scan rebuild from scratch.
+func TestSchemaVersionIsRecorded(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.db")
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := st.InsertSymbols([]lang.Symbol{
+		{Name: "Keep", Kind: lang.KindFunc, FilePath: "a.go", LineStart: 1, LineEnd: 1},
+	}); err != nil {
+		t.Fatalf("InsertSymbols: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	again, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer again.Close()
+	if n, err := again.SymbolCount(); err != nil || n != 1 {
+		t.Errorf("SymbolCount = %d (err %v), want the row to survive a plain reopen", n, err)
+	}
+}
+
+// TestPreVersioningSchemaResetIsAnnounced covers the upgrade every existing
+// user takes. Such a database has no schema_version row at all, so it looks
+// identical to a brand-new file unless the tables are inspected -- and
+// resetting someone's index silently is the one outcome worth avoiding.
+func TestPreVersioningSchemaResetIsAnnounced(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "index.db")
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := st.db.Exec("DELETE FROM meta WHERE key = ?", "schema_version"); err != nil {
+		t.Fatalf("remove version row: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	stderr, err := captureStderr(func() error {
+		reopened, err := Open(path)
+		if err != nil {
+			return err
+		}
+		return reopened.Close()
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !strings.Contains(stderr, "pre-versioning") {
+		t.Errorf("reset was not announced, stderr = %q", stderr)
+	}
+	if !strings.Contains(stderr, "githints index") {
+		t.Errorf("message should say how to rebuild, stderr = %q", stderr)
+	}
+}
+
+// TestFreshDatabaseResetIsSilent is the other half: a new index must not
+// announce a reset that did not happen.
+func TestFreshDatabaseResetIsSilent(t *testing.T) {
+	dir := t.TempDir()
+	stderr, err := captureStderr(func() error {
+		st, err := Open(filepath.Join(dir, "index.db"))
+		if err != nil {
+			return err
+		}
+		return st.Close()
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if stderr != "" {
+		t.Errorf("a fresh database should be silent, stderr = %q", stderr)
+	}
+}
+
+// captureStderr redirects os.Stderr for the duration of fn. Safe only for
+// small outputs: fn completes before the pipe is drained.
+func captureStderr(fn func() error) (string, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	orig := os.Stderr
+	os.Stderr = w
+
+	runErr := fn()
+
+	os.Stderr = orig
+	_ = w.Close()
+	out, readErr := io.ReadAll(r)
+	_ = r.Close()
+	if readErr != nil {
+		return "", readErr
+	}
+	return string(out), runErr
 }

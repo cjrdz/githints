@@ -295,6 +295,13 @@ func parseWithTimeout(p lang.LanguageParser, rel string, src []byte, timeout tim
 	case <-ctx.Done():
 		return nil, nil, fmt.Errorf("parse timed out after %s", timeout)
 	case res := <-ch:
+		// Stamp the language here rather than in each parser: a parser that
+		// forgot would produce symbols that no language filter could find,
+		// and nothing would fail loudly enough to notice.
+		language := p.Language()
+		for i := range res.symbols {
+			res.symbols[i].Language = language
+		}
 		return res.symbols, res.imports, res.err
 	}
 }

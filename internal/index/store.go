@@ -2,9 +2,11 @@ package index
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/cjrdz/githints/internal/index/lang"
 	_ "modernc.org/sqlite"
@@ -35,11 +37,88 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("set index db busy timeout: %w", err)
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if err := applySchema(db); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("apply index db schema: %w", err)
+		return nil, err
 	}
 	return &Store{db: db, dbPath: path}, nil
+}
+
+// schemaVersion is bumped whenever the shape of the index tables changes.
+//
+// There is no migration path and there does not need to be one: the index is a
+// derived cache, gitignored and rebuilt from source. A version mismatch drops
+// the data tables and recreates them, which is the same thing a migration
+// would end up doing but without code that has to be right years later.
+const schemaVersion = 2
+
+// tableExists reports whether a table is present in the database.
+func tableExists(db *sql.DB, name string) (bool, error) {
+	var found string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", name).Scan(&found)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("inspect index db schema: %w", err)
+	}
+	return true, nil
+}
+
+// applySchema creates the tables, resetting them first if the database was
+// written by a different schema version.
+//
+// CREATE TABLE IF NOT EXISTS cannot add a column to a table that already
+// exists, so without this an older index.db would keep its old shape and every
+// query naming a new column would fail.
+func applySchema(db *sql.DB) error {
+	if _, err := db.Exec(metaSchema); err != nil {
+		return fmt.Errorf("apply index db meta schema: %w", err)
+	}
+
+	var stored string
+	err := db.QueryRow("SELECT value FROM meta WHERE key = ?", "schema_version").Scan(&stored)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		stored = "" // fresh database, or one predating versioning
+	case err != nil:
+		return fmt.Errorf("read index schema version: %w", err)
+	}
+
+	current := strconv.Itoa(schemaVersion)
+	if stored != current {
+		// A database predating versioning has no schema_version row but does
+		// have tables. Distinguishing it from a genuinely new file is what
+		// makes the reset visible to the users who actually experience one.
+		hadData, err := tableExists(db, "symbols")
+		if err != nil {
+			return err
+		}
+		if _, err := db.Exec(dropDataSchema); err != nil {
+			return fmt.Errorf("reset index db schema: %w", err)
+		}
+		if hadData {
+			from := stored
+			if from == "" {
+				from = "pre-versioning"
+			}
+			// Say so: the next incremental scan only touches changed files, so
+			// the index stays sparse until a full rebuild.
+			fmt.Fprintf(os.Stderr,
+				"githints: index schema changed (%s -> %s); the structural index was reset. "+
+					"Run `githints index` to rebuild it.\n", from, current)
+		}
+	}
+
+	if _, err := db.Exec(dataSchema); err != nil {
+		return fmt.Errorf("apply index db schema: %w", err)
+	}
+	if _, err := db.Exec(
+		"INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		"schema_version", current); err != nil {
+		return fmt.Errorf("record index schema version: %w", err)
+	}
+	return nil
 }
 
 // Close releases the database handle.
@@ -65,12 +144,20 @@ func (s *Store) Size() int64 {
 	return info.Size()
 }
 
-const schema = `
+const metaSchema = `
 CREATE TABLE IF NOT EXISTS meta (
 	key TEXT PRIMARY KEY,
 	value TEXT NOT NULL
 );
+`
 
+// dropDataSchema clears everything except meta, which carries the version.
+const dropDataSchema = `
+DROP TABLE IF EXISTS symbols;
+DROP TABLE IF EXISTS imports;
+`
+
+const dataSchema = `
 CREATE TABLE IF NOT EXISTS symbols (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL,
@@ -78,7 +165,8 @@ CREATE TABLE IF NOT EXISTS symbols (
 	file_path TEXT NOT NULL,
 	line_start INTEGER NOT NULL,
 	line_end INTEGER NOT NULL,
-	signature TEXT
+	signature TEXT,
+	language TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path);
@@ -92,6 +180,7 @@ CREATE TABLE IF NOT EXISTS imports (
 
 CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_path);
 CREATE INDEX IF NOT EXISTS idx_imports_path ON imports(imported_path);
+CREATE INDEX IF NOT EXISTS idx_symbols_language ON symbols(language);
 `
 
 func (s *Store) metaGet(key string) (string, error) {
@@ -228,13 +317,13 @@ func (s *Store) InsertSymbols(symbols []lang.Symbol) error {
 	if len(symbols) == 0 {
 		return nil
 	}
-	stmt, err := s.db.Prepare("INSERT INTO symbols (name, kind, file_path, line_start, line_end, signature) VALUES (?, ?, ?, ?, ?, ?)")
+	stmt, err := s.db.Prepare("INSERT INTO symbols (name, kind, file_path, line_start, line_end, signature, language) VALUES (?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("prepare symbols insert: %w", err)
 	}
 	defer stmt.Close()
 	for _, sym := range symbols {
-		_, err := stmt.Exec(sym.Name, string(sym.Kind), sym.FilePath, sym.LineStart, sym.LineEnd, sym.Signature)
+		_, err := stmt.Exec(sym.Name, string(sym.Kind), sym.FilePath, sym.LineStart, sym.LineEnd, sym.Signature, sym.Language)
 		if err != nil {
 			return fmt.Errorf("insert symbol %s in %s: %w", sym.Name, sym.FilePath, err)
 		}
@@ -293,7 +382,7 @@ func (s *Store) FileCount() (int, error) {
 
 // SymbolsForFile returns symbols for one file, ordered by line.
 func (s *Store) SymbolsForFile(path string) ([]lang.Symbol, error) {
-	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature FROM symbols WHERE file_path = ? ORDER BY line_start, name", path)
+	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature, language FROM symbols WHERE file_path = ? ORDER BY line_start, name", path)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +391,7 @@ func (s *Store) SymbolsForFile(path string) ([]lang.Symbol, error) {
 	for rows.Next() {
 		var sym lang.Symbol
 		var kind string
-		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.LineStart, &sym.LineEnd, &sym.Signature); err != nil {
+		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.LineStart, &sym.LineEnd, &sym.Signature, &sym.Language); err != nil {
 			return nil, err
 		}
 		sym.Kind = lang.SymbolKind(kind)
@@ -313,7 +402,7 @@ func (s *Store) SymbolsForFile(path string) ([]lang.Symbol, error) {
 
 // FindSymbolsByName returns exact and prefix matches for a name across the repo.
 func (s *Store) FindSymbolsByName(name string) ([]lang.Symbol, error) {
-	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature FROM symbols WHERE name LIKE ? ESCAPE '\\' ORDER BY LENGTH(name), file_path, line_start", lang.EscapeLike(name)+"%")
+	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature, language FROM symbols WHERE name LIKE ? ESCAPE '\\' ORDER BY LENGTH(name), file_path, line_start", lang.EscapeLike(name)+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +411,7 @@ func (s *Store) FindSymbolsByName(name string) ([]lang.Symbol, error) {
 	for rows.Next() {
 		var sym lang.Symbol
 		var kind string
-		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.LineStart, &sym.LineEnd, &sym.Signature); err != nil {
+		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.LineStart, &sym.LineEnd, &sym.Signature, &sym.Language); err != nil {
 			return nil, err
 		}
 		sym.Kind = lang.SymbolKind(kind)
