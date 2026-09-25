@@ -5,9 +5,11 @@ and make changes.
 
 ## Requirements
 
-- Go 1.25.14 or later. The 1.25 minor comes from `mark3labs/mcp-go` and from
-  `os.Root.MkdirAll`; the patch level is the first in that line with the
-  standard-library CVEs fixed, and `govulncheck` in CI enforces it.
+- The Go version in `go.mod`, currently 1.26.7, or later. The floor tracks the
+  standard-library CVEs rather than any language feature, and `govulncheck` in
+  CI enforces it; `os.Root.MkdirAll`, which `hint.writeUnder` depends on,
+  arrived in 1.25. CI reads the version from `go.mod`, so bumping it there is
+  the only change needed.
 - Git.
 - Linux, macOS, or Windows (Windows requires [Git for Windows](https://gitforwindows.org/), which provides the POSIX sh used by the git hooks).
 - A C toolchain if you want to run `go test -race`, which needs cgo. On Windows,
