@@ -181,6 +181,35 @@ var claudeBlock = []string{
 
 // hookExistsAndManaged reports whether path is an existing file that was
 // written by githints (and may safely be re-initialized).
+// hookScriptFor renders a managed hook.
+//
+// The recorded path is tried first, so a developer running a local build keeps
+// using it even with another githints on PATH, and nothing changes for an
+// existing install. PATH is the fallback for when that path stops existing --
+// which is exactly what a package manager does on upgrade, since os.Executable
+// resolves symlinks and records the versioned target (Homebrew's Cellar,
+// Scoop's apps directory) rather than the stable shim.
+//
+// If neither resolves, the hook says so and exits 0: a missing binary must not
+// block a commit, and the pre-commit gate is a warning by design.
+//
+// Written in POSIX sh: Git for Windows runs hooks through its bundled sh, and
+// forward-slash paths work there too.
+func hookScriptFor(exe, cmd string) string {
+	path := filepath.ToSlash(exe)
+	return fmt.Sprintf(`#!/bin/sh
+# %s — do not edit by hand
+if [ -x %q ]; then
+	exec %q %s "$@"
+fi
+if command -v githints >/dev/null 2>&1; then
+	exec githints %s "$@"
+fi
+echo "githints: not found at %s and not on PATH; run 'githints init' to repoint this hook" >&2
+exit 0
+`, managedHookMarker, path, path, cmd, cmd, path)
+}
+
 func hookExistsAndManaged(path string) (exists bool, managed bool, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -325,9 +354,17 @@ func cmdInit(args []string) error {
 	// recorder and the pre-commit proactive gate stay in sync.
 	// On Windows, Git for Windows runs hook scripts through its bundled sh,
 	// so forward-slash paths work everywhere.
-	hookScript := func(cmd string) string {
-		return fmt.Sprintf("#!/bin/sh\n# %s — do not edit by hand\nexec %q %s\n", managedHookMarker, filepath.ToSlash(exe), cmd)
-	}
+	//
+	// The recorded path is tried first, so a developer running a local build
+	// keeps using it even with another githints on PATH, and nothing changes
+	// for an existing install. PATH is the fallback for when that path stops
+	// existing -- which is exactly what a package manager does on upgrade,
+	// since os.Executable resolves symlinks and records the versioned target
+	// (Homebrew's Cellar, Scoop's apps directory) rather than the stable shim.
+	//
+	// If neither resolves, the hook says so and exits 0: a missing binary must
+	// not block a commit, and the pre-commit gate is a warning by design.
+	hookScript := func(cmd string) string { return hookScriptFor(exe, cmd) }
 
 	postCommit := filepath.Join(root, ".git", "hooks", "post-commit")
 	preCommit := filepath.Join(root, ".git", "hooks", "pre-commit")

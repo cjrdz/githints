@@ -96,3 +96,57 @@ func TestEnsureManagedBlockNewFileHasNoLeadingBlanks(t *testing.T) {
 		t.Errorf("new file should start with the marker, got:\n%q", string(data))
 	}
 }
+
+// TestHookSurvivesBinaryMoving pins the fallback that makes package managers
+// usable. os.Executable resolves symlinks, so `githints init` records the
+// versioned target a Homebrew or Scoop shim points at, not the stable shim.
+// Upgrading replaces that directory, and without a fallback every hook in
+// every tracked repo would point at a deleted file and silently stop
+// recording.
+func TestHookSurvivesBinaryMoving(t *testing.T) {
+	dir := t.TempDir()
+	recorded := filepath.Join(dir, "versioned", "githints")
+
+	hook := hookScriptFor(recorded, "hook-run")
+
+	// The recorded path wins while it exists, so a local dev build is not
+	// displaced by an unrelated githints on PATH.
+	if !strings.Contains(hook, `[ -x "`+filepath.ToSlash(recorded)+`" ]`) {
+		t.Errorf("hook does not test the recorded path first:\n%s", hook)
+	}
+	idxRecorded := strings.Index(hook, filepath.ToSlash(recorded))
+	idxPath := strings.Index(hook, "command -v githints")
+	if idxRecorded < 0 || idxPath < 0 || idxRecorded > idxPath {
+		t.Errorf("the recorded path must be tried before PATH:\n%s", hook)
+	}
+
+	// PATH is the fallback.
+	if !strings.Contains(hook, "exec githints hook-run") {
+		t.Errorf("hook has no PATH fallback:\n%s", hook)
+	}
+
+	// Neither available must not fail a commit: post-commit's status is
+	// ignored, but pre-commit's is not, and a missing binary is not a reason
+	// to block someone's work.
+	if !strings.Contains(hook, "exit 0") {
+		t.Errorf("hook must exit 0 when the binary is missing:\n%s", hook)
+	}
+	if !strings.Contains(hook, "githints init") {
+		t.Errorf("hook should say how to repair itself:\n%s", hook)
+	}
+}
+
+// TestHookIsPosixSh guards the shell the hook is written in. Git for Windows
+// runs hooks through its bundled sh, so anything bash-only would break there
+// and nowhere else.
+func TestHookIsPosixSh(t *testing.T) {
+	hook := hookScriptFor("/usr/local/bin/githints", "hook-precommit")
+	if !strings.HasPrefix(hook, "#!/bin/sh\n") {
+		t.Errorf("hook must start with #!/bin/sh:\n%s", hook)
+	}
+	for _, bashism := range []string{"[[", "==", "function ", "$(<"} {
+		if strings.Contains(hook, bashism) {
+			t.Errorf("hook uses the bash-only %q:\n%s", bashism, hook)
+		}
+	}
+}

@@ -13,20 +13,33 @@ without special tooling.
 
 ## Quick start
 
+**Linux / macOS**
+
 ```sh
-# Install (requires Go 1.25.14+)
-go install github.com/cjrdz/githints@latest
+curl -fsSL https://raw.githubusercontent.com/cjrdz/githints/main/install.sh | sh
+```
 
-# Or build from source
-go build -o githints .
+**Windows (PowerShell)**
 
-# Set up inside a repo
+```powershell
+irm https://raw.githubusercontent.com/cjrdz/githints/main/install.ps1 | iex
+```
+
+Then, inside any repository you want tracked:
+
+```sh
 githints init
 ```
 
-`init` also writes a managed block into `AGENTS.md` (read by opencode, Codex,
-and Gemini CLI) and `CLAUDE.md` (read by Claude Code), so the agent knows the
-tools exist. Re-running it updates only that block.
+No Go toolchain is needed — the scripts download a prebuilt binary and verify
+it against the release checksums. Other ways to install, including native
+packages for Arch, Debian, Fedora and Alpine, are in
+[docs/usage.md](docs/usage.md).
+
+`init` writes a managed block into `AGENTS.md`, which Claude Code, opencode,
+Codex and Gemini CLI all read, so the agent knows the tools exist. It also
+writes a block into `CLAUDE.md` importing it, for older Claude Code versions.
+Re-running `init` updates only those blocks.
 
 Then wire `githints serve` into your project-scoped MCP config. See
 [docs/usage.md](docs/usage.md) for Claude Code, opencode, and manual setup.

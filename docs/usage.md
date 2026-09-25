@@ -4,21 +4,85 @@ How to install, set up, and use githints day-to-day.
 
 ## Install
 
-Requires Go 1.25.14+. Supported platforms: Linux, macOS, Windows.
+Supported platforms: Linux, macOS and Windows, on amd64 and arm64.
+
+`git` must be installed and on `PATH` — githints shells out to it for
+everything that matters. On Windows install
+[Git for Windows](https://gitforwindows.org/), which also provides the POSIX sh
+that runs the git hooks.
+
+### Install script (recommended)
+
+No Go toolchain needed. Both scripts download a prebuilt binary and verify it
+against the release `checksums.txt` before installing.
 
 ```sh
-# One-command install
-go install github.com/cjrdz/githints@latest
-
-# Or build from source
-go build -o githints .
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/cjrdz/githints/main/install.sh | sh
 ```
 
-On Windows, install [Git for Windows](https://gitforwindows.org/) first — it
-provides the POSIX sh that runs the git hooks.
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/cjrdz/githints/main/install.ps1 | iex
+```
 
-Put `githints` on your `PATH`, or use a project-relative path in your MCP
-config.
+Both accept two environment variables:
+
+| Variable | Effect |
+| --- | --- |
+| `GITHINTS_VERSION` | Install a specific tag instead of the latest release |
+| `GITHINTS_BIN_DIR` | Install somewhere other than the default |
+
+The default is `/usr/local/bin` when writable, otherwise `~/.local/bin`; on
+Windows, `%LOCALAPPDATA%\Programs\githints`, which is added to your user PATH.
+
+### Native packages
+
+Every release attaches `.deb`, `.rpm`, `.apk` and Arch `.pkg.tar.zst` packages
+for amd64 and arm64. They install the binary at `/usr/bin/githints` and declare
+a dependency on `git`.
+
+```sh
+# Arch and derivatives
+sudo pacman -U githints_0.1.3_linux_amd64.pkg.tar.zst
+
+# Debian and Ubuntu
+sudo dpkg -i githints_0.1.3_linux_amd64.deb
+
+# Fedora and RHEL
+sudo rpm -i githints_0.1.3_linux_amd64.rpm
+
+# Alpine
+sudo apk add --allow-untrusted githints_0.1.3_linux_amd64.apk
+```
+
+Download them from the [releases page](https://github.com/cjrdz/githints/releases).
+
+### From source
+
+Requires the Go version in `go.mod` (currently 1.26.7) or newer:
+
+```sh
+go install github.com/cjrdz/githints@latest   # into $(go env GOPATH)/bin
+go build -o githints .                        # from a checkout
+```
+
+### Where the binary lives, and why it matters
+
+`githints init` records the binary's path in each repository's git hooks, so
+the hooks keep working without depending on your PATH — which matters because
+GUI git clients often run hooks with a minimal one.
+
+That path is the *resolved* one, following symlinks. Installing through
+something that puts a stable shim in front of a versioned directory (Homebrew's
+Cellar, Scoop's apps folder) therefore records the versioned path, which an
+upgrade replaces. Hooks fall back to `githints` on PATH when the recorded path
+has gone, so an upgrade no longer breaks them silently — but installing to a
+stable location avoids relying on that fallback at all, which is what the
+install scripts and native packages do.
+
+If you move the binary yourself, re-run `githints init` in each tracked
+repository to repoint the hooks.
 
 ## Set up a repo
 

@@ -52,6 +52,30 @@ jobs:
       - name: go build
         run: go build ./...
 
+      # The install scripts are what most people will run before they ever run
+      # githints, and they are piped straight into a shell, so a syntax error
+      # is a broken install rather than a failed build. Each is checked on the
+      # platform that actually runs it.
+      - name: Check install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./install.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host "install.ps1 parses"
+
+      - name: Check install.sh
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          sh -n install.sh
+          echo "install.sh parses"
+
   lint:
     runs-on: ubuntu-latest
     steps:
