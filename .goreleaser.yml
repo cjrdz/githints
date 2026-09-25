@@ -30,6 +30,47 @@ archives:
       - README.md
       - docs/usage.md
 
+# Native packages, so githints can be installed with the system package manager
+# rather than by unpacking a tarball onto PATH by hand.
+#
+# These need no credentials and no second repository: goreleaser builds them
+# and attaches them to the release, so `pacman -U`, `dpkg -i` and `rpm -i` all
+# work off a downloaded file. A Homebrew tap, a Scoop bucket or a real AUR
+# package each need a separate repository and a token, which is why they are
+# not here.
+#
+# The install location matters: these put the binary at /usr/bin/githints, a
+# stable path that survives upgrades. `githints init` records the binary's path
+# in each repository's git hooks, and while those hooks now fall back to PATH,
+# not needing the fallback is better.
+nfpms:
+  - id: githints
+    package_name: githints
+    vendor: cjrdz
+    homepage: https://github.com/cjrdz/githints
+    maintainer: cjrdz <noreply@github.com>
+    description: |-
+      Local change log and structural index for AI coding agents.
+      Records what changed and why per file, and exposes it over MCP or a CLI.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+      - apk
+      - archlinux
+    bindir: /usr/bin
+    contents:
+      - src: LICENSE
+        dst: /usr/share/licenses/githints/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/githints/README.md
+      - src: docs/usage.md
+        dst: /usr/share/doc/githints/usage.md
+    # git is not a hard dependency of the binary, but githints shells out to it
+    # for every operation that matters, so a package without it is broken.
+    dependencies:
+      - git
+
 checksum:
   name_template: "checksums.txt"
 
