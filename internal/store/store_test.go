@@ -808,3 +808,24 @@ func TestWithTxAtomicClaimAndInsert(t *testing.T) {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}
 }
+
+// A clone can ship .githints as a link; the database must not be created at
+// the far end of it.
+func TestOpenRefusesSymlinkedDir(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "elsewhere")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, ".githints")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create a directory symlink on this platform: %v", err)
+	}
+	if st, err := Open(filepath.Join(link, "store.db")); err == nil {
+		st.Close()
+		t.Fatal("Open accepted a symlinked .githints directory")
+	}
+	if _, err := os.Stat(filepath.Join(target, "store.db")); err == nil {
+		t.Fatal("store.db was created in the link target")
+	}
+}

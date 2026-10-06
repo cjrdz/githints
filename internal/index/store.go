@@ -11,6 +11,8 @@ import (
 
 	"github.com/cjrdz/githints/internal/index/lang"
 	_ "modernc.org/sqlite"
+
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // Store is the SQLite-backed index cache. It is a separate database from
@@ -23,8 +25,14 @@ type Store struct {
 
 // Open opens or creates index.db at path, applying the schema if necessary.
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// EnsureDir rather than MkdirAll: a clone can ship .githints as a link,
+	// and the database (and its WAL and SHM siblings) would be created at the
+	// far end of it.
+	if err := safefs.EnsureDir(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create index db dir: %w", err)
+	}
+	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (symlink?); refusing to open it", path)
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {

@@ -13,6 +13,8 @@ import (
 	"sync"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // ClockSkewTolerance is how many seconds a new recorded_at is allowed to
@@ -130,8 +132,14 @@ PRAGMA synchronous=NORMAL;
 // Open creates/opens the SQLite store at path, applies the schema and any
 // additive migrations, and sets the connection pragmas.
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// EnsureDir rather than MkdirAll: a clone can ship .githints as a link,
+	// and the database (and its WAL and SHM siblings) would be created at the
+	// far end of it.
+	if err := safefs.EnsureDir(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create store directory: %w", err)
+	}
+	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (symlink?); refusing to open it", path)
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {

@@ -235,6 +235,12 @@ func hookExistsAndManaged(path string) (exists bool, managed bool, err error) {
 // Used for .gitignore, AGENTS.md, and CLAUDE.md so re-running init updates its
 // own block and never clobbers hand-written content.
 func ensureManagedBlock(path, startMarker, endMarker string, body []string) error {
+	// A cloned repository can commit CLAUDE.md -> ~/.bashrc. Writing through
+	// it would append githints' block to a file outside the repo, so a link
+	// (or a junction, or anything else that isn't a plain file) is refused.
+	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file (symlink?); refusing to rewrite it", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		// Do not fall through to writing on a permission or I/O error: the

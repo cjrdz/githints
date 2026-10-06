@@ -1801,3 +1801,62 @@ func TestIncrementalScanStopsAtTheCap(t *testing.T) {
 		t.Errorf("SymbolCount = %d; the cap did not stop the scan", n)
 	}
 }
+
+// IncrementalScan used os.Stat, which follows the link, so shouldSkipFile
+// never saw a symlink and a committed leak.go -> <secret outside the repo> was
+// read into the index. Both a file link and a directory link out of the repo
+// must be skipped.
+func TestIncrementalScanDoesNotFollowSymlinksOut(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	outside := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGo(t, outside, "secret.go", "package secret\nfunc LeakedSecret() {}\n")
+	if err := os.Symlink(filepath.Join(outside, "secret.go"), filepath.Join(root, "leak.go")); err != nil {
+		t.Skipf("cannot create a file symlink on this platform: %v", err)
+	}
+	if err := os.Symlink(filepath.Join("..", "outside"), filepath.Join(root, "pkg")); err != nil {
+		t.Skipf("cannot create a directory symlink on this platform: %v", err)
+	}
+
+	opts := lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second}
+	if err := IncrementalScan(st, opts, []string{"leak.go", "pkg/secret.go"}, 0); err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	if syms, err := st.FindSymbolsByName("LeakedSecret"); err != nil || len(syms) != 0 {
+		t.Fatalf("symbols from outside the repo were indexed: %v, %v", syms, err)
+	}
+}
+
+// pruneStaleNotes walked and deleted with plain os calls, so a clone shipping
+// .githints -> <elsewhere> turned the prune into "delete every .md file under
+// <elsewhere>/index".
+func TestPruneDoesNotFollowLinkedGithintsDir(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "repo")
+	victim := filepath.Join(dir, "victim")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(victim, "index"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keepMe := filepath.Join(victim, "index", "notes.md")
+	if err := os.WriteFile(keepMe, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "victim"), filepath.Join(root, ".githints")); err != nil {
+		t.Skipf("cannot create a directory symlink on this platform: %v", err)
+	}
+
+	pruneStaleNotes(root, map[string]struct{}{})
+
+	if _, err := os.Stat(keepMe); err != nil {
+		t.Fatalf("prune deleted a file outside the repo: %v", err)
+	}
+}

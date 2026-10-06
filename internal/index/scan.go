@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/recorder"
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // FullScan walks the repository under opts.Root, parses every supported file,
@@ -428,6 +430,12 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 		return err
 	}
 
+	repoRoot, err := os.OpenRoot(opts.Root)
+	if err != nil {
+		return fmt.Errorf("open repo root: %w", err)
+	}
+	defer repoRoot.Close()
+
 	for _, path := range paths {
 		if err := recorder.ValidateFilePath(path); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index skipped (invalid path): %s: %v\n", path, err)
@@ -437,15 +445,19 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 			continue
 		}
 		abs := filepath.Join(opts.Root, path)
-		info, err := os.Stat(abs)
+		// Lstat through an os.Root, never os.Stat: Stat follows the link, so
+		// shouldSkipFile never saw a symlink here and a committed
+		// leak.py -> ~/.aws/credentials was read into the index. The root
+		// also refuses a path whose parent directory is a link out of the repo.
+		info, err := repoRoot.Lstat(path)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, fs.ErrNotExist) {
 				// Deleted file: remove its rows and its note.
 				if err := db.DeleteFile(path); err != nil {
 					fmt.Fprintf(os.Stderr, "githints: index delete failed: %s: %v\n", path, err)
 				}
 				if note, _, noteErr := lang.IndexNotePath(opts.Root, path); noteErr == nil {
-					if err := os.Remove(note); err != nil && !os.IsNotExist(err) {
+					if err := removeManaged(opts.Root, note); err != nil {
 						fmt.Fprintf(os.Stderr, "githints: index note delete failed: %s: %v\n", path, err)
 					}
 				}
@@ -475,7 +487,7 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 			continue
 		}
 
-		src, err := os.ReadFile(abs)
+		src, err := safefs.ReadFileIn(repoRoot, path, opts.MaxFileSize)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index skipped (read error): %s: %v\n", path, err)
 			continue
@@ -755,7 +767,9 @@ func parseCandidates(work []candidate, opts lang.ScanOptions, detectors *lang.De
 // parsers and detectors are immutable once built, and the per-scan state they
 // consult is installed before the pool starts and read under a lock.
 func parseOne(c candidate, opts lang.ScanOptions, detectors *lang.DetectorSet) fileResult {
-	src, err := os.ReadFile(c.abs)
+	// Read through an os.Root with the size cap re-applied: the walk saw this
+	// path as a regular file, but it can be swapped for a link before the read.
+	src, err := safefs.ReadFile(opts.Root, c.rel, opts.MaxFileSize)
 	if err != nil {
 		return fileResult{warn: fmt.Sprintf("githints: index skipped (read error): %s: %v", c.rel, err)}
 	}
