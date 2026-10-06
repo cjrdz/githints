@@ -178,8 +178,18 @@ func TestUsageMatchesCommandTable(t *testing.T) {
 		}
 	}
 	for name := range commands {
-		if !advertised[name] {
+		if !advertised[name] && !hiddenCommands[name] {
 			t.Errorf("command %q is dispatchable but missing from usage", name)
+		}
+	}
+	// Hidden is a deliberate, listed exception, not a way to lose a command:
+	// every hidden name must still dispatch and must not also be advertised.
+	for name := range hiddenCommands {
+		if _, ok := commands[name]; !ok {
+			t.Errorf("hidden command %q is not in the command table", name)
+		}
+		if advertised[name] {
+			t.Errorf("hidden command %q is advertised in usage", name)
 		}
 	}
 }

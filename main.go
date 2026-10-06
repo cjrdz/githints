@@ -48,6 +48,7 @@ var commands = map[string]func(args []string) error{
 	"doctor":         noArgs(cmdDoctor),
 	"mcp-config":     cmdMCPConfig,
 	"version":        noArgs(cmdVersion),
+	"help":           noArgs(cmdHelp),
 }
 
 // noArgs adapts a flagless command to the table's handler signature.
@@ -55,16 +56,41 @@ func noArgs(fn func() error) func([]string) error {
 	return func([]string) error { return fn() }
 }
 
+// hiddenCommands are dispatchable but left out of usage: git hooks call them,
+// people do not. TestUsageMatchesCommandTable checks this list too.
+var hiddenCommands = map[string]bool{
+	"hook-run":       true,
+	"hook-precommit": true,
+}
+
+// Exit codes. 1 is any other error.
+const (
+	exitUsage        = 2 // unknown command or bad arguments (the flag package also uses 2)
+	exitVerifyFailed = 3 // verify ran and found problems, as opposed to failing to run
+)
+
+// errVerifyFailed marks a completed verify that found problems.
+var errVerifyFailed = errors.New("verification failed")
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
-		os.Exit(1)
+		os.Exit(exitUsage)
+	}
+
+	switch os.Args[1] {
+	case "-h", "-help", "--help":
+		_ = cmdHelp() // cannot fail
+		return
+	case "-v", "-version", "--version":
+		fmt.Println(versionString())
+		return
 	}
 
 	cmd, ok := commands[os.Args[1]]
 	if !ok {
-		usage()
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "githints: unknown command %q; run `githints help` for the list\n", os.Args[1])
+		os.Exit(exitUsage)
 	}
 	mustRun(func() error { return cmd(os.Args[2:]) })
 }
@@ -79,8 +105,6 @@ Usage:
   githints init [-chain|-force] [-share]
                                   set up .githints/ + install the git hooks
   githints serve [-root=PATH]     run the MCP stdio server (root also via $GITHINTS_ROOT)
-  githints hook-run               (internal) called by .git/hooks/post-commit
-  githints hook-precommit         (internal) called by .git/hooks/pre-commit
   githints record -file=... -summary=... [-reason=...] [-agent-id=...]
                                   manually record a change (useful for testing)
   githints verify                 check HMAC chain + markdown consistency
@@ -100,16 +124,28 @@ Usage:
   githints doctor                 check hooks, salt, store, config, index and MCP setup
   githints mcp-config CLIENT [-write]
                                   print or add the MCP entry (claude|opencode|gemini|cursor|codex)
-  githints version                print the githints version`
+  githints version                print the version, commit and build date
+  githints help                   show this list
+
+Run any command with -h for its flags. Exit status: 0 ok, 1 error,
+2 usage error, 3 verify found problems.`
+
+func cmdHelp() error {
+	fmt.Println(usageText)
+	return nil
+}
 
 func cmdVersion() error {
-	fmt.Println(version)
+	fmt.Println(versionString())
 	return nil
 }
 
 func mustRun(fn func() error) {
 	if err := fn(); err != nil {
 		fmt.Fprintln(os.Stderr, "githints: "+err.Error())
+		if errors.Is(err, errVerifyFailed) {
+			os.Exit(exitVerifyFailed)
+		}
 		os.Exit(1)
 	}
 }
@@ -914,6 +950,22 @@ func cmdStatus() error {
 
 	fmt.Printf("store: %s\n", filepath.Join(root, ".githints", "store.db"))
 
+	hooksOK := true
+	for _, r := range checkHooks(root) {
+		if r.level != levelOK {
+			hooksOK = false
+			fmt.Printf("hooks: %s (fix: %s)\n", r.detail, r.fix)
+		}
+	}
+	if hooksOK {
+		fmt.Println("hooks: installed")
+	}
+	if _, path, err := integrity.ExistingKey(root); err != nil {
+		fmt.Printf("salt: %v\n", err)
+	} else {
+		fmt.Printf("salt: %s\n", path)
+	}
+
 	total, err := st.Count()
 	if err != nil {
 		return err
@@ -943,9 +995,10 @@ func cmdStatus() error {
 		return err
 	}
 	if len(recent) > 0 && recent[0].Branch != "" {
-		fmt.Printf("latest branch: %s\n", recent[0].Branch)
+		fmt.Printf("latest branch: %s\n", textsafe.OneLine(recent[0].Branch))
 	}
 
+	fmt.Println("(run `githints doctor` for a full health check)")
 	return nil
 }
 
@@ -1424,7 +1477,7 @@ func cmdVerify() error {
 	}
 
 	if len(chainErrs) > 0 || len(diverged) > 0 || clockWarnings > 0 || len(anchors.Problems) > 0 {
-		return fmt.Errorf("verification failed")
+		return errVerifyFailed
 	}
 
 	if err := st.MetaSet("last_verify_at", fmt.Sprintf("%d", time.Now().Unix())); err != nil {
