@@ -314,6 +314,12 @@ githints index --force
 # Rotate the integrity salt and re-sign the chain
 
 githints rotate-salt
+
+# Back up the integrity salt, or carry it to another machine
+
+githints salt export -o salt.txt     # keep it as private as a password
+githints salt import salt.txt        # on the new machine, in the same repo
+githints salt path                   # where it lives
 ```
 
 ## Structural index and the Obsidian graph view

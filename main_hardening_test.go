@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cjrdz/githints/internal/integrity"
 	"github.com/cjrdz/githints/internal/store"
 )
 
@@ -361,5 +362,18 @@ func TestChainedHookFailurePropagates(t *testing.T) {
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
 		t.Fatalf("chained failure not propagated: %v", err)
+	}
+}
+
+// When every signed row fails, verify says why that usually happens instead of
+// leaving the user to conclude the whole log was tampered with.
+func TestKeyChangedHint(t *testing.T) {
+	rows := []store.Change{{ID: 1, HMAC: "a"}, {ID: 2, HMAC: "b"}}
+	all := []integrity.IntegrityError{{ID: 1, Problem: integrity.ProblemHMACMismatch}, {ID: 2, Problem: integrity.ProblemHMACMismatch}}
+	if !strings.Contains(keyChangedHint(rows, all), "user.email") {
+		t.Error("no hint when every signed row fails")
+	}
+	if keyChangedHint(rows, all[:1]) != "" {
+		t.Error("hint shown for a partial failure, which does look like tampering")
 	}
 }

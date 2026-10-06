@@ -101,6 +101,7 @@ githints index status            # index file/symbol counts and last scan time
 githints index verify            # report drift: stale notes, ghost rows, and
                                  #   uncovered source files (with reasons)
 githints rotate-salt [-force]    # rotate integrity salt and re-sign
+githints salt export -o FILE     # back up the integrity salt (salt import FILE restores it)
 githints version                 # print the githints version
 ```
 

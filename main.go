@@ -41,6 +41,7 @@ var commands = map[string]func(args []string) error{
 	"verify":         noArgs(cmdVerify),
 	"changes":        cmdChanges,
 	"rotate-salt":    cmdRotateSalt,
+	"salt":           cmdSalt,
 	"status":         noArgs(cmdStatus),
 	"render":         noArgs(cmdRender),
 	"index":          cmdIndex,
@@ -84,6 +85,8 @@ Usage:
   githints changes -since=... -until=T [-file=...] [-limit=...]
                                   timeline forensics query
   githints rotate-salt [-force]   generate a new integrity salt and re-sign the chain
+  githints salt path|export [-o FILE]|import [-force] FILE
+                                  locate, back up, or restore the integrity salt
   githints status                 show store health and pending records
   githints render                 re-render all markdown from the store
   githints index                  re-index the structural symbol cache
@@ -342,6 +345,7 @@ func ensureGitignore(root string, share bool) error {
 			".githints/index.db*",
 			".githints/.salt",
 			".githints/.salt.new", // left behind if a legacy-location rotation fails
+			".githints/repo-id",   // keys this machine's salt; a shared one could steer it
 			".githints/config.json",
 		}
 	}
@@ -1344,6 +1348,9 @@ func cmdVerify() error {
 			fmt.Printf("  row %d: %s\n", e.ID, e.Problem)
 		}
 	}
+	if hint := keyChangedHint(rows, chainErrs); hint != "" {
+		fmt.Println(hint)
+	}
 
 	clockWarnings := 0
 	for _, c := range rows {
@@ -1516,4 +1523,99 @@ func cmdRotateSalt(args []string) error {
 	}
 	fmt.Println("salt rotated; all rows re-signed with the new key")
 	return nil
+}
+
+// cmdSalt locates, exports, and imports the integrity salt. The salt lives
+// outside the repository on purpose, which means moving to a new machine or
+// recovering a backup needs a way to carry it across.
+func cmdSalt(args []string) error {
+	const usage = "usage: githints salt path | export [-o FILE] | import [-force] FILE"
+	if len(args) == 0 {
+		return errors.New(usage)
+	}
+	root, err := gitutil.RepoRoot()
+	if err != nil {
+		return fmt.Errorf("not inside a git repo: %w", err)
+	}
+
+	switch args[0] {
+	case "path":
+		fmt.Println(integrity.SaltPath(root))
+		return nil
+
+	case "export":
+		fs := flag.NewFlagSet("salt export", flag.ExitOnError)
+		out := fs.String("o", "-", "file to write (created 0600; must not exist), or - for stdout")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		encoded, err := integrity.ExportSalt(root)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "githints: this is the integrity key for this repository's change log; keep it as private as a password")
+		if *out == "-" {
+			fmt.Println(encoded)
+			return nil
+		}
+		f, err := os.OpenFile(*out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(f, encoded); err != nil {
+			_ = f.Close() // the write error is the one worth reporting
+			return err
+		}
+		return f.Close()
+
+	case "import":
+		fs := flag.NewFlagSet("salt import", flag.ExitOnError)
+		force := fs.Bool("force", false, "replace an existing salt (orphans every row signed with it)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return errors.New(usage)
+		}
+		data, err := os.ReadFile(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		path, err := integrity.ImportSalt(root, string(data), *force)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("salt installed at %s; run `githints verify` to confirm it matches the log\n", path)
+		return nil
+	}
+	return errors.New(usage)
+}
+
+// keyChangedHint explains the most common cause of a wholesale verify failure.
+// When every signed row fails to recompute, the rows are almost certainly
+// fine and the key is different: it is derived from the salt and from git's
+// user.email, and either may have changed since the rows were signed.
+func keyChangedHint(rows []store.Change, errs []integrity.IntegrityError) string {
+	signed, failed := 0, 0
+	for _, r := range rows {
+		if r.HMAC != "" {
+			signed++
+		}
+	}
+	for _, e := range errs {
+		if e.Problem == integrity.ProblemHMACMismatch {
+			failed++
+		}
+	}
+	if signed < 2 || failed != signed {
+		return ""
+	}
+	email, _ := gitutil.UserEmail()
+	return fmt.Sprintf(`
+Every signed row fails, which usually means the integrity key changed rather
+than the rows. The key is derived from the salt and from git user.email
+(currently %q):
+  - changed user.email? set it back for this repo: git config user.email <old>
+  - moved machines or lost the salt? githints salt import <file>
+  - neither recoverable? githints rotate-salt -force (discards tamper evidence)`, email)
 }

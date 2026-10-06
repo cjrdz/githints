@@ -165,7 +165,21 @@ HMAC-SHA256(salt, git_user_email)
 ```
 
 If `user.email` is not configured, the key is derived from the salt alone. The
-salt is machine-local, so keys are not portable across machines.
+salt is machine-local, so keys are not portable across machines without
+`githints salt export` / `salt import`.
+
+The salt file is named by a random repo id kept in `.githints/repo-id`, which
+moves with the checkout. It used to be named by the hash of the repository's
+absolute path, so renaming or moving the checkout silently orphaned it; a salt
+from that scheme is adopted under a repo id the first time it is loaded. A
+`repo-id` that git tracks is ignored, since it would let a clone choose which
+salt on this machine is used.
+
+If the log already has signed rows and no salt can be found, githints refuses
+to create one (`integrity.ErrSaltMissing`) and prints the recovery steps: a new
+salt would make every row fail verify. When every signed row does fail,
+`verify` says the key most likely changed (a different salt or `user.email`)
+rather than that every row was tampered with.
 
 ### What the chain does and does not defend against
 
@@ -306,6 +320,7 @@ Commands are implemented in `main.go`:
 - `changes` — query by time range.
 - `status` — show store health and pending records.
 - `rotate-salt` — rotate the integrity salt and re-sign.
+- `salt path|export|import` — locate, back up, or restore the salt.
 
 ## Package layout
 
