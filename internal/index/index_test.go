@@ -72,7 +72,7 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Errorf("names = %v", syms)
 	}
 
-	matches, err := st.FindSymbolsByName("A")
+	matches, err := st.FindSymbolsByName("A", 100)
 	if err != nil {
 		t.Fatalf("FindSymbolsByName: %v", err)
 	}
@@ -1828,7 +1828,7 @@ func TestIncrementalScanDoesNotFollowSymlinksOut(t *testing.T) {
 	if err := IncrementalScan(st, opts, []string{"leak.go", "pkg/secret.go"}, 0); err != nil {
 		t.Fatalf("IncrementalScan: %v", err)
 	}
-	if syms, err := st.FindSymbolsByName("LeakedSecret"); err != nil || len(syms) != 0 {
+	if syms, err := st.FindSymbolsByName("LeakedSecret", 100); err != nil || len(syms) != 0 {
 		t.Fatalf("symbols from outside the repo were indexed: %v, %v", syms, err)
 	}
 }
@@ -1858,5 +1858,28 @@ func TestPruneDoesNotFollowLinkedGithintsDir(t *testing.T) {
 
 	if _, err := os.Stat(keepMe); err != nil {
 		t.Fatalf("prune deleted a file outside the repo: %v", err)
+	}
+}
+
+func TestFindSymbolsByNameBoundsInSQL(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	var src strings.Builder
+	src.WriteString("package main\n")
+	for i := range 50 {
+		fmt.Fprintf(&src, "func F%d() {}\n", i)
+	}
+	writeGo(t, root, "many.go", src.String())
+	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second}, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+	got, err := st.FindSymbolsByName("F", 7)
+	if err != nil || len(got) != 7 {
+		t.Fatalf("FindSymbolsByName(F, 7) = %d rows, %v", len(got), err)
+	}
+	if _, err := st.FindSymbolsByName("", 7); err == nil {
+		t.Fatal("empty name accepted")
 	}
 }

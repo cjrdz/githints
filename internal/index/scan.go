@@ -335,15 +335,12 @@ func shouldIgnoreFile(root, rel string) bool {
 // excludesFile is non-empty, it is passed via -c core.excludesFile so the file
 // is treated as an additional global exclude file.
 func gitCheckIgnore(root, rel, excludesFile string) bool {
-	var cmd *exec.Cmd
+	var args []string
 	if excludesFile != "" {
-		cmd = exec.Command("git", "-c", "core.excludesFile="+excludesFile, "check-ignore", "--no-index", "--stdin")
-	} else {
-		cmd = exec.Command("git", "check-ignore", "--no-index", "--stdin")
+		args = append(args, "-c", "core.excludesFile="+excludesFile)
 	}
-	cmd.Dir = root
-	cmd.Stdin = strings.NewReader(rel + "\n")
-	out, err := cmd.CombinedOutput()
+	args = append(args, "check-ignore", "--no-index", "--stdin")
+	out, err := gitutil.RunIn(context.Background(), root, strings.NewReader(rel+"\n"), gitutil.MaxOutputBytes, args...)
 	// git check-ignore exits 0 when the path is ignored and outputs the path,
 	// exits 1 when the path is not ignored, and may exit non-zero on errors.
 	// We treat any output as "ignored"; missing output with exit 0 is unusual
@@ -664,34 +661,25 @@ func batchCheckIgnore(root string, rels []string, excludesFile string) (ignoreSe
 	// mis-split line would silently mark the wrong file ignored.
 	args = append(args, "check-ignore", "--no-index", "--stdin", "-z")
 
-	cmd := exec.Command("git", args...)
-	cmd.Dir = root
-
 	var stdin bytes.Buffer
 	for _, rel := range rels {
 		stdin.WriteString(rel)
 		stdin.WriteByte(0)
 	}
-	cmd.Stdin = &stdin
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	// Through gitutil so the call has a timeout and a bounded buffer: it
+	// used to buffer all of stdout and check the size afterwards.
+	stdout, err := gitutil.RunIn(context.Background(), root, &stdin, gitutil.MaxOutputBytes, args...)
 	// Exit status 1 means "nothing matched", which is a normal answer rather
-	// than a failure. Anything else with output on stderr is a real problem.
+	// than a failure.
 	if err != nil {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
-			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+			return nil, err
 		}
 	}
-	if stdout.Len() > gitutil.MaxOutputBytes {
-		return nil, fmt.Errorf("check-ignore produced %d bytes, over the cap of %d", stdout.Len(), gitutil.MaxOutputBytes)
-	}
 
-	for _, p := range strings.Split(stdout.String(), "\x00") {
+	for _, p := range strings.Split(string(stdout), "\x00") {
 		if p != "" {
 			out[p] = true
 		}

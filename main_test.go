@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -205,5 +206,32 @@ func TestEnsureManagedBlockRefusesSymlink(t *testing.T) {
 	}
 	if string(got) != "# mine\n" {
 		t.Fatalf("link target was modified: %q", got)
+	}
+}
+
+// The install path is data. With Go's %q it landed inside sh double quotes,
+// where "$(...)" still ran -- in the -x test and again in the echo line.
+func TestHookScriptQuotesHostilePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX sh")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "pwned")
+	exe := filepath.Join(dir, "it's $(touch "+marker+") `touch "+marker+"`", "githints")
+	hook := filepath.Join(dir, "hook")
+	if err := os.WriteFile(hook, []byte(hookScriptFor(exe, "hook-run")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", hook)
+	cmd.Env = append(os.Environ(), "PATH=/nonexistent") // so the PATH fallback cannot fire either
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hook should exit 0 when the binary is missing: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("hook executed part of the install path:\n%s", out)
+	}
+	if !strings.Contains(string(out), "it's $(touch") {
+		t.Errorf("hook did not print the path verbatim: %s", out)
 	}
 }

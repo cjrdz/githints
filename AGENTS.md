@@ -108,7 +108,8 @@ The write and read tools are bounded. Exceeding a limit is an error, not a
 silent truncation:
 
 - `summary` and `reason`: 4000 bytes each. A call carrying an obvious credential
-  shape (AWS key id, GitHub token, PEM private key, JWT) is refused outright.
+  shape (cloud or API key, GitHub or Slack token, private key, JWT) is refused
+  outright.
   Control characters, terminal escapes, bidi overrides and zero-width
   characters are removed before storing; newlines in a summary or reason are
   kept but rendered on one line.

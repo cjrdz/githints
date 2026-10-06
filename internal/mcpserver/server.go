@@ -37,6 +37,10 @@ const maxDiffResultBytes = 128 << 10
 // pathological expressions are a cheap CPU amplifier.
 const maxSearchQueryLen = 500
 
+// maxSymbolNameLen caps find_symbol's name prefix. No real identifier is
+// close to it; the cap keeps the LIKE pattern bounded.
+const maxSymbolNameLen = 256
+
 // instructions is delivered to every MCP client at connect time. It is the one
 // channel that reaches Claude Code, opencode, Codex, and any other compliant
 // client without a per-client memory file, so the core workflow rules live
@@ -704,7 +708,13 @@ func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 		}
 		limit := clampLimit(req.GetInt("limit", 20), 20, 500)
 
-		matches, err := db.FindSymbolsByName(name)
+		if len(name) > maxSymbolNameLen {
+			return mcp.NewToolResultError(fmt.Sprintf("name too long: %d bytes (max %d)", len(name), maxSymbolNameLen)), nil
+		}
+
+		// One extra row says whether there are more than limit matches
+		// without counting the whole table.
+		matches, err := db.FindSymbolsByName(name, limit+1)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -717,7 +727,7 @@ func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 			return mcp.NewToolResultText(b.String()), nil
 		}
 		if len(matches) > limit {
-			fmt.Fprintf(&b, "_showing %d of %d matches_\n\n", limit, len(matches))
+			fmt.Fprintf(&b, "_showing the first %d matches; narrow the name for more_\n\n", limit)
 			matches = matches[:limit]
 		}
 		for _, sym := range matches {

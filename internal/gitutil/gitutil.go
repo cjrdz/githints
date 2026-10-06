@@ -57,6 +57,10 @@ func run(args ...string) (string, error) {
 	return runCtx(ctx, args...)
 }
 
+// Diff-producing calls pass --no-ext-diff --no-textconv --no-color: a
+// repository's .gitattributes can name a diff driver or textconv filter, and
+// the user's config decides what that runs. githints wants git's own diff,
+// and wants it the same on every machine (it is hashed into diff_hash).
 func runCtx(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	out := &capWriter{n: MaxOutputBytes}
@@ -144,9 +148,9 @@ func FileDiffCtx(ctx context.Context, hash, file string) (string, error) {
 		return "", fmt.Errorf("invalid commit hash %q", hash)
 	}
 	if hash == "" {
-		return runCtx(ctx, "diff", "HEAD", "--", file)
+		return runCtx(ctx, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--", file)
 	}
-	return runCtx(ctx, "show", "--pretty=format:", hash, "--", file)
+	return runCtx(ctx, "show", "--no-ext-diff", "--no-textconv", "--no-color", "--pretty=format:", hash, "--", file)
 }
 
 // IsTracked reports whether rel (relative to root) is in git's index. Used to
@@ -178,9 +182,9 @@ func DiffHash(hash, file string) (string, error) {
 	var out string
 	var err error
 	if hash == "" {
-		out, err = run("diff", "HEAD", "--", file)
+		out, err = run("diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--", file)
 	} else {
-		out, err = run("show", "--pretty=format:", hash, "--", file)
+		out, err = run("show", "--no-ext-diff", "--no-textconv", "--no-color", "--pretty=format:", hash, "--", file)
 	}
 	if err != nil {
 		return "", err
@@ -225,7 +229,7 @@ func DiffStat(hash, file string) string {
 	if !IsValidCommitish(hash) {
 		return ""
 	}
-	out, err := run("diff", "--numstat", hash+"^", hash, "--", file)
+	out, err := run("diff", "--no-ext-diff", "--no-textconv", "--numstat", hash+"^", hash, "--", file)
 	if err != nil || out == "" {
 		return ""
 	}
@@ -240,7 +244,7 @@ func DiffStat(hash, file string) string {
 // working-tree changes to file vs HEAD. Returns "" if the file is unchanged,
 // untracked, or if there is no HEAD yet.
 func WorktreeDiffStat(file string) string {
-	out, err := run("diff", "--numstat", "HEAD", "--", file)
+	out, err := run("diff", "--no-ext-diff", "--no-textconv", "--numstat", "HEAD", "--", file)
 	if err != nil || out == "" {
 		return ""
 	}
@@ -348,7 +352,23 @@ func ReadNotes(ref string) (map[string]string, error) {
 // runLimited runs git with optional stdin and returns raw stdout, failing
 // rather than truncating if it exceeds max bytes.
 func runLimited(ctx context.Context, stdin io.Reader, max int, args ...string) ([]byte, error) {
+	return RunIn(ctx, "", stdin, max, args...)
+}
+
+// RunIn runs git in dir (the process's working directory when empty) with
+// optional stdin, bounded by ctx -- or by the default timeout when ctx has no
+// deadline -- and by max bytes of stdout. Exceeding max is an error, not a
+// truncation. On a non-zero exit the error wraps *exec.ExitError, so a caller
+// for whom exit 1 is an answer (check-ignore) can tell, and stdout is still
+// returned.
+func RunIn(ctx context.Context, dir string, stdin io.Reader, max int, args ...string) ([]byte, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultTimeout)
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
 	out := &capWriter{n: max}
 	stderr := &capWriter{n: 8 << 10}
 	cmd.Stdin = stdin
@@ -358,7 +378,7 @@ func runLimited(ctx context.Context, stdin io.Reader, max int, args ...string) (
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), ctxErr)
 		}
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderr.buf.String())
+		return out.buf.Bytes(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.buf.String()))
 	}
 	if out.truncated {
 		return nil, fmt.Errorf("git %s: output exceeded %d bytes", strings.Join(args, " "), max)

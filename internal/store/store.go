@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -133,22 +132,19 @@ PRAGMA synchronous=NORMAL;
 // Open creates/opens the SQLite store at path, applies the schema and any
 // additive migrations, and sets the connection pragmas.
 func Open(path string) (*Store, error) {
-	// EnsureDir rather than MkdirAll: a clone can ship .githints as a link,
-	// and the database (and its WAL and SHM siblings) would be created at the
-	// far end of it.
-	if err := safefs.EnsureDir(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create store directory: %w", err)
-	}
-	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file (symlink?); refusing to open it", path)
-	}
-	if err := safefs.RefuseTrackedState(path, gitutil.IsTracked); err != nil {
-		return nil, err
-	}
 	if strings.Contains(path, "?") {
 		// The driver splits the name at "?" for its DSN parameters; a path
 		// containing one would open (and create) a different file.
 		return nil, fmt.Errorf("database path %q contains '?', which the sqlite driver cannot open safely", path)
+	}
+	// PrepareDatabase rather than MkdirAll: a clone can ship .githints as a
+	// link, and the database (and its WAL and SHM siblings) would be created
+	// at the far end of it. It also creates the file 0600.
+	if err := safefs.RefuseTrackedState(path, gitutil.IsTracked); err != nil {
+		return nil, err
+	}
+	if err := safefs.PrepareDatabase(path); err != nil {
+		return nil, fmt.Errorf("create store directory: %w", err)
 	}
 	// trusted_schema=OFF on every pooled connection (a DSN pragma, not an
 	// Exec, which would reach only one): functions with side effects cannot

@@ -65,9 +65,11 @@ is again what catches this. `clock_tamper_warning` *is* covered, as of the chang
 that added it — clearing it now breaks the signature.
 
 **Secret scanning is a backstop, not a control.** `internal/secrets` recognizes
-four high-signal shapes (AWS access key ids, GitHub tokens, PEM private keys,
-JWTs). Generic `API_KEY=` assignments, passwords, and database connection strings
-pass through into stored summaries and rendered markdown. Do not rely on it.
+credential shapes with a fixed, distinctive prefix: AWS access key ids, GitHub
+classic and fine-grained tokens, Slack tokens, Anthropic, OpenAI and Google API
+keys, Stripe live keys, PEM and PGP private keys, and JWTs. Generic `API_KEY=`
+assignments, passwords, and database connection strings pass through into
+stored summaries and rendered markdown. Do not rely on it.
 
 **`get_diff` redacts, it does not withhold.** Diffs are passed through the same
 scrubber used before anything reaches a local model: hunks belonging to

@@ -114,10 +114,13 @@ func TestHookSurvivesBinaryMoving(t *testing.T) {
 
 	// The recorded path wins while it exists, so a local dev build is not
 	// displaced by an unrelated githints on PATH.
-	if !strings.Contains(hook, `[ -x "`+filepath.ToSlash(recorded)+`" ]`) {
+	// The path is held in a shell variable, single-quoted (see
+	// TestHookScriptQuotesHostilePath), and tested before anything else.
+	if !strings.Contains(hook, `githints_bin='`+filepath.ToSlash(recorded)+`'`) ||
+		!strings.Contains(hook, `[ -x "$githints_bin" ]`) {
 		t.Errorf("hook does not test the recorded path first:\n%s", hook)
 	}
-	idxRecorded := strings.Index(hook, filepath.ToSlash(recorded))
+	idxRecorded := strings.Index(hook, `[ -x "$githints_bin" ]`)
 	idxPath := strings.Index(hook, "command -v githints")
 	if idxRecorded < 0 || idxPath < 0 || idxRecorded > idxPath {
 		t.Errorf("the recorded path must be tried before PATH:\n%s", hook)

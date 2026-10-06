@@ -500,7 +500,7 @@ func TestEscapeKeepsSummaryOnOneLine(t *testing.T) {
 		"fine\n## 2099-01-01 · forged entry":    "\n## ",
 		"fine\r\n- source: human · commit: `x`": "\n- ",
 		"#tag and ==highlight== and %%hidden%%": "==highlight==",
-		"bidi \u202e override":                       "\u202e",
+		"bidi \u202e override":                  "\u202e",
 		"esc \x1b[31m red":                      "\x1b",
 		"~~struck~~ and | cell |":               "~~struck~~",
 	} {

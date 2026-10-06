@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -26,22 +25,19 @@ type Store struct {
 
 // Open opens or creates index.db at path, applying the schema if necessary.
 func Open(path string) (*Store, error) {
-	// EnsureDir rather than MkdirAll: a clone can ship .githints as a link,
-	// and the database (and its WAL and SHM siblings) would be created at the
-	// far end of it.
-	if err := safefs.EnsureDir(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create index db dir: %w", err)
-	}
-	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file (symlink?); refusing to open it", path)
-	}
-	if err := safefs.RefuseTrackedState(path, gitutil.IsTracked); err != nil {
-		return nil, err
-	}
 	if strings.Contains(path, "?") {
 		// The driver splits the name at "?" for its DSN parameters; a path
 		// containing one would open (and create) a different file.
 		return nil, fmt.Errorf("database path %q contains '?', which the sqlite driver cannot open safely", path)
+	}
+	// PrepareDatabase rather than MkdirAll: a clone can ship .githints as a
+	// link, and the database (and its WAL and SHM siblings) would be created
+	// at the far end of it. It also creates the file 0600.
+	if err := safefs.RefuseTrackedState(path, gitutil.IsTracked); err != nil {
+		return nil, err
+	}
+	if err := safefs.PrepareDatabase(path); err != nil {
+		return nil, fmt.Errorf("create index db dir: %w", err)
 	}
 	// trusted_schema=OFF on every pooled connection (a DSN pragma, not an
 	// Exec, which would reach only one): functions with side effects cannot
@@ -477,8 +473,18 @@ func (s *Store) SymbolsForFile(path string) ([]lang.Symbol, error) {
 }
 
 // FindSymbolsByName returns exact and prefix matches for a name across the repo.
-func (s *Store) FindSymbolsByName(name string) ([]lang.Symbol, error) {
-	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature, language FROM symbols WHERE name LIKE ? ESCAPE '\\' ORDER BY LENGTH(name), file_path, line_start", lang.EscapeLike(name)+"%")
+//
+// At most limit rows are returned, bounded in SQL: an empty or one-letter
+// prefix matches most of the table, and this runs inside the MCP server.
+// An empty name is an error rather than "everything".
+func (s *Store) FindSymbolsByName(name string, limit int) ([]lang.Symbol, error) {
+	if name == "" {
+		return nil, fmt.Errorf("symbol name is required")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("limit must be positive, got %d", limit)
+	}
+	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature, language FROM symbols WHERE name LIKE ? ESCAPE '\\' ORDER BY LENGTH(name), file_path, line_start LIMIT ?", lang.EscapeLike(name)+"%", limit)
 	if err != nil {
 		return nil, err
 	}

@@ -46,7 +46,7 @@ func FilePath(root, srcPath string) string {
 // committed .githints/up -> .. plus a record for "up/CLAUDE" stayed inside the
 // root and overwrote the repo's CLAUDE.md with agent-supplied text.
 func writeUnder(root, rel string, data []byte) error {
-	return safefs.WriteFile(filepath.Join(root, dirName), rel, data, 0o755, 0o644)
+	return safefs.WriteFile(filepath.Join(root, dirName), rel, data, safefs.StateDirPerm, 0o644)
 }
 
 // reservedNames are githints' own outputs at the top of .githints/. A hint for

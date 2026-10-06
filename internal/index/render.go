@@ -62,7 +62,7 @@ func RenderNotes(db *Store, root string, obsidian bool) error {
 // the change-journal notes. It never overwrites an existing configuration:
 // once the user touches Graph view settings, their choices win.
 func writeObsidianGraphPreset(root string) {
-	r, err := safefs.Open(githintsDir(root), 0o755)
+	r, err := safefs.Open(githintsDir(root), safefs.StateDirPerm)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "githints: could not write Obsidian graph preset: %v\n", err)
 		return
@@ -76,7 +76,7 @@ func writeObsidianGraphPreset(root string) {
 	// dangling links to notes that don't exist; showOrphans keeps
 	// legitimately isolated files (entrypoints) visible.
 	preset := `{"search":"path:index","hideUnresolved":true,"showOrphans":true}` + "\n"
-	if err := safefs.WriteFileIn(r, rel, []byte(preset), 0o755, 0o644); err != nil {
+	if err := safefs.WriteFileIn(r, rel, []byte(preset), safefs.StateDirPerm, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "githints: could not write Obsidian graph preset: %v\n", err)
 	}
 }
@@ -93,7 +93,7 @@ func writeManaged(root, abs string, data []byte) error {
 	if err != nil || !filepath.IsLocal(rel) {
 		return fmt.Errorf("%s is not under .githints", abs)
 	}
-	return safefs.WriteFile(githintsDir(root), rel, data, 0o755, 0o644)
+	return safefs.WriteFile(githintsDir(root), rel, data, safefs.StateDirPerm, 0o644)
 }
 
 // removeManaged deletes an absolute path under .githints/ through an os.Root.
@@ -103,7 +103,7 @@ func removeManaged(root, abs string) error {
 	if err != nil || !filepath.IsLocal(rel) {
 		return fmt.Errorf("%s is not under .githints", abs)
 	}
-	r, err := safefs.Open(githintsDir(root), 0o755)
+	r, err := safefs.Open(githintsDir(root), safefs.StateDirPerm)
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func pruneStaleNotes(root string, keep map[string]struct{}) {
 	// Walked and deleted through an os.Root: a clone that ships
 	// .githints -> .. (or .githints/index -> somewhere) must not turn the
 	// prune into "delete every .md file over there".
-	r, err := safefs.Open(githintsDir(root), 0o755)
+	r, err := safefs.Open(githintsDir(root), safefs.StateDirPerm)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "githints: stale note prune skipped: %v\n", err)
 		return

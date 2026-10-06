@@ -161,3 +161,41 @@ func RefuseTrackedState(path string, isTracked func(root, rel string) (bool, err
 	return fmt.Errorf("%s is tracked by git, so it came from the repository rather than this machine; "+
 		"run `git rm --cached %s` and delete the file (githints recreates it)", rel, filepath.ToSlash(rel))
 }
+
+// StateDirPerm is the mode for .githints/ itself. It holds the change log and
+// the index, which can describe code that isn't public; on a shared host the
+// default 0755 made every summary readable by every local user. Git does not
+// track directory modes, so shared mode is unaffected.
+const StateDirPerm fs.FileMode = 0o700
+
+// PrepareDatabase readies path (a database inside .githints/) for opening:
+// the directory must be a plain directory and is restricted to the owner, and
+// a new database file is pre-created 0600 so SQLite -- which gives its WAL
+// and SHM files the mode of the database -- never creates any of the three
+// world-readable. An existing database with a looser mode is tightened.
+func PrepareDatabase(path string) error {
+	dir := filepath.Dir(path)
+	if err := EnsureDir(dir, StateDirPerm); err != nil {
+		return err
+	}
+	if filepath.Base(dir) == ".githints" {
+		if err := os.Chmod(dir, StateDirPerm); err != nil {
+			return err
+		}
+	}
+	// O_EXCL never follows a symlink and fails if anything is already there.
+	if f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600); err == nil {
+		_ = f.Close() // empty file; SQLite initializes it on first use
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file (symlink?); refusing to open it", path)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return os.Chmod(path, 0o600)
+	}
+	return nil
+}

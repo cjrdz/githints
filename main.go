@@ -197,18 +197,27 @@ var claudeBlock = []string{
 // Written in POSIX sh: Git for Windows runs hooks through its bundled sh, and
 // forward-slash paths work there too.
 func hookScriptFor(exe, cmd string) string {
-	path := filepath.ToSlash(exe)
+	// The path is assigned once, single-quoted, and only ever expanded inside
+	// double quotes. It used to be interpolated with Go's %q, which is not
+	// shell quoting: inside sh double quotes a "$(...)" or backtick in the
+	// install path still ran, in the test and in the echo line alike.
 	return fmt.Sprintf(`#!/bin/sh
 # %s — do not edit by hand
-if [ -x %q ]; then
-	exec %q %s "$@"
+githints_bin=%s
+if [ -x "$githints_bin" ]; then
+	exec "$githints_bin" %s "$@"
 fi
 if command -v githints >/dev/null 2>&1; then
 	exec githints %s "$@"
 fi
-echo "githints: not found at %s and not on PATH; run 'githints init' to repoint this hook" >&2
+echo "githints: not found at $githints_bin and not on PATH; run 'githints init' to repoint this hook" >&2
 exit 0
-`, managedHookMarker, path, path, cmd, cmd, path)
+`, managedHookMarker, shellQuote(filepath.ToSlash(exe)), cmd, cmd)
+}
+
+// shellQuote returns s as a single POSIX sh word that expands to exactly s.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func hookExistsAndManaged(path string) (exists bool, managed bool, err error) {
