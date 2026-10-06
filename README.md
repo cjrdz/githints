@@ -83,9 +83,14 @@ Linux, macOS, and Windows (with [Git for Windows](https://gitforwindows.org/)).
 ## CLI overview
 
 ```sh
-githints init [-share]           # set up .githints/, install hooks, gitignore,
+githints init [-share] [-chain]  # set up .githints/, install hooks, gitignore,
                                  #   and the AGENTS.md / CLAUDE.md blocks
                                  #   -share commits rendered markdown; state stays local
+                                 #   -chain keeps an existing hook, running it first
+githints mcp-config CLIENT -write
+                                 # register the MCP server (claude, opencode,
+                                 #   gemini, cursor; codex prints a command)
+githints doctor                  # check the whole setup and say how to fix it
 githints serve [-root=PATH]      # run the MCP stdio server
 githints record -file=F -summary=S [-reason=R]
                                  # manually record a change

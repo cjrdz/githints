@@ -147,6 +147,13 @@ server somewhere else — Codex CLI's config is global, and some clients use an
 arbitrary cwd — pin it with `-root` or `GITHINTS_ROOT`. Precedence is flag, then
 environment, then working directory.
 
+### `doctor`
+
+    githints doctor
+
+Checks git, hooks, config, store, salt, HMAC chain, Merkle anchors, index and
+MCP registration, and prints a fix for anything wrong. Changes nothing.
+
 ### `verify`
 
     ./githints verify

@@ -265,6 +265,25 @@ func signedRows(root string) int {
 	return n
 }
 
+// ExistingKey derives the key from a salt that already exists, never
+// creating, adopting, or moving one. For read-only diagnostics.
+func ExistingKey(root string) ([]byte, string, error) {
+	path := SaltPath(root)
+	data, err := readSalt(path)
+	if os.IsNotExist(err) && path != pathKeyedSaltPath(root) {
+		path = pathKeyedSaltPath(root)
+		data, err = readSalt(path)
+	}
+	if os.IsNotExist(err) {
+		return nil, "", fmt.Errorf("%w at %s", ErrSaltMissing, SaltPath(root))
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	email, _ := gitutil.UserEmail()
+	return DeriveKey(data, email), path, nil
+}
+
 // ExportSalt returns the salt for root, hex-encoded, for moving it to another
 // machine or checkout. It never creates one.
 func ExportSalt(root string) (string, error) {

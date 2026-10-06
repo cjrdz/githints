@@ -168,8 +168,11 @@ func TestHookIsPosixSh(t *testing.T) {
 func TestVerifyDetectsRowsDeletedAfterAnchoring(t *testing.T) {
 	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
 	dir := chdirTempRepo(t)
-	// No hooks: the test binary must not be run as a git hook. cmdHookRun is
-	// called directly instead.
+	if err := cmdInit(nil); err != nil {
+		t.Fatalf("cmdInit: %v", err)
+	}
+	// The hooks init installed would run the test binary, so the commit below
+	// bypasses them and cmdHookRun is called directly instead.
 	for _, f := range []string{"a.go", "b.go"} {
 		if err := os.WriteFile(filepath.Join(dir, f), []byte("package a\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -233,6 +236,9 @@ func TestPreCommitBlocksUnrecordedFilesWhenAsked(t *testing.T) {
 	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
 	t.Setenv("GITHINTS_PRECOMMIT_BLOCK", "1")
 	dir := chdirTempRepo(t)
+	if err := cmdInit(nil); err != nil {
+		t.Fatalf("cmdInit: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -375,5 +381,25 @@ func TestKeyChangedHint(t *testing.T) {
 	}
 	if keyChangedHint(rows, all[:1]) != "" {
 		t.Error("hint shown for a partial failure, which does look like tampering")
+	}
+}
+
+// Every command but init used to create .githints/store.db as a side effect,
+// so `githints serve` in a fresh repository came up with no hooks, no salt,
+// and no explanation.
+func TestCommandsRequireInit(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := chdirTempRepo(t)
+	for name, run := range map[string]func() error{
+		"status": cmdStatus,
+		"verify": cmdVerify,
+		"record": func() error { return cmdRecord([]string{"-file=a.go", "-summary=x"}) },
+	} {
+		if err := run(); !errors.Is(err, errNotInitialized) {
+			t.Errorf("%s before init: got %v, want errNotInitialized", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".githints")); err == nil {
+		t.Error("a command other than init created .githints/")
 	}
 }

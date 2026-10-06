@@ -226,6 +226,27 @@ func applyMigrations(db *sql.DB) error {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// IntegrityCheck runs SQLite's PRAGMA integrity_check and returns its
+// problems; nil means the database file is structurally sound.
+func (s *Store) IntegrityCheck() ([]string, error) {
+	rows, err := s.db.Query("PRAGMA integrity_check")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var problems []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return nil, err
+		}
+		if line != "ok" {
+			problems = append(problems, line)
+		}
+	}
+	return problems, rows.Err()
+}
+
 // CheckClockTamper reports whether recordedAt is a suspicious backward jump
 // from the highest timestamp seen so far, and advances that high-water mark.
 //

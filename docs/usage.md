@@ -136,6 +136,24 @@ what you should rely on.
 `githints serve` is a stdio MCP server. By default it resolves the repo root
 from its working directory, so a **project-scoped** config is simplest.
 
+`githints mcp-config` writes that config for you. It prints the entry for one
+client, and with `-write` merges it into the client's project file, keeping any
+other servers already there:
+
+```sh
+githints mcp-config claude -write      # .mcp.json
+githints mcp-config opencode -write    # opencode.json
+githints mcp-config gemini -write      # .gemini/settings.json
+githints mcp-config cursor -write      # .cursor/mcp.json
+githints mcp-config codex              # prints the `codex mcp add` command
+```
+
+A file that is not plain JSON (opencode allows comments) is left untouched and
+you are asked to add the entry by hand. Then run `githints doctor` to check the
+whole setup.
+
+The sections below show the same entries for doing it by hand.
+
 ### Claude Code
 
 Create `.mcp.json` in the repo root:
@@ -167,7 +185,7 @@ Create `opencode.json` in the repo root:
 }
 ```
 
-If the binary is not on your `PATH`, use `"command": ["./githints", "serve"]`.
+If the binary is not on your `PATH`, use its absolute path as the command.
 
 ### Codex CLI
 
@@ -569,6 +587,44 @@ merge side with the canonical derived content.
   scoped.
 - **Separate repos**: run `githints init` in each repo. Stores and hooks are
   isolated; do not share a `store.db` across repos.
+
+## Troubleshooting
+
+Start with `githints doctor`. It checks git, the hooks (installed where git
+actually runs them, executable, pointing at a binary that exists), the config,
+the store's SQLite integrity, the salt, the HMAC chain, the Merkle anchors, the
+index, and whether an MCP client is registered, and prints a fix for each
+problem. It changes nothing.
+
+**Commands say githints is not set up.** Run `githints init`. Only `init`
+creates `.githints/`; every other command refuses rather than creating an empty
+store behind your back.
+
+**Hooks never run.** If `core.hooksPath` is set, `init` installs there; if it
+points inside the repository (husky, lefthook), `init` refuses and tells you
+the two lines to add to those hooks instead. If you already had a hook, use
+`githints init -chain` to keep it running before githints'.
+
+**Every row fails `verify`.** The integrity key is derived from the salt and
+your git `user.email`, so a change to either makes every row fail at once.
+`verify` says so when it happens. Set the old email back for the repo, or
+restore the salt with `githints salt import`. Only if neither is possible,
+`githints rotate-salt -force` re-signs everything under a new salt, which also
+discards the tamper evidence.
+
+**"integrity salt missing".** The log has signed rows but the salt is not on
+this machine (a new machine, or a wiped config directory). githints refuses to
+create a new one, since that would make every row fail. Export it where it
+still exists (`githints salt export -o salt.txt`) and import it here.
+
+**`merkle anchors` problems in `verify`.** Rows were changed, deleted, or moved
+after they were anchored by a commit. If you did not do it, treat it as
+tampering. Notes are local unless you push them:
+`git push origin refs/notes/githints`.
+
+**A commit was blocked.** Only `GITHINTS_PRECOMMIT_BLOCK=1` with staged files
+that have no pending record blocks a commit; internal errors are printed and
+skipped. Record the files, or unset the variable.
 
 ## Uninstall
 

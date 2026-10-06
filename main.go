@@ -45,6 +45,8 @@ var commands = map[string]func(args []string) error{
 	"status":         noArgs(cmdStatus),
 	"render":         noArgs(cmdRender),
 	"index":          cmdIndex,
+	"doctor":         noArgs(cmdDoctor),
+	"mcp-config":     cmdMCPConfig,
 	"version":        noArgs(cmdVersion),
 }
 
@@ -95,6 +97,9 @@ Usage:
   githints index languages        list the languages this binary can index
   githints index facets [-facet=] [-framework=] [-file=] [-limit=]
                                   list detected framework constructs
+  githints doctor                 check hooks, salt, store, config, index and MCP setup
+  githints mcp-config CLIENT [-write]
+                                  print or add the MCP entry (claude|opencode|gemini|cursor|codex)
   githints version                print the githints version`
 
 func cmdVersion() error {
@@ -109,6 +114,29 @@ func mustRun(fn func() error) {
 	}
 }
 
+// errNotInitialized is returned by every command but init when the repository
+// has no .githints/store.db yet.
+var errNotInitialized = errors.New("githints is not set up in this repository")
+
+// openInitialized is openRootAndStore for every command except init. Those
+// used to create .githints/store.db as a side effect, so `githints serve` in
+// a fresh repository came up with no hooks, no salt and no explanation.
+func openInitialized() (root string, st *store.Store, err error) {
+	root, err = gitutil.RepoRoot()
+	if err != nil {
+		return "", nil, fmt.Errorf("not inside a git repo: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".githints", "store.db")); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, fmt.Errorf("%w (%s); run `githints init` first", errNotInitialized, root)
+		}
+		return "", nil, err
+	}
+	return openRootAndStore()
+}
+
+// openRootAndStore resolves the repository and opens (creating if needed)
+// its store. Only init should call it directly; see openInitialized.
 func openRootAndStore() (root string, st *store.Store, err error) {
 	root, err = gitutil.RepoRoot()
 	if err != nil {
@@ -480,21 +508,14 @@ func cmdInit(args []string) error {
 	fmt.Printf("githints initialized at %s/.githints\nhooks installed at %s, %s\nmode: %s\n", root, postCommit, preCommit, mode)
 	fmt.Print(`wrote agent instructions to AGENTS.md and CLAUDE.md (managed blocks)
 
-Next: register the MCP server with your client.
+Next: register the MCP server with your client, for example:
 
-  Claude Code — .mcp.json in the repo root:
-    {"mcpServers":{"githints":{"command":"githints","args":["serve"]}}}
+  githints mcp-config claude -write      # .mcp.json
+  githints mcp-config opencode -write    # opencode.json
+  githints mcp-config codex              # prints the command; Codex's config is global
 
-  opencode — opencode.json in the repo root:
-    {"mcp":{"githints":{"type":"local","command":["githints","serve"],"enabled":true}}}
-
-  Codex CLI — its config is global, so run:
-    codex mcp add githints -- githints serve
+Then run ` + "`githints doctor`" + ` to check the whole setup.
 `)
-	fmt.Printf(`
-If your client launches the server from a directory other than this repo, pin
-the root explicitly: githints serve -root=%s (or set GITHINTS_ROOT).
-`, root)
 	return nil
 }
 
@@ -520,7 +541,7 @@ func cmdServe(args []string) error {
 		}
 	}
 
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -607,7 +628,7 @@ func summarizeViaOllama(ctx context.Context, client *llm.Client, hash, file stri
 // sequence runs inside a transaction so a concurrent record_change cannot
 // slip between ClaimPending and the fallback decision.
 func cmdHookRun() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -803,7 +824,7 @@ func cmdPreCommit() error {
 var errPrecommitBlocked = errors.New("pre-commit gate blocked the commit")
 
 func preCommitCheck() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -863,7 +884,7 @@ func cmdRecord(args []string) error {
 		return err
 	}
 
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -885,7 +906,7 @@ func cmdRecord(args []string) error {
 
 // cmdStatus prints a quick health/dashboard view of the githints store.
 func cmdStatus() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -932,7 +953,7 @@ func cmdStatus() error {
 // current store. Useful after resolving a merge conflict on the rendered
 // markdown or after switching shared-history modes.
 func cmdRender() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -1321,7 +1342,7 @@ func sortedStringKeys(m map[string]int) []string {
 // recorded_at timestamps, and that the rendered markdown files match the
 // database. It prints the Merkle root of the current log.
 func cmdVerify() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -1432,7 +1453,7 @@ func cmdChanges(args []string) error {
 		}
 	}
 
-	_, st, err := openRootAndStore()
+	_, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
