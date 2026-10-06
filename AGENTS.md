@@ -63,6 +63,9 @@ When the repo has a structural index, orient yourself with code-level queries:
 - `get_dependents(file="...")` — what breaks if you change it
 - `find_symbol(name="...")` — where something is defined
 - `get_index_summary(limit=10)` — totals, languages, and the hub files
+- `get_dependency_graph(file="...", depth=1)` — the import neighbourhood of a
+  file, as JSON or `format="mermaid"`; also `./githints index graph -focus=...
+  -format=mermaid`
 - `find_facets(facet="route")` — framework constructs by the role they play,
   normalized across frameworks; also `./githints index facets -facet=route`
 
@@ -212,6 +215,9 @@ time.
     ./githints index facets       # list detected framework constructs
                                   # (-facet, -framework, -file, -limit)
     ./githints index --obsidian   # render index notes as Obsidian wikilinks
+    ./githints index graph        # offline dependency-graph viewer at
+                                  # .githints/graph.html (-focus, -depth,
+                                  # -external, -format=mermaid|dot|json)
 
 The index is updated automatically by the post-commit hook when indexing is
 enabled (default) in `.githints/config.json`.
@@ -227,7 +233,8 @@ Per-repo config lives in `.githints/config.json` under the `index` key:
         "max_bytes": 1048576,
         "max_file_size": 1048576,
         "parse_timeout_ms": 5000,
-        "obsidian_wikilinks": false
+        "obsidian_wikilinks": false,
+        "graph_html": false
       }
     }
 
@@ -241,7 +248,8 @@ rather than silent. Raise `index.max_bytes`, or rebuild with
 
 Environment overrides: `GITHINTS_INDEX_ENABLED`, `GITHINTS_INDEX_LANGUAGES`,
 `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
-`GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_OBSIDIAN_WIKILINKS`.
+`GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_OBSIDIAN_WIKILINKS`,
+`GITHINTS_INDEX_GRAPH_HTML`.
 
 `GITHINTS_INDEX_LANGUAGES` is a comma-separated list that replaces the
 configured set outright; names are trimmed and case-folded.

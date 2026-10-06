@@ -280,6 +280,11 @@ Tools:
   signatures; includes `last_indexed_at` so the agent can assess freshness.
 - `find_symbol` — exact and prefix symbol search across the repo.
 - `get_dependents` — reverse import lookup: which files import a given one.
+- `get_dependency_graph` — the file/package import graph (`index.BuildGraph`),
+  optionally around one file, as JSON or Mermaid. The same graph backs
+  `githints index graph`, whose exporters live in `internal/index/graphexport`
+  (JSON, DOT, Mermaid, and a self-contained HTML viewer pinned by a hash-based
+  Content-Security-Policy).
 - `get_index_summary` — structural index totals and top hub files by import
   in-degree.
 

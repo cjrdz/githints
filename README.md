@@ -103,6 +103,8 @@ githints index [--force] [--obsidian]
                                  # rebuild the structural index; --obsidian emits
                                  #   Obsidian wikilinks for the graph view
 githints index status            # index file/symbol counts and last scan time
+githints index graph [-focus=F]  # offline dependency-graph viewer at .githints/graph.html
+                                 #   (-format=mermaid|dot|json for other tools)
 githints index verify            # report drift: stale notes, ghost rows, and
                                  #   uncovered source files (with reasons)
 githints rotate-salt [-force]    # rotate integrity salt and re-sign

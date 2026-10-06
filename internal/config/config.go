@@ -59,6 +59,9 @@ type Index struct {
 	MaxFileSize       int      `json:"max_file_size"`
 	ParseTimeoutMS    int      `json:"parse_timeout_ms"`
 	ObsidianWikilinks bool     `json:"obsidian_wikilinks"`
+	// GraphHTML regenerates .githints/graph.html, the offline dependency
+	// graph viewer, whenever the index is rebuilt or updated by the hook.
+	GraphHTML bool `json:"graph_html"`
 }
 
 func Default() Config {
@@ -180,6 +183,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("GITHINTS_INDEX_OBSIDIAN_WIKILINKS"); v != "" {
 		cfg.Index.ObsidianWikilinks = truthy(v)
+	}
+	if v := os.Getenv("GITHINTS_INDEX_GRAPH_HTML"); v != "" {
+		cfg.Index.GraphHTML = truthy(v)
 	}
 }
 

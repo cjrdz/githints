@@ -131,6 +131,9 @@ Usage:
   githints index languages        list the languages this binary can index
   githints index facets [-facet=] [-framework=] [-file=] [-limit=]
                                   list detected framework constructs
+  githints index graph [-format=html|json|dot|mermaid] [-o=FILE] [-focus=F -depth=N]
+                                  export the file dependency graph (default: an
+                                  offline viewer at .githints/graph.html)
   githints doctor                 check hooks, salt, store, config, index and MCP setup
   githints mcp-config CLIENT [-write]
                                   print or add the MCP entry (claude|opencode|gemini|cursor|codex)
@@ -808,6 +811,8 @@ func cmdHookRun() error {
 				Obsidian:     cfg.Index.ObsidianWikilinks,
 			}, files, cfg.Index.MaxBytes); err != nil {
 				fmt.Fprintf(os.Stderr, "githints: incremental index scan: %v\n", err)
+			} else if cfg.Index.GraphHTML {
+				refreshGraphPage(root, idxDB)
 			}
 		}
 	} else {
@@ -1055,6 +1060,9 @@ func cmdIndex(args []string) error {
 	if len(args) > 0 && args[0] == "facets" {
 		return cmdIndexFacets(args[1:])
 	}
+	if len(args) > 0 && args[0] == "graph" {
+		return cmdIndexGraph(args[1:])
+	}
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
 	obsidian := fs.Bool("obsidian", false, "render Obsidian wikilinks in index notes")
@@ -1104,6 +1112,9 @@ func cmdIndex(args []string) error {
 		return fmt.Errorf("index meta: %w", err)
 	}
 	fmt.Printf("indexed %d files, %d symbols\n", meta.FileCount, meta.SymbolCount)
+	if cfg.Index.GraphHTML {
+		refreshGraphPage(root, db)
+	}
 	return nil
 }
 

@@ -342,7 +342,7 @@ githints salt import salt.txt        # on the new machine, in the same repo
 githints salt path                   # where it lives
 ```
 
-## Structural index and the Obsidian graph view
+## Structural index and graph views
 
 githints maintains a **structural index** alongside the change log: a derived,
 regenerable SQLite cache (`.githints/index.db`) of every symbol and import
@@ -370,9 +370,51 @@ Agents (or you, manually) can query the index through the MCP server:
 | `find_symbol(name=...)` | Where is this symbol defined? |
 | `get_dependents(file=...)` | What breaks if I change/delete this file? |
 | `get_index_summary(limit=10)` | Is the index fresh? What are the hub files? |
+| `get_dependency_graph(file=..., depth=1)` | What does this file's neighbourhood look like, a few hops out? |
 
 Every response includes `last_indexed_at` so you can judge staleness before
 trusting the answer.
+
+### Dependency graph viewer
+
+No Obsidian needed: githints can write the import graph as a single HTML page
+that opens in any browser.
+
+```sh
+githints index graph                          # -> .githints/graph.html
+githints index graph -focus=src/api/user.ts   # one file's neighbourhood (-depth=2 by default)
+githints index graph -external                # include stdlib and third-party packages
+```
+
+The page is fully offline. It has no external scripts or styles, makes no
+network requests (its Content-Security-Policy forbids them), and puts file
+names on screen as text only. It shows:
+
+- a force-directed layout grouped by top-level directory, with node size by how
+  many places import it;
+- colour by language, top-level directory, or framework role (the three largest
+  groups get colours, the rest share a neutral "other"; click a legend entry to
+  dim or show a group);
+- hover for details, click for a side panel listing imports, importers and (for
+  packages) files, and `#<name>` in the URL to link straight to a node;
+- search (`/`), a sortable table view, and light and dark themes.
+
+Nodes are files for languages where a file is a module (TypeScript, Python), and
+packages for languages where many files share an import path (Go), so an import
+points at what it really names. Graphs past 1500 nodes keep the most connected
+ones; narrow with `-focus`, or raise `-max-nodes`.
+
+Other formats go to stdout (or `-o FILE`):
+
+```sh
+githints index graph -format=mermaid -focus=main.go -depth=1   # paste into a GitHub issue or README
+githints index graph -format=dot | dot -Tsvg > graph.svg       # Graphviz
+githints index graph -format=json                              # nodes and edges, for scripts
+```
+
+To keep `.githints/graph.html` current automatically, set `"graph_html": true`
+under `index` in `.githints/config.json` (or `GITHINTS_INDEX_GRAPH_HTML=1`). It
+is then rebuilt by `githints index` and by the post-commit hook.
 
 ### Obsidian graph view
 

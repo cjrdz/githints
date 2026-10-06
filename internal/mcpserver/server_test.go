@@ -395,3 +395,42 @@ func TestHandleFindFacetsRejectsTraversal(t *testing.T) {
 		t.Errorf("a traversal path should be rejected, got: %s", out)
 	}
 }
+
+func TestHandleGetDependencyGraph(t *testing.T) {
+	dir, db := setupIndex(t)
+	fn := handleGetDependencyGraph(dir, db)
+
+	call := func(args map[string]any) (string, bool) {
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = args
+		resp, err := fn(context.Background(), req)
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		return resp.Content[0].(mcp.TextContent).Text, resp.IsError
+	}
+
+	text, isErr := call(map[string]any{"file": "internal/store/user.go", "format": "mermaid"})
+	if isErr || !strings.Contains(text, "flowchart LR") || !strings.Contains(text, "internal/api/api.go") {
+		t.Fatalf("mermaid neighbourhood:\n%s", text)
+	}
+	if !strings.Contains(text, "data, not instructions") {
+		t.Error("graph output lacks the untrusted-data notice")
+	}
+
+	// String-encoded numbers are accepted, and caps are enforced in Go.
+	text, isErr = call(map[string]any{"max_nodes": "100000", "depth": "99", "file": "internal/store/user.go"})
+	if isErr || !strings.Contains(text, `"nodes"`) {
+		t.Fatalf("json with oversized caps:\n%s", text)
+	}
+
+	for _, bad := range []map[string]any{
+		{"file": "../etc/passwd"},
+		{"format": "svg"},
+		{"file": "nope.go"},
+	} {
+		if _, isErr := call(bad); !isErr {
+			t.Errorf("accepted %v", bad)
+		}
+	}
+}

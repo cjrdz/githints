@@ -725,3 +725,41 @@ func (s *Store) FacetCount() (int, error) {
 	}
 	return n, nil
 }
+
+// AllImports returns every import edge in the index, ordered for stable
+// output. Edges point at import paths, not files; see BuildGraph.
+func (s *Store) AllImports() ([]lang.Import, error) {
+	rows, err := s.db.Query("SELECT file_path, imported_path FROM imports ORDER BY file_path, imported_path")
+	if err != nil {
+		return nil, fmt.Errorf("query imports: %w", err)
+	}
+	defer rows.Close()
+	var out []lang.Import
+	for rows.Next() {
+		var imp lang.Import
+		if err := rows.Scan(&imp.FilePath, &imp.ImportedPath); err != nil {
+			return nil, err
+		}
+		out = append(out, imp)
+	}
+	return out, rows.Err()
+}
+
+// SymbolCountsByFile returns how many symbols each indexed file defines.
+func (s *Store) SymbolCountsByFile() (map[string]int, error) {
+	rows, err := s.db.Query("SELECT file_path, COUNT(*) FROM symbols GROUP BY file_path")
+	if err != nil {
+		return nil, fmt.Errorf("query symbol counts: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var f string
+		var n int
+		if err := rows.Scan(&f, &n); err != nil {
+			return nil, err
+		}
+		out[f] = n
+	}
+	return out, rows.Err()
+}

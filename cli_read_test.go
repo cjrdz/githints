@@ -56,3 +56,42 @@ func TestCLIReadCommandsValidate(t *testing.T) {
 		t.Fatalf("search: %v\n%s", err, out)
 	}
 }
+
+func TestIndexGraphCommand(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := chdirTempRepo(t)
+	if err := cmdIndexGraph(nil); err == nil || !strings.Contains(err.Error(), "githints index") {
+		t.Fatalf("graph before indexing: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n\ngo 1.23\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println() }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdInit(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureStdout(t, func() error { return cmdIndex(nil) }); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+
+	if _, err := captureStdout(t, func() error { return cmdIndexGraph(nil) }); err != nil {
+		t.Fatalf("index graph: %v", err)
+	}
+	page, err := os.ReadFile(filepath.Join(dir, ".githints", "graph.html"))
+	if err != nil || !strings.Contains(string(page), "main.go") {
+		t.Fatalf("graph.html: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error { return cmdIndexGraph([]string{"-format=dot", "-external"}) })
+	if err != nil || !strings.Contains(out, `"main.go" -> "ext:fmt"`) {
+		t.Fatalf("dot to stdout: %v\n%s", err, out)
+	}
+	if err := cmdIndexGraph([]string{"-format=svg"}); err == nil {
+		t.Error("unknown format accepted")
+	}
+	if err := cmdIndexGraph([]string{"-focus=../x"}); err == nil {
+		t.Error("traversal in -focus accepted")
+	}
+}
