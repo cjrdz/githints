@@ -138,21 +138,55 @@ what you should rely on.
 `githints serve` is a stdio MCP server. By default it resolves the repo root
 from its working directory, so a **project-scoped** config is simplest.
 
-`githints mcp-config` writes that config for you. It prints the entry for one
-client, and with `-write` merges it into the client's project file, keeping any
-other servers already there:
+`githints setup` does all of it in one step. It runs `init` if the repository
+is not set up yet, then registers the server with every client it detects,
+from its binary on `PATH` or its folder in the repository:
 
 ```sh
-githints mcp-config claude -write      # .mcp.json
-githints mcp-config opencode -write    # opencode.json
-githints mcp-config gemini -write      # .gemini/settings.json
-githints mcp-config cursor -write      # .cursor/mcp.json
-githints mcp-config codex              # prints the `codex mcp add` command
+githints setup                         # detected clients
+githints setup -clients=claude,vscode  # exactly these
+githints setup -clients=all            # every project-level client
+githints setup -dry-run                # show what would be written
+githints setup -list                   # supported clients, and which are detected
+githints setup -update                 # refresh githints' own entries (e.g. after putting githints on PATH)
 ```
 
-A file that is not plain JSON (opencode allows comments) is left untouched and
-you are asked to add the entry by hand. Then run `githints doctor` to check the
-whole setup.
+| Client | File written | Notes |
+| --- | --- | --- |
+| Claude Code (`claude`) | `.mcp.json` | Warp reads it too |
+| opencode | `opencode.json` | a `.jsonc` file must be edited by hand |
+| Codex CLI | `.codex/config.toml` | only for projects you marked trusted; pins the root |
+| VS Code / Copilot (`vscode`) | `.vscode/mcp.json` | uses `servers`, `type: stdio` |
+| Cursor | `.cursor/mcp.json` | root via `${workspaceFolder}` |
+| Zed | `.zed/settings.json` | `context_servers` |
+| Kiro | `.kiro/settings/mcp.json` | pins the root |
+| Gemini CLI | `.gemini/settings.json` | |
+| JetBrains Junie | `.junie/mcp/mcp.json` | pins the root |
+| Continue | `.continue/mcpServers/githints.json` | pins the root |
+| Amazon Q CLI (legacy) | `.amazonq/mcp.json` | pins the root |
+| Claude Desktop | user config | global; only when named |
+| Windsurf / Devin Desktop | `mcp_config.json` | global; only when named |
+| Cline CLI | `~/.cline/data/settings/cline_mcp_settings.json` | global; only when named |
+| Goose, JetBrains AI Assistant | — | prints the steps |
+
+What it will and will not do:
+
+- It only ever adds githints' own entry. Other servers and settings are kept,
+  and an existing githints entry is left alone unless you pass `-update`.
+- A file with comments (JSONC) is never rewritten; you get the entry to paste.
+  Codex's TOML is only appended to.
+- "Pins the root" means the entry carries this checkout's absolute path,
+  because that client does not document starting servers in the project. Such
+  a file is specific to your machine; think twice before committing it.
+- Global configs are shared by every project on the machine, so each repository
+  gets its own entry (`githints-<repo>-<hash>`), and the file is backed up to
+  `<file>.githints-backup` before the first change.
+- If `githints` is not on `PATH`, entries use the binary's absolute path and
+  `setup` says so. Global entries always do, since GUI apps often start with
+  a minimal `PATH`.
+
+`githints mcp-config <client>` prints one client's entry, and `-write` adds
+it.
 
 The sections below show the same entries for doing it by hand.
 
@@ -221,7 +255,8 @@ githints serve -root=/path/to/repo             # flag
 GITHINTS_ROOT=/path/to/repo githints serve     # environment
 ```
 
-Precedence is flag, then environment, then working directory.
+Precedence is the flag, then `GITHINTS_ROOT`, then `CLAUDE_PROJECT_DIR` (which
+Claude Code sets for the servers it starts), then the working directory.
 
 ### Other MCP clients
 

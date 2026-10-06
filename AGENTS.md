@@ -146,9 +146,18 @@ Starts the MCP server on stdio. This is what `opencode.json` points to for the
 backend and frontend repos.
 
 The repo root normally comes from the working directory. If a client starts the
-server somewhere else — Codex CLI's config is global, and some clients use an
+server somewhere else — a global (user-level) config, or a client that uses an
 arbitrary cwd — pin it with `-root` or `GITHINTS_ROOT`. Precedence is flag, then
-environment, then working directory.
+`GITHINTS_ROOT`, then `CLAUDE_PROJECT_DIR`, then working directory.
+
+### `setup`
+
+    githints setup [-clients=a,b|all] [-dry-run] [-list] [-update]
+
+Runs `init` if needed, then registers the MCP server with every detected
+client (Claude Code, opencode, Codex, VS Code, Cursor, Zed, Kiro, Gemini CLI,
+Junie, Continue). Global configs (Claude Desktop, Windsurf, Cline) only when
+named. `githints mcp-config <client>` does one client at a time.
 
 ### `doctor`
 

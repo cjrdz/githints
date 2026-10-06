@@ -28,8 +28,15 @@ irm https://raw.githubusercontent.com/cjrdz/githints/main/install.ps1 | iex
 Then, inside any repository you want tracked:
 
 ```sh
-githints init
+githints setup
 ```
+
+`setup` initializes the repository (hooks, store, agent instructions) and
+registers the MCP server with every client it detects: Claude Code, opencode,
+Codex, VS Code (Copilot), Cursor, Zed, Kiro, Gemini CLI, JetBrains Junie and
+Continue. Pick them yourself with `-clients=claude,vscode`, see what it would
+do with `-dry-run`, or list them with `-list`. Global configs (Claude Desktop,
+Windsurf, Cline) are written only when you name them.
 
 No Go toolchain is needed — the scripts download a prebuilt binary and verify
 it against the release checksums. Other ways to install, including native
@@ -41,8 +48,9 @@ Codex and Gemini CLI all read, so the agent knows the tools exist. It also
 writes a block into `CLAUDE.md` importing it, for older Claude Code versions.
 Re-running `init` updates only those blocks.
 
-Then wire `githints serve` into your project-scoped MCP config. See
-[docs/usage.md](docs/usage.md) for Claude Code, opencode, and manual setup.
+To register one client at a time, or see the exact entry first, use
+`githints mcp-config <client>`. [docs/usage.md](docs/usage.md) covers every
+client and manual setup.
 
 ## How it works
 
@@ -87,9 +95,11 @@ githints init [-share] [-chain]  # set up .githints/, install hooks, gitignore,
                                  #   and the AGENTS.md / CLAUDE.md blocks
                                  #   -share commits rendered markdown; state stays local
                                  #   -chain keeps an existing hook, running it first
-githints mcp-config CLIENT -write
-                                 # register the MCP server (claude, opencode,
-                                 #   gemini, cursor; codex prints a command)
+githints setup [-clients=a,b] [-dry-run]
+                                 # init + register the MCP server with every
+                                 #   detected client (setup -list shows them)
+githints mcp-config CLIENT [-write]
+                                 # print or add the entry for one client
 githints doctor                  # check the whole setup and say how to fix it
 githints serve [-root=PATH]      # run the MCP stdio server
 githints record -file=F -summary=S [-reason=R]

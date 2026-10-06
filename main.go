@@ -51,6 +51,7 @@ var commands = map[string]func(args []string) error{
 	"index":          cmdIndex,
 	"doctor":         noArgs(cmdDoctor),
 	"mcp-config":     cmdMCPConfig,
+	"setup":          cmdSetup,
 	"version":        noArgs(cmdVersion),
 	"help":           noArgs(cmdHelp),
 }
@@ -135,8 +136,12 @@ Usage:
                                   export the file dependency graph (default: an
                                   offline viewer at .githints/graph.html)
   githints doctor                 check hooks, salt, store, config, index and MCP setup
+  githints setup [-clients=a,b|all] [-dry-run] [-list]
+                                  init if needed, then register the MCP server with
+                                  every client detected (Claude Code, opencode, Codex,
+                                  VS Code, Cursor, Zed, Kiro, Gemini, Junie, ...)
   githints mcp-config CLIENT [-write]
-                                  print or add the MCP entry (claude|opencode|gemini|cursor|codex)
+                                  print or add the MCP entry for one client
   githints version                print the version, commit and build date
   githints help                   show this list
 
@@ -441,7 +446,12 @@ func ensureAgentFiles(root string) error {
 
 // cmdInit creates .githints/, the store, installs the git hooks, and writes
 // the .gitignore rule for githints' output.
-func cmdInit(args []string) error {
+func cmdInit(args []string) error { return runInit(args, true) }
+
+// cmdInitQuiet is init for setup, which prints its own summary.
+func cmdInitQuiet(args []string) error { return runInit(args, false) }
+
+func runInit(args []string, verbose bool) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite existing git hooks even if not managed by githints")
 	chain := fs.Bool("chain", false, "keep existing git hooks: move each aside and run it before githints'")
@@ -554,14 +564,16 @@ func cmdInit(args []string) error {
 	if *share {
 		mode = "shared"
 	}
+	if !verbose {
+		return nil
+	}
 	fmt.Printf("githints initialized at %s/.githints\nhooks installed at %s, %s\nmode: %s\n", root, postCommit, preCommit, mode)
 	fmt.Print(`wrote agent instructions to AGENTS.md and CLAUDE.md (managed blocks)
 
-Next: register the MCP server with your client, for example:
+Next: register the MCP server with your editors and agents:
 
-  githints mcp-config claude -write      # .mcp.json
-  githints mcp-config opencode -write    # opencode.json
-  githints mcp-config codex              # prints the command; Codex's config is global
+  githints setup               # every client detected here
+  githints setup -list         # what is supported and detected
 
 Then run ` + "`githints doctor`" + ` to check the whole setup.
 `)
@@ -572,7 +584,8 @@ Then run ` + "`githints doctor`" + ` to check the whole setup.
 // The repo root normally comes from the working directory, but not every MCP
 // client launches a server from the project directory — Codex CLI's config is
 // global, and some clients start servers from an arbitrary cwd. -root (or
-// GITHINTS_ROOT) lets the client pin it. Precedence: flag, env, cwd.
+// GITHINTS_ROOT) lets the client pin it. Precedence: flag, GITHINTS_ROOT,
+// CLAUDE_PROJECT_DIR, cwd.
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	rootFlag := fs.String("root", "", "path to the git repo to serve (default: current directory, or $GITHINTS_ROOT)")
@@ -583,6 +596,11 @@ func cmdServe(args []string) error {
 	pinned := *rootFlag
 	if pinned == "" {
 		pinned = os.Getenv("GITHINTS_ROOT")
+	}
+	if pinned == "" {
+		// Claude Code sets this for the servers it starts; its docs do not
+		// promise the working directory.
+		pinned = os.Getenv("CLAUDE_PROJECT_DIR")
 	}
 	if pinned != "" {
 		if err := os.Chdir(pinned); err != nil {

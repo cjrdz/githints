@@ -243,20 +243,20 @@ func checkIndex(root string) checkResult {
 	return checkResult{levelOK, "index", fmt.Sprintf("last indexed %s ago", age), ""}
 }
 
-// checkMCP looks for githints in the project-level config of the clients
-// that keep one in the repository. Codex CLI's config is global and is not
-// checked; that is a warning, not a failure, since the CLI works without it.
+// checkMCP looks for githints in the project-level config of every client
+// setup knows. Global configs (Claude Desktop, Windsurf, Cline) are not
+// checked; that is a warning, not a failure, since the CLI works without any.
 func checkMCP(root string) checkResult {
 	var found []string
-	for _, f := range []string{".mcp.json", "opencode.json", ".cursor/mcp.json", ".gemini/settings.json"} {
-		data, err := os.ReadFile(filepath.Join(root, f))
+	for _, p := range projectConfigFiles(root) {
+		data, err := os.ReadFile(p)
 		if err == nil && strings.Contains(string(data), "githints") {
-			found = append(found, f)
+			found = append(found, displayPath(root, p))
 		}
 	}
 	if len(found) == 0 {
-		return checkResult{levelWarn, "mcp", "no project MCP config registers githints (Codex's global config is not checked)",
-			"githints mcp-config <claude|opencode|gemini|cursor> -write, or `githints mcp-config codex` for the command to run"}
+		return checkResult{levelWarn, "mcp", "no project MCP config registers githints (global configs are not checked)",
+			"githints setup"}
 	}
 	return checkResult{levelOK, "mcp", "registered in " + strings.Join(found, ", "), ""}
 }
