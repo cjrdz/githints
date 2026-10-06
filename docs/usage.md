@@ -14,7 +14,11 @@ that runs the git hooks.
 ### Install script (recommended)
 
 No Go toolchain needed. Both scripts download a prebuilt binary and verify it
-against the release `checksums.txt` before installing.
+against the release `checksums.txt` before installing. If the checksum cannot
+be checked at all (no `checksums.txt`, or no SHA-256 tool), they stop rather
+than install an unverified binary. When the GitHub CLI is installed and signed
+in, they also run `gh attestation verify` to confirm the archive was built by
+this repository's release workflow.
 
 ```sh
 # Linux / macOS
@@ -26,12 +30,13 @@ curl -fsSL https://raw.githubusercontent.com/cjrdz/githints/main/install.sh | sh
 irm https://raw.githubusercontent.com/cjrdz/githints/main/install.ps1 | iex
 ```
 
-Both accept two environment variables:
+Both accept these environment variables:
 
 | Variable | Effect |
 | --- | --- |
 | `GITHINTS_VERSION` | Install a specific tag instead of the latest release |
 | `GITHINTS_BIN_DIR` | Install somewhere other than the default |
+| `GITHINTS_INSECURE_SKIP_VERIFY=1` | Install even when the checksum cannot be checked (a mismatch is still fatal) |
 
 The default is `/usr/local/bin` when writable, otherwise `~/.local/bin`; on
 Windows, `%LOCALAPPDATA%\Programs\githints`, which is added to your user PATH.

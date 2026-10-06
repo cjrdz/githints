@@ -1,8 +1,7 @@
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
+# No `go mod tidy` hook: a release must build exactly the module graph that was
+# committed and reviewed. CI checks that it is tidy (go mod tidy -diff).
 
 builds:
   - id: githints

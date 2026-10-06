@@ -32,17 +32,24 @@ jobs:
         with:
           # GoReleaser needs full history and tags to build the changelog.
           fetch-depth: 0
+          # Nothing after checkout pushes; don't leave the token in .git/config
+          # for every later step to read.
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # No restored cache in the job that signs and publishes: a cache
+          # written by any other workflow run would feed straight into the
+          # release binaries.
+          cache: false
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: v2.18.2 # pinned; "~> v2" picked up any new release at release time
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
