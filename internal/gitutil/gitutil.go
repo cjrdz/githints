@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -268,6 +269,88 @@ func parseNumstat(out string) (add, del int, ok bool) {
 		return 0, 0, false
 	}
 	return add, del, true
+}
+
+// maxNotesBytes bounds ReadNotes. A note is about 300 bytes, so this allows
+// tens of thousands of anchored commits while still capping memory.
+const maxNotesBytes = 64 << 20
+
+// ReadNotes returns every note under ref, keyed by the annotated commit hash.
+// A missing ref is not an error: it means nothing has been anchored yet.
+//
+// It runs two git processes regardless of how many notes exist: one to list
+// them and one cat-file --batch to read every blob. Truncated output is an
+// error here rather than a marker, since a silently short read would make
+// verify report anchors as missing.
+func ReadNotes(ref string) (map[string]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+
+	if _, err := runCtx(ctx, "rev-parse", "--verify", "--quiet", ref); err != nil {
+		return map[string]string{}, nil
+	}
+	list, err := runLimited(ctx, nil, maxNotesBytes, "notes", "--ref="+ref, "list")
+	if err != nil {
+		return nil, err
+	}
+	var blobs, commits []string
+	for _, line := range strings.Split(strings.TrimSpace(string(list)), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		blobs = append(blobs, f[0])
+		commits = append(commits, f[1])
+	}
+	notes := make(map[string]string, len(blobs))
+	if len(blobs) == 0 {
+		return notes, nil
+	}
+
+	out, err := runLimited(ctx, strings.NewReader(strings.Join(blobs, "\n")+"\n"), maxNotesBytes, "cat-file", "--batch")
+	if err != nil {
+		return nil, err
+	}
+	// Each record is "<oid> <type> <size>\n<content>\n", in request order.
+	for i := range blobs {
+		nl := bytes.IndexByte(out, '\n')
+		if nl < 0 {
+			return nil, fmt.Errorf("cat-file: short output reading note %d of %d", i+1, len(blobs))
+		}
+		header := strings.Fields(string(out[:nl]))
+		out = out[nl+1:]
+		if len(header) != 3 {
+			return nil, fmt.Errorf("cat-file: unexpected header %q", strings.Join(header, " "))
+		}
+		size, err := strconv.Atoi(header[2])
+		if err != nil || size < 0 || size+1 > len(out) {
+			return nil, fmt.Errorf("cat-file: bad size in header %q", strings.Join(header, " "))
+		}
+		notes[commits[i]] = strings.TrimSpace(string(out[:size]))
+		out = out[size+1:]
+	}
+	return notes, nil
+}
+
+// runLimited runs git with optional stdin and returns raw stdout, failing
+// rather than truncating if it exceeds max bytes.
+func runLimited(ctx context.Context, stdin io.Reader, max int, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	out := &capWriter{n: max}
+	stderr := &capWriter{n: 8 << 10}
+	cmd.Stdin = stdin
+	cmd.Stdout = out
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), ctxErr)
+		}
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderr.buf.String())
+	}
+	if out.truncated {
+		return nil, fmt.Errorf("git %s: output exceeded %d bytes", strings.Join(args, " "), max)
+	}
+	return out.buf.Bytes(), nil
 }
 
 // AddNote adds a git note to HEAD. It uses --force so repeated commits or

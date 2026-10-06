@@ -1,10 +1,13 @@
 package main
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cjrdz/githints/internal/store"
 )
 
 // Claude Code reads CLAUDE.md and does not read AGENTS.md, so both have to
@@ -148,5 +151,53 @@ func TestHookIsPosixSh(t *testing.T) {
 		if strings.Contains(hook, bashism) {
 			t.Errorf("hook uses the bash-only %q:\n%s", bashism, hook)
 		}
+	}
+}
+
+// The HMAC chain cannot see rows deleted from its tail, and a same-user
+// attacker can re-sign the whole table anyway. verify used to print a Merkle
+// root and never compare it with the one anchored in refs/notes/githints, so
+// this deletion verified clean.
+func TestVerifyDetectsRowsDeletedAfterAnchoring(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := chdirTempRepo(t)
+	// No hooks: the test binary must not be run as a git hook. cmdHookRun is
+	// called directly instead.
+	for _, f := range []string{"a.go", "b.go"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("package a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := cmdRecord([]string{"-file=" + f, "-summary=add " + f}); err != nil {
+			t.Fatalf("cmdRecord: %v", err)
+		}
+	}
+	runGit(t, dir, "add", "a.go", "b.go")
+	runGit(t, dir, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "first")
+	if err := cmdHookRun(); err != nil {
+		t.Fatalf("cmdHookRun: %v", err)
+	}
+	if err := cmdVerify(); err != nil {
+		t.Fatalf("verify on an untouched log: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.AllChanges()
+	if err != nil || len(rows) < 2 {
+		t.Fatalf("AllChanges: %d rows, %v", len(rows), err)
+	}
+	last := rows[len(rows)-1].ID
+	if err := st.WithTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec("DELETE FROM changes WHERE id = ?", last)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	if err := cmdVerify(); err == nil {
+		t.Fatal("verify passed after the newest anchored row was deleted")
 	}
 }

@@ -8,9 +8,9 @@
 // that sharing rendered markdown from .githints/ does not leak it; however,
 // because the salt is readable by the same OS user that runs the agent,
 // a determined same-user attacker who finds the salt can recompute valid
-// HMACs. For that actor the external check is the Merkle root anchored in
-// refs/notes/githints (which travels with the repo) and periodic
-// `githints verify`.
+// HMACs. For that actor the external check is the Merkle anchor written to
+// refs/notes/githints after each commit, which `githints verify` recomputes
+// (see anchor.go). It is only as external as wherever the notes ref is pushed.
 package integrity
 
 import (
@@ -261,6 +261,9 @@ func VerifyChain(key []byte, rows []store.Change) []IntegrityError {
 	return errs
 }
 
+// MerkleRoot is the version 1 anchor algorithm, kept so notes written before
+// version 2 still verify. New anchors use merkleRootV2 via BuildAnchor.
+//
 // MerkleRoot computes a SHA-256 Merkle tree root over all change rows,
 // ordered by id. It is a compact, public fingerprint of the entire log that
 // can be committed elsewhere (git note, CI artifact) and verified later.

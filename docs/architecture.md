@@ -93,8 +93,8 @@ After a commit, `githints hook-run` (the `post-commit` hook):
      caption of the scrubbed and truncated diff. On any error, timeout, or
      circuit-breaker-open state, it writes a generic fallback row instead.
 4. Re-renders markdown for any touched file.
-5. Computes a Merkle root over all rows for this commit and stores it as a
-   `refs/notes/githints` git note.
+5. Writes a Merkle anchor for this commit as a `refs/notes/githints` git
+   note (see [Merkle anchors](#merkle-anchors)).
 
 ### Pre-commit gate
 
@@ -173,9 +173,10 @@ salt is machine-local, so keys are not portable across machines.
   lacks the key. It also detects accidental DB corruption.
 - **It does not stop:** a determined attacker running as the same OS user who
   locates the salt file, because that user can read the salt and recompute valid
-  HMACs. For that actor the external check is the per-commit Merkle root stored
-  as a `refs/notes/githints` git note (which travels with the repo) and periodic
-  `githints verify`.
+  HMACs. For that actor the external check is the Merkle anchor stored as a
+  `refs/notes/githints` git note, which `githints verify` compares against the
+  log. Git does not push notes by default; push `refs/notes/githints` if the
+  anchor should survive the machine.
 
 ### HMAC chain
 
@@ -204,12 +205,39 @@ flagged with `clock_tamper_warning = 1` and a warning is printed to stderr.
 The previous maximum is persisted in `githints_meta.last_recorded_at` so the
 check survives process restarts.
 
-### Merkle root
+### Merkle anchors
 
-`integrity.MerkleRoot` computes a SHA-256 Merkle tree root over all rows. The
-post-commit hook stores the per-commit root as a git note at
-`refs/notes/githints`, giving each commit an external, travel-with-the-repo
-fingerprint of its change records.
+After each commit the post-commit hook writes a note to `refs/notes/githints`
+on that commit (`integrity.BuildAnchor`):
+
+```
+githints-root: <Merkle root of the rows stamped with this commit>
+githints-version: 2
+githints-commit-rows: <how many rows that was>
+githints-log-count: <rows in the whole log at this moment>
+githints-log-last-id: <highest row id at this moment>
+githints-log-root: <Merkle root of every row up to that id>
+```
+
+`githints verify` reads every note back in two git invocations
+(`gitutil.ReadNotes`) and `integrity.VerifyAnchors` recomputes each one:
+
+- each note's per-commit root and row count against the rows now stamped with
+  that commit;
+- the newest note's log root and count against every row up to its high-water
+  id, which catches a row deleted from an earlier commit even if that commit's
+  note was removed too.
+
+Version 2 leaves are domain-separated (`0x00` leaf, `0x01` node), cover the
+row id, and exclude `hmac`/`prev_hmac` so a salt rotation does not change any
+root. Only the per-commit root covers `commit_hash`: the log root also spans
+rows still pending at anchoring time, which a later commit stamps. Notes
+written before version 2 contain only `githints-root:` and are still checked
+with the original `integrity.MerkleRoot`.
+
+Not covered: rows recorded since the newest anchor (verify reports how many),
+and an attacker who rewrites the notes ref locally as well as the database.
+The second is why pushing `refs/notes/githints` matters.
 
 ### Salt rotation
 

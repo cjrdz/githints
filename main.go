@@ -671,20 +671,24 @@ func cmdHookRun() error {
 		return fmt.Errorf("load commit rows: %w", err)
 	}
 	if len(commitRows) > 0 {
-		commitRoot, err := integrity.MerkleRoot(commitRows)
+		all, err := st.AllChanges()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "githints: could not load log for Merkle anchor: %v\n", err)
+			return nil
+		}
+		anchor, err := integrity.BuildAnchor(all, commitRows)
 		if err != nil {
 			// Non-fatal, like the note write below: the store-level chain is
 			// still intact, we just cannot anchor it externally.
 			fmt.Fprintf(os.Stderr, "githints: could not compute Merkle root: %v\n", err)
 			return nil
 		}
-		note := fmt.Sprintf("githints-root: %s", commitRoot)
-		if err := gitutil.AddNote("refs/notes/githints", note); err != nil {
+		if err := gitutil.AddNote("refs/notes/githints", anchor.String()); err != nil {
 			// Non-fatal: the store-level integrity is still valid; the note
 			// is an optional external anchor.
 			fmt.Fprintf(os.Stderr, "githints: could not add Merkle note: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "githints: anchored Merkle root %s for commit %s\n", commitRoot, shortCommitHash(hash))
+			fmt.Fprintf(os.Stderr, "githints: anchored Merkle root %s for commit %s\n", anchor.CommitRoot, shortCommitHash(hash))
 		}
 	}
 
@@ -1271,15 +1275,34 @@ func cmdVerify() error {
 		}
 	}
 
-	rootHash, err := integrity.MerkleRoot(rows)
+	// The HMAC chain alone cannot catch a same-user attacker: the salt is
+	// readable by that user, so the whole table can be re-signed. The anchors
+	// in refs/notes/githints are the external check, and nothing read them
+	// back until now.
+	notes, err := gitutil.ReadNotes("refs/notes/githints")
 	if err != nil {
-		return fmt.Errorf("merkle root: %w", err)
+		return fmt.Errorf("read anchor notes: %w", err)
 	}
-	if rootHash != "" {
-		fmt.Printf("merkle root: %s\n", rootHash)
+	anchors := integrity.VerifyAnchors(rows, notes)
+	switch {
+	case anchors.Notes == 0:
+		fmt.Println("merkle anchors: none found (nothing committed yet, or refs/notes/githints was not fetched)")
+	case len(anchors.Problems) == 0:
+		fmt.Printf("merkle anchors: OK (%d note(s) checked)\n", anchors.Checked)
+	default:
+		fmt.Printf("merkle anchors: %d problem(s)\n", len(anchors.Problems))
+		for _, p := range anchors.Problems {
+			fmt.Printf("  - %s\n", p)
+		}
+	}
+	if n := len(anchors.Unanchored); n > 0 {
+		fmt.Printf("unanchored commits: %d (rows exist but no note; the note write failed or was removed)\n", n)
+	}
+	if anchors.Unanchorable > 0 {
+		fmt.Printf("rows after the newest anchor: %d (anchored at the next commit)\n", anchors.Unanchorable)
 	}
 
-	if len(chainErrs) > 0 || len(diverged) > 0 || clockWarnings > 0 {
+	if len(chainErrs) > 0 || len(diverged) > 0 || clockWarnings > 0 || len(anchors.Problems) > 0 {
 		return fmt.Errorf("verification failed")
 	}
 

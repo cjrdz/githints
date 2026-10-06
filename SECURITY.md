@@ -47,9 +47,15 @@ not be treated as vulnerabilities.
 **The integrity chain does not defend against the same OS user.** The HMAC salt
 is stored with `0600` permissions in a per-user directory, so any process running
 as you can read it and forge a chain from scratch. The compensating control is
-the per-commit Merkle root written to `refs/notes/githints`: forging the database
-is easy, but forging it *and* rewriting a note that may already have been pushed
-is not. Treat the chain as tamper-**evident**, not tamper-proof.
+the Merkle anchor written to `refs/notes/githints` after every commit, which
+`githints verify` recomputes and compares. Each note pins that commit's rows and
+a high-water mark over the whole log, so editing, deleting, or re-pointing an
+anchored row fails verify. Forging the database is easy, but forging it *and*
+rewriting a note that has already been pushed is not -- and git does not push
+notes by default, so push them yourself (`git push origin refs/notes/githints`)
+if you want the anchor to exist anywhere but your own machine. Rows recorded
+since the last commit are not anchored yet. Treat the chain as
+tamper-**evident**, not tamper-proof.
 
 **`commit_hash` is not covered by the row signature.** It is assigned after
 insert, when the post-commit hook claims a pending row, so it cannot be part of
