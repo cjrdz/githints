@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -151,6 +152,23 @@ func FileDiffCtx(ctx context.Context, hash, file string) (string, error) {
 		return runCtx(ctx, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--", file)
 	}
 	return runCtx(ctx, "show", "--no-ext-diff", "--no-textconv", "--no-color", "--pretty=format:", hash, "--", file)
+}
+
+// HooksDir returns the absolute directory git runs hooks from for the
+// repository at root. It honors core.hooksPath and linked worktrees (where
+// .git is a file), neither of which "<root>/.git/hooks" does.
+func HooksDir(root string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	out, err := runCtx(ctx, "-C", root, "rev-parse", "--git-path", "hooks")
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(out) {
+		// Relative output is relative to the directory git ran in.
+		out = filepath.Join(root, out)
+	}
+	return filepath.Clean(out), nil
 }
 
 // IsTracked reports whether rel (relative to root) is in git's index. Used to

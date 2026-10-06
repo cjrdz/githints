@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -71,7 +73,8 @@ func usage() {
 const usageText = `githints — lightweight change tracking for AI coding agents
 
 Usage:
-  githints init [-force] [-share] set up .githints/ + install the git hooks
+  githints init [-chain|-force] [-share]
+                                  set up .githints/ + install the git hooks
   githints serve [-root=PATH]     run the MCP stdio server (root also via $GITHINTS_ROOT)
   githints hook-run               (internal) called by .git/hooks/post-commit
   githints hook-precommit         (internal) called by .git/hooks/pre-commit
@@ -203,6 +206,12 @@ func hookScriptFor(exe, cmd string) string {
 	// install path still ran, in the test and in the echo line alike.
 	return fmt.Sprintf(`#!/bin/sh
 # %s — do not edit by hand
+# A hook that was here before githints (moved aside by init -chain) runs first;
+# if it fails, so does this hook.
+chained="$0%s"
+if [ -x "$chained" ]; then
+	"$chained" "$@" || exit $?
+fi
 githints_bin=%s
 if [ -x "$githints_bin" ]; then
 	exec "$githints_bin" %s "$@"
@@ -212,7 +221,29 @@ if command -v githints >/dev/null 2>&1; then
 fi
 echo "githints: not found at $githints_bin and not on PATH; run 'githints init' to repoint this hook" >&2
 exit 0
-`, managedHookMarker, shellQuote(filepath.ToSlash(exe)), cmd, cmd)
+`, managedHookMarker, chainedHookSuffix, shellQuote(filepath.ToSlash(exe)), cmd, cmd)
+}
+
+// chainedHookSuffix names where init -chain moves a pre-existing hook.
+const chainedHookSuffix = ".pre-githints"
+
+// writeHook replaces the hook at path. It removes what is there first rather
+// than writing through it: os.WriteFile follows a symlink and keeps an
+// existing file's mode, so a hook that was a link, or not executable, stayed
+// that way.
+func writeHook(path, script string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(script); err != nil {
+		_ = f.Close() // the write error is the one worth reporting
+		return err
+	}
+	return f.Close()
 }
 
 // shellQuote returns s as a single POSIX sh word that expands to exactly s.
@@ -332,6 +363,7 @@ func ensureAgentFiles(root string) error {
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite existing git hooks even if not managed by githints")
+	chain := fs.Bool("chain", false, "keep existing git hooks: move each aside and run it before githints'")
 	share := fs.Bool("share", false, "share rendered markdown with the team (only state files are gitignored)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -383,24 +415,58 @@ func cmdInit(args []string) error {
 	// not block a commit, and the pre-commit gate is a warning by design.
 	hookScript := func(cmd string) string { return hookScriptFor(exe, cmd) }
 
-	postCommit := filepath.Join(root, ".git", "hooks", "post-commit")
-	preCommit := filepath.Join(root, ".git", "hooks", "pre-commit")
+	hooksDir, err := gitutil.HooksDir(root)
+	if err != nil {
+		return fmt.Errorf("locate git hooks directory: %w", err)
+	}
+	// core.hooksPath pointing inside the work tree is a hook manager (husky,
+	// lefthook, a committed .githooks/). Those files are committed and shared,
+	// so writing a hook carrying this machine's binary path there would ship
+	// it to everyone. Say what to add instead.
+	if rel, err := filepath.Rel(root, hooksDir); err == nil && filepath.IsLocal(rel) && !strings.HasPrefix(filepath.ToSlash(rel), ".git/") && !*force {
+		return fmt.Errorf("git runs hooks from %s, inside the repository (core.hooksPath; husky or lefthook?).\n"+
+			"githints will not write machine-specific hooks into a committed directory. Add these lines to the hooks there:\n"+
+			"  post-commit:  githints hook-run\n"+
+			"  pre-commit:   githints hook-precommit\n"+
+			"or re-run with -force to write them anyway", rel)
+	}
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		return fmt.Errorf("create hooks directory: %w", err)
+	}
+
+	postCommit := filepath.Join(hooksDir, "post-commit")
+	preCommit := filepath.Join(hooksDir, "pre-commit")
 
 	for _, path := range []string{postCommit, preCommit} {
 		exists, managed, err := hookExistsAndManaged(path)
 		if err != nil {
 			return err
 		}
-		if exists && !managed && !*force {
-			return fmt.Errorf("%s already exists and was not installed by githints; use -force to overwrite", path)
+		if !exists || managed {
+			continue
+		}
+		switch {
+		case *chain:
+			aside := path + chainedHookSuffix
+			if _, err := os.Lstat(aside); err == nil {
+				return fmt.Errorf("%s already exists; refusing to overwrite it with %s", aside, path)
+			}
+			if err := os.Rename(path, aside); err != nil {
+				return fmt.Errorf("move existing hook aside: %w", err)
+			}
+			fmt.Printf("kept your existing hook as %s; it runs before githints'\n", aside)
+		case *force:
+			// Overwritten below.
+		default:
+			return fmt.Errorf("%s already exists and was not installed by githints;\n"+
+				"use -chain to keep it (it will run first), or -force to replace it", path)
 		}
 	}
 
-	if err := os.WriteFile(postCommit, []byte(hookScript("hook-run")), 0o755); err != nil {
-		return fmt.Errorf("write post-commit hook: %w", err)
-	}
-	if err := os.WriteFile(preCommit, []byte(hookScript("hook-precommit")), 0o755); err != nil {
-		return fmt.Errorf("write pre-commit hook: %w", err)
+	for path, cmd := range map[string]string{postCommit: "hook-run", preCommit: "hook-precommit"} {
+		if err := writeHook(path, hookScript(cmd)); err != nil {
+			return fmt.Errorf("write %s hook: %w", filepath.Base(path), err)
+		}
 	}
 
 	mode := "private"
@@ -717,6 +783,22 @@ func cmdHookRun() error {
 // default mode is advisory. The block mode is opt-in for teams that want
 // to enforce the discipline.
 func cmdPreCommit() error {
+	err := preCommitCheck()
+	if err == nil || errors.Is(err, errPrecommitBlocked) {
+		return err
+	}
+	// Any other failure is githints' problem, not the commit's: a locked or
+	// corrupt store, a bad config, a missing git. The gate is a warning by
+	// design, so it must never be the reason someone cannot commit -- not
+	// even with GITHINTS_PRECOMMIT_BLOCK=1, which is about unrecorded files.
+	fmt.Fprintf(os.Stderr, "githints: pre-commit check skipped: %v\n", err)
+	return nil
+}
+
+// errPrecommitBlocked is the one pre-commit outcome that may fail a commit.
+var errPrecommitBlocked = errors.New("pre-commit gate blocked the commit")
+
+func preCommitCheck() error {
 	root, st, err := openRootAndStore()
 	if err != nil {
 		return err
@@ -753,7 +835,7 @@ func cmdPreCommit() error {
 	fmt.Fprintln(os.Stderr, "call record_change for each before committing, or set GITHINTS_PRECOMMIT_BLOCK=1 to enforce.")
 
 	if os.Getenv("GITHINTS_PRECOMMIT_BLOCK") == "1" {
-		return fmt.Errorf("pre-commit gate blocked commit of %d unrecorded file(s); set GITHINTS_PRECOMMIT_BLOCK=0 to warn only", len(missing))
+		return fmt.Errorf("%w: %d unrecorded file(s); set GITHINTS_PRECOMMIT_BLOCK=0 to warn only", errPrecommitBlocked, len(missing))
 	}
 	_ = root // root reserved for future pre-commit rendering hooks
 	return nil
