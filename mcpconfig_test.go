@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/cjrdz/githints/internal/gitutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,7 +189,14 @@ func TestGlobalClientWritesPerRepoEntryWithBackup(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("APPDATA", "")
 	t.Setenv("CLINE_MCP_SETTINGS_PATH", "")
-	root := chdirTempRepo(t)
+	chdirTempRepo(t)
+	// The repository root as git reports it, which is what setup pins: it
+	// resolves symlinks (/private/var on macOS) and uses forward slashes on
+	// Windows, so it can differ from the temp dir's own path.
+	root, err := gitutil.RepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := cmdMCPConfig([]string{"windsurf", "-write"}); err == nil {
 		t.Fatal("wrote a config for a client that is not installed")
@@ -252,7 +260,8 @@ func TestSetupInitializesAndDetects(t *testing.T) {
 		t.Skip("git not on PATH")
 	}
 	bin := t.TempDir()
-	if err := os.Symlink(gitPath, filepath.Join(bin, "git")); err != nil {
+	// Keep the name, so Windows finds git.exe.
+	if err := os.Symlink(gitPath, filepath.Join(bin, filepath.Base(gitPath))); err != nil {
 		t.Skipf("cannot link git: %v", err)
 	}
 	t.Setenv("PATH", bin)

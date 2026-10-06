@@ -151,7 +151,8 @@ func checkHooks(root string) []checkResult {
 			continue
 		}
 		bin := strings.ReplaceAll(m[1], `'\''`, `'`)
-		if fi, err := os.Stat(filepath.FromSlash(bin)); err != nil || fi.Mode()&0o111 == 0 {
+		// Windows has no execute bits; there, existing is enough.
+		if fi, err := os.Stat(filepath.FromSlash(bin)); err != nil || (runtime.GOOS != "windows" && fi.Mode()&0o111 == 0) {
 			if _, perr := exec.LookPath("githints"); perr == nil {
 				out = append(out, checkResult{levelWarn, "hooks", name + " points at " + bin + ", which is gone; it falls back to githints on PATH", "githints init (repoints it)"})
 			} else {

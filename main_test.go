@@ -14,6 +14,8 @@ func chdirTempRepo(t *testing.T) string {
 	dir := t.TempDir()
 	runGit(t, dir, "init")
 	runGit(t, dir, "config", "user.email", "test@example.com")
+	// CI machines have no global identity; commits in tests need one.
+	runGit(t, dir, "config", "user.name", "Test User")
 
 	cwd, err := os.Getwd()
 	if err != nil {
