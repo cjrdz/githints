@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -234,7 +235,8 @@ func TestGlobalClientWritesPerRepoEntryWithBackup(t *testing.T) {
 	if bak, err := os.ReadFile(cfg + ".githints-backup"); err != nil || string(bak) != orig {
 		t.Errorf("backup: %v %q", err, bak)
 	}
-	if fi, _ := os.Stat(cfg); fi.Mode().Perm() != 0o600 {
+	// Unix permission bits do not exist on Windows (Go reports 0666).
+	if fi, _ := os.Stat(cfg); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode changed to %o", fi.Mode().Perm())
 	}
 }
