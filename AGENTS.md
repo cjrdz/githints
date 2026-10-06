@@ -327,19 +327,29 @@ a derived cache you can delete and rebuild.
 
 See `docs/extensibility.md` for the spec format.
 
-### Import resolution and tsconfig aliases
+### Import resolution in single repos and monorepos
 
 Each language decides how its files map back to the key importers name them
 by, so a language that declares one takes part in "Imported by", cross-note
-links, and hub ranking. Python uses dotted module names (`app/service.py` is
-`app.service`, and `app/__init__.py` is `app`); Go uses the module path from
-`go.mod`; the TypeScript family uses the normalized file key.
+links, hub ranking and the dependency graph. Resolution is per package, so a
+monorepo connects across its packages:
 
-For TypeScript-family files, the index resolves relative imports and tsconfig
-`paths` aliases (e.g. `@core/x`, `@shared/x`, `@features/x`, `@api-types/x`)
-installing the active `paths` map from the nearest `tsconfig.json` on each scan.
-Only true package specifiers (npm packages, `svelte`, `astro`, etc.) stay
-unresolved.
+- **Go** uses the module path of the nearest `go.mod` at or above each file, so
+  every module of a multi-module repo (with or without `go.work`) resolves.
+- **TypeScript family** resolves relative imports; `paths` aliases from the
+  nearest `tsconfig.json`/`jsconfig.json` that defines them, following
+  relative `extends`; and workspace packages by their `package.json` name
+  (`@acme/ui`, `@acme/ui/button`), mapped to source files that exist (a `main`
+  pointing at `dist/` is tried as `src/`). External packages stay unresolved.
+- **Python** names modules from the nearest project root (`pyproject.toml`,
+  `setup.py`, `setup.cfg`) and its `src/`, so `services/api/src/app/x.py` is
+  `app.x`; relative imports (`from .db import x`) are resolved. Without a
+  project marker, names are repo-relative (`app/service.py` is `app.service`).
+- **Java** strips `src/main/java` (and test/kotlin variants) in every module.
+
+After upgrading githints, run `./githints index` once: the hook only rescans
+changed files, and `doctor` warns while an index built by an older resolver
+remains.
 
 ### `.githintsignore`
 

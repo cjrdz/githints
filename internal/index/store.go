@@ -246,6 +246,26 @@ func (s *Store) metaSet(key, value string) error {
 	return err
 }
 
+// ResolverVersion identifies how import keys are computed. It is bumped when a
+// change to resolution (nearest go.mod, per-package tsconfig, workspace
+// packages, project roots) makes keys stored by an older scan disagree with
+// keys computed now. An incremental scan only re-parses the files a commit
+// touched, so the mismatch would otherwise persist silently until a full
+// rebuild; doctor and the hook report it instead.
+const ResolverVersion = 2
+
+// IndexResolverVersion returns the resolver version of the last full scan, 0
+// for an index built before versions were recorded.
+func (s *Store) IndexResolverVersion() (int, error) {
+	return s.metaInt("resolver_version")
+}
+
+// SetResolverVersion records that the index was fully built with the current
+// resolver.
+func (s *Store) SetResolverVersion() error {
+	return s.metaSet("resolver_version", fmt.Sprintf("%d", ResolverVersion))
+}
+
 // LastIndexedAt returns the stored timestamp or 0 if never indexed.
 func (s *Store) LastIndexedAt() (int64, error) {
 	v, err := s.metaGet("last_indexed_at")

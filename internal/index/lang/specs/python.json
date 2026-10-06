@@ -53,6 +53,12 @@
   "import_path": "dotted",
   "import_path_index_names": ["__init__"],
 
+  // In a monorepo each project is named from its own root: the nearest
+  // directory with one of these files, and its src/ in the src layout.
+  // services/api/src/app/x.py is "app.x", as `import app.x` writes it.
+  "import_path_root_markers": ["pyproject.toml", "setup.py", "setup.cfg"],
+  "import_path_root_subdirs": ["src"],
+
   "imports": [
     { "requires": "import", "pattern": "^\\s*from\\s+(?P<path>[.\\w]+)\\s+import\\b" },
     { "requires": "import", "pattern": "^\\s*import\\s+(?P<path>[\\w.]+)" }

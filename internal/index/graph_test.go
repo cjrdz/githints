@@ -115,3 +115,64 @@ func TestBuildGraphExternalFocusAndCap(t *testing.T) {
 		}
 	}
 }
+
+// End to end through FullScan: a polyglot monorepo whose cross-package
+// imports only connect with per-module go.mod, per-package tsconfig and
+// workspace packages, and per-project Python roots.
+func TestMonorepoGraphConnectsAcrossPackages(t *testing.T) {
+	st, dir := tempStore(t)
+	t.Cleanup(func() { st.Close() })
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	files := map[string]string{
+		// Go: two modules, no root go.mod.
+		"go/api/go.mod":        "module example.com/api\n\ngo 1.23\n\nrequire example.com/shared v0.0.0\n",
+		"go/api/main.go":       "package main\n\nimport \"example.com/shared/log\"\n\nfunc main() { log.Print() }\n",
+		"go/shared/go.mod":     "module example.com/shared\n\ngo 1.23\n",
+		"go/shared/log/log.go": "package log\n\nfunc Print() {}\n",
+		// TypeScript: an app importing a workspace package and its own alias.
+		"web/app/tsconfig.json": `{"compilerOptions":{"paths":{"~/*":["./src/*"]}}}`,
+		"web/app/src/main.ts":   "import { Button } from \"@acme/ui\";\nimport { cfg } from \"~/config\";\nexport const m = Button;\n",
+		"web/app/src/config.ts": "export const cfg = 1;\n",
+		"web/ui/package.json":   `{"name":"@acme/ui","main":"dist/index.js"}`,
+		"web/ui/src/index.ts":   "export const Button = 1;\n",
+		// Python: a src-layout service with a relative import.
+		"py/svc/pyproject.toml":      "[project]\nname='svc'\n",
+		"py/svc/src/svc/__init__.py": "",
+		"py/svc/src/svc/db.py":       "def connect():\n    pass\n",
+		"py/svc/src/svc/api.py":      "from .db import connect\n",
+	}
+	for rel, body := range files {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeGo(t, root, rel, body)
+	}
+	opts := lang.ScanOptions{Root: root, Languages: []string{"go", "typescript", "python"}, MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatalf("FullScan: %v", err)
+	}
+	g, err := BuildGraph(st, root, GraphOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges := edgeSet(g)
+	for _, want := range [][2]string{
+		{"go/api/main.go", "go/shared/log/log.go"},
+		{"web/app/src/main.ts", "web/ui/src/index.ts"},
+		{"web/app/src/main.ts", "web/app/src/config.ts"},
+		{"py/svc/src/svc/api.py", "py/svc/src/svc/db.py"},
+	} {
+		if !edges[want] {
+			t.Errorf("missing edge %v\nhave %v", want, g.Edges)
+		}
+	}
+}
+
+func TestFullScanRecordsResolverVersion(t *testing.T) {
+	st, _ := graphFixture(t)
+	if v, err := st.IndexResolverVersion(); err != nil || v != ResolverVersion {
+		t.Fatalf("resolver version = %d, %v; want %d", v, err, ResolverVersion)
+	}
+}

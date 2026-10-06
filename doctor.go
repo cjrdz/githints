@@ -240,6 +240,9 @@ func checkIndex(root string) checkResult {
 		return checkResult{levelWarn, "index", "enabled but never built", "githints index"}
 	}
 	age := time.Since(time.Unix(at, 0)).Round(time.Minute)
+	if v, err := db.IndexResolverVersion(); err == nil && v < index.ResolverVersion {
+		return checkResult{levelWarn, "index", fmt.Sprintf("last indexed %s ago, by an older githints: import links may be missing", age), "githints index"}
+	}
 	return checkResult{levelOK, "index", fmt.Sprintf("last indexed %s ago", age), ""}
 }
 

@@ -188,6 +188,9 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	if err := db.SetMeta(meta); err != nil {
 		return err
 	}
+	if err := db.SetResolverVersion(); err != nil {
+		return err
+	}
 	if err := db.ReclaimSpace(); err != nil {
 		// Vacuum is purely an optimization; log and continue.
 		fmt.Fprintf(os.Stderr, "githints: index vacuum: %v\n", err)
@@ -392,6 +395,11 @@ func parseWithTimeout(p lang.LanguageParser, rel string, src []byte, timeout tim
 // when their path no longer exists on disk; existing files are parsed and
 // their rows replaced. This is the hook path used in Phase 2.
 func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes int) error {
+	if v, err := db.IndexResolverVersion(); err == nil && v < ResolverVersion {
+		if n, err := db.FileCount(); err == nil && n > 0 {
+			fmt.Fprintln(os.Stderr, "githints: the index was built by an older githints whose import resolution differs; run `githints index` once to rebuild it")
+		}
+	}
 	registry := lang.NewRegistryForRoot(opts.Root)
 	// Lenient on purpose: this runs from the post-commit hook, which only
 	// warns on a scan error, so a hard failure here means the commit succeeds

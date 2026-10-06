@@ -108,6 +108,16 @@ type Spec struct {
 	// of the import path. Java's src/main/java is the clearest case: the file
 	// is at src/main/java/com/x/Foo.java and imported as com.x.Foo.
 	ImportPathStripPrefixes []string `json:"import_path_strip_prefixes"`
+
+	// ImportPathRootMarkers are files that mark a project root inside the
+	// repository (pyproject.toml, setup.py). A file's import path is taken
+	// relative to the nearest marked directory instead of the repository
+	// root, which is what a monorepo of several projects needs.
+	ImportPathRootMarkers []string `json:"import_path_root_markers"`
+
+	// ImportPathRootSubdirs are source directories inside a marked project
+	// ("src" for the src layout): a file under one is named relative to it.
+	ImportPathRootSubdirs []string `json:"import_path_root_subdirs"`
 }
 
 // knownSymbolKinds is the closed set a spec may use. Rendering interpolates

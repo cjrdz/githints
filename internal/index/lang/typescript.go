@@ -60,15 +60,14 @@ func tsFileKey(p string) string {
 // resolveTSImport maps an import specifier to its index key. Relative
 // specifiers are resolved against the importing file's directory and
 // normalized with tsFileKey. Non-relative specifiers first go through the
-// active tsconfig paths configuration (when the scan layer installed one) so
-// aliases like "@core/x" resolve to real files; anything left over — package
-// names, unmapped aliases — is kept raw.
+// nearest tsconfig paths configuration and then the repository's workspace
+// packages (when the scan layer installed them), so "@core/x" and "@acme/ui"
+// resolve to real files; anything left over — external packages, unmapped
+// aliases — is kept raw.
 func resolveTSImport(importerFile, spec string) string {
 	if !strings.HasPrefix(spec, ".") {
-		if cfg := activeTSPathsConfig(); cfg != nil {
-			if resolved, ok := cfg.Resolve(spec); ok {
-				return tsFileKey(resolved)
-			}
+		if resolved, ok := resolveTSAlias(importerFile, spec); ok {
+			return tsFileKey(resolved)
 		}
 		return spec
 	}

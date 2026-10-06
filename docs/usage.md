@@ -665,10 +665,15 @@ merge side with the canonical derived content.
 
 ## Multiple projects
 
-- **Monorepo**: run `githints init` once at the root. Paths are naturally
-  scoped.
-- **Separate repos**: run `githints init` in each repo. Stores and hooks are
-  isolated; do not share a `store.db` across repos.
+- **Monorepo**: run `githints setup` (or `init`) once at the root. History,
+  search and verify cover the whole tree, and the index resolves imports per
+  package: the nearest `go.mod` for Go, the nearest `tsconfig.json` (with
+  `extends`) and workspace `package.json` names for TypeScript, and each
+  project's root (`pyproject.toml`, `src/` layout) for Python. Use
+  `githints index graph -focus=...` to look at one package's neighbourhood.
+- **Separate repos**: run `githints setup` in each repo. Stores, salts and
+  hooks are isolated, and there is no cross-repo view; do not share a
+  `store.db` across repos.
 
 ## Troubleshooting
 

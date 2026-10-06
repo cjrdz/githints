@@ -478,3 +478,43 @@ func TestLanguageCountsCommaNoLongerCorrupts(t *testing.T) {
 		t.Errorf("got %v, want a single entry for %q", got, "a,b")
 	}
 }
+
+// A monorepo can hold several Go modules. Each file belongs to the nearest
+// go.mod at or above it; only the root go.mod used to be read, so nested
+// modules got the root's path, or none when the root had no go.mod.
+func TestGoImportPathUsesNearestModule(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("services/api/go.mod", "module example.com/api\n\ngo 1.23\n")
+	write("libs/shared/go.mod", "module \"example.com/shared\"\n")
+	write("go.work", "go 1.23\n\nuse (\n\t./services/api\n\t./libs/shared\n)\n")
+
+	var p GoParser
+	for _, scanned := range []bool{false, true} {
+		if scanned {
+			defer p.BeginScan(root)()
+		}
+		for file, want := range map[string]string{
+			"services/api/main.go":              "example.com/api",
+			"services/api/internal/store/db.go": "example.com/api/internal/store",
+			"libs/shared/log/log.go":            "example.com/shared/log",
+		} {
+			got, err := p.ImportPath(root, file)
+			if err != nil || got != want {
+				t.Errorf("scanned=%v ImportPath(%s) = %q, %v; want %q", scanned, file, got, err, want)
+			}
+		}
+		if _, err := p.ImportPath(root, "tools/gen.go"); err == nil {
+			t.Errorf("scanned=%v: a file outside every module got an import path", scanned)
+		}
+	}
+}

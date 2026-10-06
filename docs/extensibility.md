@@ -302,6 +302,20 @@ names, with `import_path_index_names` for stems that stand for their directory
 (`__init__`, `index`). A spec that declares none simply does not implement the
 interface, rather than inventing a key nothing would match.
 
+Three more fields make a dotted or slash key right in a monorepo:
+
+- `import_path_strip_prefixes`: source roots that are not part of the key
+  (Java's `src/main/java`). They are stripped wherever they occur, so every
+  module of a multi-module build is covered, not only the repository root.
+- `import_path_root_markers`: files that mark a project inside the repository
+  (`pyproject.toml`, `setup.py`). A file's key is taken relative to the nearest
+  marked directory instead of the repository root.
+- `import_path_root_subdirs`: source directories inside a marked project
+  (`src` for the src layout).
+
+A `dotted` language also has relative imports resolved during a scan:
+`from ..models import X` in `app/routes/user.py` is stored as `app.models`.
+
 `ImportPath` is the inverse of a language's import rules, and nothing enforces
 that the two agree, so a language implementing it should be tested against its
 own extraction. `TestPythonImportPathRoundTrip` is the pattern.

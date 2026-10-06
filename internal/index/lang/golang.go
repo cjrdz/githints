@@ -1,10 +1,13 @@
 package lang
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -257,81 +260,120 @@ func exprString(e ast.Expr) string {
 	}
 }
 
-// activeGoModule caches the module path for the duration of a scan.
-//
-// resolveImportPaths asks for the import path of every indexed file, and each
-// answer re-read and re-parsed go.mod: ten thousand files meant ten thousand
-// reads of the same unchanged file. It is scoped to a scan through BeginScan
-// rather than cached forever, so a go.mod edited between scans is picked up.
-var activeGoModule struct {
-	mu     sync.RWMutex
-	loaded bool
-	root   string
-	path   string
-	err    error
+// goModule is the module a directory belongs to: the nearest go.mod at or
+// above it, within the repository.
+type goModule struct {
+	dir  string // repo-relative directory holding go.mod ("." for the root)
+	path string // its module directive
+	err  error
 }
 
-// BeginScan loads the module path once for the scan.
-func (GoParser) BeginScan(root string) func() {
-	module, err := readModulePath(root)
+// activeGoModules caches, per directory, the module it belongs to, for the
+// duration of a scan.
+//
+// resolveImportPaths asks for the import path of every indexed file; without
+// a cache, each answer re-read go.mod. It is scoped to a scan through
+// BeginScan rather than cached forever, so a go.mod edited between scans is
+// picked up.
+var activeGoModules struct {
+	mu     sync.Mutex
+	active bool
+	root   string
+	byDir  map[string]goModule
+}
 
-	activeGoModule.mu.Lock()
-	activeGoModule.loaded = true
-	activeGoModule.root = root
-	activeGoModule.path = module
-	activeGoModule.err = err
-	activeGoModule.mu.Unlock()
+// BeginScan starts a per-scan cache of directory -> module.
+func (GoParser) BeginScan(root string) func() {
+	activeGoModules.mu.Lock()
+	activeGoModules.active = true
+	activeGoModules.root = root
+	activeGoModules.byDir = map[string]goModule{}
+	activeGoModules.mu.Unlock()
 
 	return func() {
-		activeGoModule.mu.Lock()
-		activeGoModule.loaded = false
-		activeGoModule.mu.Unlock()
+		activeGoModules.mu.Lock()
+		activeGoModules.active = false
+		activeGoModules.byDir = nil
+		activeGoModules.mu.Unlock()
 	}
 }
 
-// modulePath returns the cached module path when a scan installed one for this
-// root, and reads go.mod otherwise. The root is checked rather than assumed:
-// the MCP server resolves import paths outside any scan, and a stale answer
-// for a different repository would be worse than a re-read.
-func modulePath(root string) (string, error) {
-	activeGoModule.mu.RLock()
-	loaded, cachedRoot, path, err := activeGoModule.loaded, activeGoModule.root, activeGoModule.path, activeGoModule.err
-	activeGoModule.mu.RUnlock()
-
-	if loaded && cachedRoot == root {
-		return path, err
+// moduleFor returns the module containing repo-relative directory dir: the
+// nearest go.mod at or above it. A monorepo can hold several modules (nested
+// go.mod files, usually tied together by go.work), and a file belongs to the
+// innermost one; using only the root go.mod gave every nested module's files
+// the wrong import path, or none at all when the root had no go.mod.
+func moduleFor(root, dir string) goModule {
+	dir = path.Clean(filepath.ToSlash(dir))
+	activeGoModules.mu.Lock()
+	cached := activeGoModules.active && activeGoModules.root == root
+	if cached {
+		if m, ok := activeGoModules.byDir[dir]; ok {
+			activeGoModules.mu.Unlock()
+			return m
+		}
 	}
-	return readModulePath(root)
+	activeGoModules.mu.Unlock()
+
+	var m goModule
+	modPath, err := readModulePathAt(root, dir)
+	switch {
+	case err == nil:
+		m = goModule{dir: dir, path: modPath}
+	case !errors.Is(err, fs.ErrNotExist):
+		// A go.mod that exists but cannot be read or has no module line is
+		// an answer for this directory, not a reason to look further up.
+		m = goModule{dir: dir, err: err}
+	case dir == ".":
+		m = goModule{err: fmt.Errorf("no go.mod at or above this file: %w", err)}
+	default:
+		m = moduleFor(root, path.Dir(dir))
+	}
+
+	if cached {
+		activeGoModules.mu.Lock()
+		if activeGoModules.active && activeGoModules.root == root {
+			activeGoModules.byDir[dir] = m
+		}
+		activeGoModules.mu.Unlock()
+	}
+	return m
 }
 
 // ImportPath maps a Go file back to the package path importers write: the
-// module path from go.mod joined with the file's directory.
+// path of the module it belongs to, joined with the file's directory relative
+// to that module.
 func (GoParser) ImportPath(root, file string) (string, error) {
-	module, err := modulePath(root)
-	if err != nil {
-		return "", fmt.Errorf("read module path: %w", err)
+	dir := path.Dir(filepath.ToSlash(file))
+	m := moduleFor(root, dir)
+	if m.err != nil {
+		return "", fmt.Errorf("read module path: %w", m.err)
 	}
-	dir := filepath.ToSlash(filepath.Dir(file))
-	if dir == "." || dir == "" {
-		return module, nil
+	if dir == m.dir {
+		return m.path, nil
 	}
-	return module + "/" + dir, nil
+	rel := dir
+	if m.dir != "." {
+		rel = strings.TrimPrefix(dir, m.dir+"/")
+	}
+	return m.path + "/" + rel, nil
 }
 
-// readModulePath returns the module path from the repository's go.mod.
-func readModulePath(root string) (string, error) {
-	path := filepath.Join(root, "go.mod")
-	data, err := safefs.ReadRepoFile(root, "go.mod", maxProjectFileBytes)
+// readModulePathAt returns the module directive of dir/go.mod. A missing file
+// is reported as fs.ErrNotExist so the caller can look in the parent.
+func readModulePathAt(root, dir string) (string, error) {
+	rel := path.Join(dir, "go.mod")
+	data, err := safefs.ReadRepoFile(root, filepath.FromSlash(rel), maxProjectFileBytes)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+		return "", fmt.Errorf("read %s: %w", rel, err)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[0] == "module" {
-			return fields[1], nil
+			return strings.Trim(fields[1], `"`), nil
 		}
 	}
-	return "", fmt.Errorf("no module directive found in %s", path)
+	return "", fmt.Errorf("no module directive found in %s", rel)
 }
 
 // goBlanker exposes Go's lexical surface for post-passes that match lines.
