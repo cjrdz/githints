@@ -172,8 +172,21 @@ session state.
 
     ./githints render
 
-Regenerates all rendered markdown (per-file hints, `CHANGES.md`, `INDEX.md`)
-from the current store.
+Regenerates the change-log markdown (per-file hints and `CHANGES.md`) from the
+current store. The structural index notes and `INDEX.md` are rebuilt by
+`./githints index` instead.
+
+### `history`, `recent`, `search`, `diff`, `changes`
+
+    ./githints history -file="..." [-limit=20]
+    ./githints recent [-limit=20]
+    ./githints search -query="..." [-limit=20]
+    ./githints diff -file="..." [-hash=<hex>]
+    ./githints changes -since="..." -until="..." [-file="..."]
+
+The CLI equivalents of `get_file_history`, `get_recent_changes`,
+`search_changes`, `get_diff` and `get_changes_in_range`, with the same limits.
+`diff` is redacted and truncated exactly like `get_diff`.
 
 ### `record`
 
@@ -344,7 +357,7 @@ For targeted forensics:
 
 - `search_changes(query="...")` / `./githints search -query="..."`
 - `get_changes_in_range(since="...", until="...", file="...")` /
-  `./githints range -since="..." -until="..." -file="..."`
+  `./githints changes -since="..." -until="..." -file="..."`
 
 With Ollama enabled, summaries and diffs can be compressed automatically.
 

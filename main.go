@@ -40,6 +40,10 @@ var commands = map[string]func(args []string) error{
 	"record":         cmdRecord,
 	"verify":         noArgs(cmdVerify),
 	"changes":        cmdChanges,
+	"history":        cmdHistory,
+	"recent":         cmdRecent,
+	"search":         cmdSearch,
+	"diff":           cmdDiff,
 	"rotate-salt":    cmdRotateSalt,
 	"salt":           cmdSalt,
 	"status":         noArgs(cmdStatus),
@@ -108,8 +112,14 @@ Usage:
   githints record -file=... -summary=... [-reason=...] [-agent-id=...]
                                   manually record a change (useful for testing)
   githints verify                 check HMAC chain + markdown consistency
-  githints changes -since=... -until=T [-file=...] [-limit=...]
-                                  timeline forensics query
+  githints history -file=F [-limit=N]
+                                  why a file looks the way it does (get_file_history)
+  githints recent [-limit=N]      latest changes across the repo (get_recent_changes)
+  githints search -query=Q [-limit=N]
+                                  full-text search of summaries and reasons (search_changes)
+  githints diff -file=F [-hash=H] redacted diff of the working tree or one commit (get_diff)
+  githints changes -since=T -until=T [-file=F] [-limit=N]
+                                  timeline query (get_changes_in_range)
   githints rotate-salt [-force]   generate a new integrity salt and re-sign the chain
   githints salt path|export [-o FILE]|import [-force] FILE
                                   locate, back up, or restore the integrity salt
@@ -1531,9 +1541,17 @@ func cmdChanges(args []string) error {
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
+	printChanges(changes, "no changes in range", false)
+	return nil
+}
+
+// printChanges writes one line per change, newest data as the store returned
+// it. Rows written before record-time sanitizing can still hold terminal
+// escapes, so every recorded field is flattened on output too.
+func printChanges(changes []store.Change, empty string, withReason bool) {
 	if len(changes) == 0 {
-		fmt.Println("no changes in range")
-		return nil
+		fmt.Println(empty)
+		return
 	}
 	for _, c := range changes {
 		when := time.Unix(c.RecordedAt, 0).Format(time.RFC3339)
@@ -1544,11 +1562,11 @@ func cmdChanges(args []string) error {
 		if c.ClockTamperWarning {
 			fmt.Fprintf(os.Stdout, " [CLOCK TAMPER WARNING]")
 		}
-		// Rows written before record-time sanitizing can still hold terminal
-		// escapes, so the text is flattened on output too.
 		fmt.Fprintf(os.Stdout, ", %s): %s\n", shortCommitHash(c.CommitHash), textsafe.OneLine(c.Summary))
+		if withReason && c.Reason != "" {
+			fmt.Fprintf(os.Stdout, "    why: %s\n", textsafe.OneLine(c.Reason))
+		}
 	}
-	return nil
 }
 
 func shortCommitHash(h string) string {

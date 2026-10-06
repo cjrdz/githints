@@ -97,17 +97,19 @@ From the repo root:
 githints init
 ```
 
-This creates `.githints/` (including `store.db` and an initial `CHANGES.md`)
-and installs `.git/hooks/post-commit` and `.git/hooks/pre-commit`.
+This creates `.githints/` (including `store.db` and an initial `CHANGES.md`),
+installs the `post-commit` and `pre-commit` hooks wherever git runs hooks for
+this repository (honoring `core.hooksPath` and linked worktrees), and adds a
+managed `.githints/` block to `.gitignore`. Every other command refuses to run
+until `init` has.
 
-Add `.githints/` to `.gitignore`:
-
-```gitignore
-.githints/
-```
+If a hook already exists, `init` stops and asks: `-chain` keeps yours and runs
+it first, `-force` replaces it. If `core.hooksPath` points inside the
+repository (husky, lefthook), `init` prints the two lines to add there instead.
 
 The generated `.md` files are useful to read, but they can always be
-regenerated from `store.db`, so they do not need to be committed.
+regenerated from `store.db`, so they do not need to be committed. Run
+`githints doctor` afterwards to check the setup.
 
 ## Agent instruction files
 
@@ -556,9 +558,12 @@ In shared mode, only the state files are ignored:
 ```gitignore
 # >>> githints (managed)
 .githints/store.db*
+.githints/index.db*
 .githints/.salt
+.githints/.salt.new
+.githints/repo-id
 .githints/config.json
-# <<< githints
+# <<< githints (managed)
 ```
 
 `CHANGES.md` and the per-file `.md` hints are not ignored, so they can be
@@ -628,9 +633,26 @@ skipped. Record the files, or unset the variable.
 
 ## Uninstall
 
+From the repository root:
+
 ```sh
-rm .git/hooks/post-commit .git/hooks/pre-commit
+# The hooks, wherever git runs them. If init -chain kept an older hook,
+# move it back afterwards (mv post-commit.pre-githints post-commit).
+hooks=$(git rev-parse --git-path hooks)
+rm "$hooks/post-commit" "$hooks/pre-commit"
+
+# The salt lives outside the repo; remove it before deleting .githints/,
+# which holds the id that names it.
+rm "$(githints salt path)"
+
+# The store, rendered markdown, index and config.
 rm -rf .githints/
+
+# The Merkle anchors (and on the remote too, if you pushed them).
+git update-ref -d refs/notes/githints
 ```
 
-Your source tree is untouched.
+Then delete the `githints (managed)` blocks from `.gitignore`, `AGENTS.md` and
+`CLAUDE.md` (everything between the markers), and the githints entry from your
+MCP client config (`.mcp.json`, `opencode.json`, or `codex mcp remove githints`).
+Your source tree is otherwise untouched.

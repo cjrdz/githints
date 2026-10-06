@@ -5,16 +5,11 @@ out of scope for the current release.
 
 ## Short term
 
-### CI linting
-
-Add `golangci-lint` to the CI workflow once the project has settled. This is
-kept out of the initial CI pass to avoid blocking PRs on linter nits while the
-codebase is still taking shape.
-
 ### Dependency risk tracking
 
-`mark3labs/mcp-go` is the de facto Go MCP SDK but is currently pre-1.0
-(v0.57.0). Track its releases and be ready for API changes when upgrading.
+`mark3labs/mcp-go` reached v1 and is pinned; its API moved between the
+pre-releases, so treat an upgrade as a change of its own (see CLAUDE.md).
+golangci-lint, govulncheck and goreleaser are pinned in CI and bumped by hand.
 
 ## Medium term
 
@@ -34,10 +29,12 @@ holds the salt (likely a CI secret or team keyring).
 
 ### Merkle root distribution
 
-Today the per-commit Merkle root is stored only in the local
-`refs/notes/githints` git note. Future work could:
+Each commit's anchor (a per-commit root plus a whole-log high-water mark) is
+written to `refs/notes/githints`, and `githints verify` checks every note. The
+notes are only as external as wherever they are pushed, and git does not push
+them by default. Future work could:
 
-- Push notes to the remote so CI and other clones can verify them.
+- Push notes automatically, or check in CI that they were pushed.
 - Store the root in commit messages or as a signed tag for stronger
   cross-machine guarantees.
 

@@ -37,6 +37,10 @@ const maxDiffResultBytes = 128 << 10
 // pathological expressions are a cheap CPU amplifier.
 const maxSearchQueryLen = 500
 
+// MaxSearchQueryLen is maxSearchQueryLen for the CLI's search command, which
+// enforces the same cap.
+const MaxSearchQueryLen = maxSearchQueryLen
+
 // maxSymbolNameLen caps find_symbol's name prefix. No real identifier is
 // close to it; the cap keeps the LIKE pattern bounded.
 const maxSymbolNameLen = 256
@@ -434,21 +438,22 @@ func handleGetDiff(client *llm.Client) server.ToolHandlerFunc {
 		diff = llm.ScrubDiff(diff)
 
 		if !req.GetBool("summarize", false) || client == nil {
-			return mcp.NewToolResultText(truncateDiff(diff)), nil
+			return mcp.NewToolResultText(TruncateDiff(diff)), nil
 		}
 
 		summary, err := client.SummarizeDiff(ctx, file, diff)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "githints: ollama summarize diff: %v\n", err)
-			return mcp.NewToolResultText(truncateDiff(diff)), nil
+			return mcp.NewToolResultText(TruncateDiff(diff)), nil
 		}
 		return mcp.NewToolResultText(summary), nil
 	}
 }
 
-// truncateDiff bounds the model-facing diff. gitutil caps what it buffers from
-// git; this is the smaller limit on what we hand back in one tool result.
-func truncateDiff(diff string) string {
+// TruncateDiff bounds the model-facing diff. gitutil caps what it buffers from
+// git; this is the smaller limit on what we hand back in one tool result. The
+// CLI's diff command uses it too, since CLI-mode agents read that output.
+func TruncateDiff(diff string) string {
 	if len(diff) <= maxDiffResultBytes {
 		return diff
 	}

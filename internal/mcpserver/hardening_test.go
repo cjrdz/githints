@@ -98,12 +98,12 @@ func TestHandleGetDiffScrubsSecrets(t *testing.T) {
 
 func TestTruncateDiff(t *testing.T) {
 	short := "diff --git a/a b/a\n+one line\n"
-	if got := truncateDiff(short); got != short {
+	if got := TruncateDiff(short); got != short {
 		t.Errorf("short diff was altered: %q", got)
 	}
 
 	long := strings.Repeat("+padding line to make this long\n", maxDiffResultBytes/8)
-	got := truncateDiff(long)
+	got := TruncateDiff(long)
 	if len(got) >= len(long) {
 		t.Fatalf("long diff not truncated: %d >= %d", len(got), len(long))
 	}
