@@ -5,23 +5,27 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/cjrdz/githints)](https://goreportcard.com/report/github.com/cjrdz/githints)
 
-Lightweight, local change tracking for AI coding agents.
+Local change tracking for AI coding agents.
 
-githints keeps a small SQLite journal of what changed and why, then renders it
-into plain markdown under `.githints/` so any model (or human) can catch up
-without special tooling.
+githints keeps a small, tamper-evident SQLite journal of what changed in a
+repository and **why**, plus a structural index of its code, and serves both to
+any agent over MCP or from the command line. The next agent (or person) to open
+the repository can catch up on intent instead of re-deriving it from diffs.
+
+Everything stays on your machine: no service, no account, no network access
+unless you opt in to a local Ollama model.
 
 ## Quick start
 
-**Linux / macOS**
+Install a prebuilt binary (it is checksum-verified before installing):
 
 ```sh
+# Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/cjrdz/githints/main/install.sh | sh
 ```
 
-**Windows (PowerShell)**
-
 ```powershell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/cjrdz/githints/main/install.ps1 | iex
 ```
 
@@ -31,96 +35,69 @@ Then, inside any repository you want tracked:
 githints setup
 ```
 
-`setup` initializes the repository (hooks, store, agent instructions) and
-registers the MCP server with every client it detects: Claude Code, opencode,
-Codex, VS Code (Copilot), Cursor, Zed, Kiro, Gemini CLI, JetBrains Junie and
-Continue. Pick them yourself with `-clients=claude,vscode`, see what it would
-do with `-dry-run`, or list them with `-list`. Global configs (Claude Desktop,
-Windsurf, Cline) are written only when you name them.
+`setup` installs the git hooks, creates `.githints/`, writes the agent
+instructions into `AGENTS.md` and `CLAUDE.md`, and registers the MCP server with
+every client it detects: Claude Code, opencode, Codex, VS Code (Copilot),
+Cursor, Zed, Kiro, Gemini CLI, JetBrains Junie and Continue. Run
+`githints setup -list` to see what it found, or `githints doctor` afterwards to
+check everything.
 
-No Go toolchain is needed — the scripts download a prebuilt binary and verify
-it against the release checksums. Other ways to install, including native
-packages for Arch, Debian, Fedora and Alpine, are in
-[docs/usage.md](docs/usage.md).
+Native packages (Arch, Debian, Fedora, Alpine), building from source, and manual
+client setup are in the [usage guide](docs/usage.md).
 
-`init` writes a managed block into `AGENTS.md`, which Claude Code, opencode,
-Codex and Gemini CLI all read, so the agent knows the tools exist. It also
-writes a block into `CLAUDE.md` importing it, for older Claude Code versions.
-Re-running `init` updates only those blocks.
+## What it does
 
-To register one client at a time, or see the exact entry first, use
-`githints mcp-config <client>`. [docs/usage.md](docs/usage.md) covers every
-client and manual setup.
-
-## How it works
-
-- **Agent-driven writes**: after editing a file, call `record_change` (or
-  `record_batch`) with a concrete summary. Rows start as **pending** and are
-  labeled **uncommitted** until the post-commit hook claims them.
-- **Hook-driven fallback**: the `post-commit` hook claims pending rows and adds
-  a generic fallback entry for any file the agent did not fully describe.
-- **Optional local Ollama summarization**: when enabled in `.githints/config.json`,
-  fallback diffs are sent to a local Ollama model for a one-line caption. It is
-  opt-in, timeout-bound, and never blocks a commit.
-- **Pre-commit gate**: warns (or blocks with `GITHINTS_PRECOMMIT_BLOCK=1`) when
-  staged files lack a pending record.
-- **Tamper-evident log**: each row is HMAC-chained, `recorded_at` is
-  monotonically checked, and a per-commit Merkle root is stored as a git note.
-- **Structural index**: a separate, regenerable cache of symbols and imports
-  (`.githints/index.db`) refreshed incrementally on every commit. Supported
-  languages: Go (via `go/parser`), plus TypeScript/JavaScript, Svelte, and
-  Astro (via built-in heuristic parsers), and Python (via a built-in language
-  spec). MCP tools
-  (`list_symbols`, `find_symbol`, `get_dependents`, `get_index_summary`) answer
-  "what's in this file?" and "what breaks if I change it?" — and
-  `githints index --obsidian` renders file-level wikilinks you can open as an
-  Obsidian graph.
-
-## Platforms
-
-Linux, macOS, and Windows (with [Git for Windows](https://gitforwindows.org/)).
+- **Records why code changed.** Agents call `record_change` after editing; the
+  post-commit hook ties each record to its commit and writes a fallback entry for
+  anything left undescribed. A pre-commit gate can warn or block when a staged
+  file has no record.
+- **Keeps the record honest.** Rows are HMAC-chained, timestamps are checked for
+  clock tampering, and each commit anchors a Merkle root in git notes that
+  `githints verify` checks, so edited, deleted or re-signed history is detected.
+- **Indexes the code.** A regenerable index of symbols, imports and framework
+  roles (routes, models, components...) across Go, TypeScript/JavaScript, Vue,
+  Svelte, Astro, Python, Rust, Java, C#, PHP, SQL and Prisma, with imports
+  resolved per package so monorepos connect.
+- **Shows the dependency graph.** `githints index graph` writes an offline,
+  interactive HTML viewer; Mermaid, Graphviz and JSON exports are one flag away.
+- **Works with any MCP client**, and has CLI equivalents for every read tool.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — data model, write paths, integrity
-  model, and package layout.
-- [Usage](docs/usage.md) — install, agent setup, CLI reference, and workflows.
-- [Contributing](CONTRIBUTING.md) — build, test, code style, and how to
-  contribute.
+| Document | For |
+| --- | --- |
+| [Usage guide](docs/usage.md) | Installing, setting up clients, daily workflow, the index and graph, configuration, what to commit, troubleshooting |
+| [Architecture](docs/architecture.md) | Data model, write paths, integrity and security design, package layout |
+| [Extending the index](docs/extensibility.md) | Adding a language or a framework detector |
+| [Roadmap](docs/roadmap.md) | What is planned and what was decided against |
+| [Contributing](CONTRIBUTING.md) | Building, testing, conventions, releases |
+| [Security policy](SECURITY.md) | Reporting vulnerabilities, threat model |
+| [AGENTS.md](AGENTS.md) | The rules agents follow in this repository |
 
-## CLI overview
+## CLI at a glance
 
 ```sh
-githints init [-share] [-chain]  # set up .githints/, install hooks, gitignore,
-                                 #   and the AGENTS.md / CLAUDE.md blocks
-                                 #   -share commits rendered markdown; state stays local
-                                 #   -chain keeps an existing hook, running it first
-githints setup [-clients=a,b] [-dry-run]
-                                 # init + register the MCP server with every
-                                 #   detected client (setup -list shows them)
-githints mcp-config CLIENT [-write]
-                                 # print or add the entry for one client
-githints doctor                  # check the whole setup and say how to fix it
-githints serve [-root=PATH]      # run the MCP stdio server
-githints record -file=F -summary=S [-reason=R]
-                                 # manually record a change
-githints verify                  # check HMAC chain and markdown consistency
-githints changes -since=T -until=T [-file=F]
-                                 # timeline forensics query
-githints render                  # re-render all markdown from the store
-githints status                  # store health and pending records
-githints index [--force] [--obsidian]
-                                 # rebuild the structural index; --obsidian emits
-                                 #   Obsidian wikilinks for the graph view
-githints index status            # index file/symbol counts and last scan time
-githints index graph [-focus=F]  # offline dependency-graph viewer at .githints/graph.html
-                                 #   (-format=mermaid|dot|json for other tools)
-githints index verify            # report drift: stale notes, ghost rows, and
-                                 #   uncovered source files (with reasons)
-githints rotate-salt [-force]    # rotate integrity salt and re-sign
-githints salt export -o FILE     # back up the integrity salt (salt import FILE restores it)
-githints version                 # print the githints version
+githints setup                  # set up the repo and register MCP clients
+githints doctor                 # check the whole setup; prints a fix for each problem
+githints status                 # store health, hooks, salt, pending records
+
+githints record -file=F -summary=S [-reason=R]   # record a change by hand
+githints history -file=F        # why a file looks the way it does
+githints recent | search -query=Q | diff -file=F | changes -since=T -until=T
+
+githints verify                 # check the HMAC chain, rendered markdown and Merkle anchors
+githints index                  # rebuild the structural index
+githints index graph            # offline dependency-graph viewer (.githints/graph.html)
+
+githints help                   # every command; any command takes -h
 ```
+
+The [usage guide](docs/usage.md#cli-reference) has the full reference.
+
+## Platforms
+
+Linux, macOS and Windows (with [Git for Windows](https://gitforwindows.org/)),
+on amd64 and arm64. `git` must be on `PATH`.
 
 ## License
 

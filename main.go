@@ -136,7 +136,7 @@ Usage:
                                   export the file dependency graph (default: an
                                   offline viewer at .githints/graph.html)
   githints doctor                 check hooks, salt, store, config, index and MCP setup
-  githints setup [-clients=a,b|all] [-dry-run] [-list]
+  githints setup [-clients=a,b|all] [-dry-run] [-list] [-update]
                                   init if needed, then register the MCP server with
                                   every client detected (Claude Code, opencode, Codex,
                                   VS Code, Cursor, Zed, Kiro, Gemini, Junie, ...)
@@ -253,6 +253,7 @@ var agentsBlock = []string{
 	"If the MCP tools are unavailable, use the CLI from the repo root:",
 	"",
 	"    githints record -file=\"<repo-relative path>\" -summary=\"<what changed>\" [-reason=\"...\"]",
+	"    githints status | recent | history -file=F | search -query=Q | diff -file=F",
 	"",
 	"Do not edit anything under `.githints/` by hand — it is regenerated from the",
 	"store. Run `githints render` to rebuild it.",

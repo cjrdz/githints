@@ -1,12 +1,40 @@
-.githints/
-githints
-*.exe
-opencode.json
-.mcp.json
+# Build output
+/githints
+/githints.exe
+# goreleaser output, written by a local `goreleaser release --snapshot`
+/dist/
 
-# goreleaser build output, written by a local `goreleaser release --snapshot`
-dist/
+# Test and profiling output
+*.test
+*.out
+*.prof
+coverage.*
 
+# MCP client configs written by `githints setup` / `githints mcp-config`.
+# In this repository githints runs as ./githints (not on PATH), so these files
+# carry this machine's absolute paths and must not be shared. A project that
+# installs githints on PATH may choose to commit its own.
+/.mcp.json
+/opencode.json
+/opencode.jsonc
+/.vscode/
+/.cursor/
+/.zed/
+/.kiro/
+/.gemini/
+/.junie/
+/.continue/
+/.codex/
+/.amazonq/
+/.warp/
+*.githints-backup
+
+# Editors and OS files
+/.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
 
 # >>> githints (managed)
 .githints/

@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-We support the latest released version of githints. Pre-1.0 releases may
-receive security fixes as patch or minor releases.
+We support the latest released version of githints. Before 1.0, security fixes
+ship in the next patch or minor release rather than being backported.
 
-| Version  | Supported          |
-| -------- | ------------------ |
-| v0.1.x   | :white_check_mark: |
-| earlier  | :x:                |
+| Version         | Supported          |
+| --------------- | ------------------ |
+| latest release  | :white_check_mark: |
+| anything older  | :x:                |
 
 ## Reporting a vulnerability
 
@@ -37,6 +37,27 @@ Security reports should focus on the githints tool itself (CLI, MCP server,
 integrity chain, local storage, hook behavior). For third-party dependencies,
 please report to the upstream project and let us know so we can bump the
 vulnerable version.
+
+## What githints defends against
+
+A cloned repository is treated as hostile input. Reports that break any of these
+are vulnerabilities:
+
+- **File access stays inside the repository.** githints reads and writes its own
+  files through `os.Root` with links refused, so a committed symlink or junction
+  cannot make it read, write or delete outside the tree. Repository files it
+  reads (`config.json`, `go.mod`, `tsconfig.json`, `package.json`) are
+  size-capped and must be regular files.
+- **State from a clone is refused.** A `store.db`, `index.db` or salt that git
+  tracks is rejected; a tracked `repo-id` is ignored.
+- **Recorded text cannot become markup, terminal control or code.** Summaries,
+  file names and symbol names are neutralized before they reach markdown, a
+  terminal, an MCP response or the graph viewer.
+- **Repository config cannot run programs.** git runs without external diff or
+  textconv drivers; the hook script never interpolates the binary path into
+  code; the Ollama endpoint is confined to loopback.
+- **Edited, deleted or re-signed history is detected** by `githints verify`
+  through the Merkle anchors, within the limits below.
 
 ## Threat model
 

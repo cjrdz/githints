@@ -8,6 +8,11 @@ and the security/integrity model.
 githints is a local change log for AI coding agents. It keeps a small SQLite
 database at `.githints/store.db`, renders it into markdown under `.githints/`,
 and exposes both an MCP server and a CLI for reading and writing entries.
+Alongside it sits a separate, regenerable structural index of the code
+(`.githints/index.db`), described under [Structural index](#structural-index).
+
+For how to use any of this, see [usage.md](usage.md); this document is about
+how it works.
 
 Two writers feed the same store:
 
@@ -67,13 +72,18 @@ Small key/value table for durable metadata:
 `record_change` and `record_batch` accept a repo-relative file path, summary,
 and optional reason. Before insertion the recorder:
 
-1. Validates the path is local and repo-relative (`filepath.IsLocal`).
-2. Scans summary/reason for obvious secret patterns (AWS keys, GitHub PATs,
-   private keys, JWTs) and rejects the row if any match.
-3. Captures the working-tree diff stat and a SHA-256 of the unified diff.
-4. Stamps the current branch.
-5. Computes the next HMAC using the integrity key and inserts the row.
-6. Re-renders the affected per-file markdown and `CHANGES.md`.
+1. Validates the path: repo-relative, local (`filepath.IsLocal`), and free of
+   control or invisible formatting characters.
+2. Enforces the size caps (`MaxSummaryLen`, `MaxReasonLen`, `MaxAgentIDLen`).
+3. Removes control characters, terminal escapes, bidi overrides and zero-width
+   characters from summary, reason and agent id (`textsafe`), *then* scans them
+   for credential shapes (`internal/secrets`) and rejects the row on a match.
+   Sanitizing first matters: a zero-width space inside a key would otherwise hide
+   it from the scan.
+4. Captures the working-tree diff stat and a SHA-256 of the unified diff.
+5. Stamps the current branch.
+6. Computes the next HMAC using the integrity key and inserts the row.
+7. Re-renders the affected per-file markdown and `CHANGES.md`.
 
 Agent rows are inserted with `commit_hash = ''` and are shown as
 **uncommitted** in rendered output until the post-commit hook claims them.
@@ -100,7 +110,19 @@ After a commit, `githints hook-run` (the `post-commit` hook):
 
 `githints hook-precommit` lists staged files and checks that each has a pending
 agent row. If not, it prints a warning. Setting `GITHINTS_PRECOMMIT_BLOCK=1`
-makes the hook return a non-zero exit code and abort the commit.
+makes the hook return a non-zero exit code and abort the commit. That is the
+only outcome that can fail a commit: any internal error (a locked store, a bad
+config) is printed and the commit proceeds.
+
+### Hook installation
+
+`init` asks git where hooks live (`git rev-parse --git-path hooks`), so
+`core.hooksPath` and linked worktrees work. A hooks path inside the work tree is
+a committed hook manager's directory, so `init` refuses to write machine-specific
+hooks there. The hook script holds the binary's path in a single-quoted shell
+variable (never interpolated into code), tries it first, falls back to
+`githints` on `PATH`, and exits 0 if neither exists. `init -chain` moves an
+existing hook to `<hook>.pre-githints`, which the new hook runs first.
 
 ## Rendering
 
@@ -114,15 +136,17 @@ The `hint` package reads the SQLite store and writes two kinds of artifacts:
 Both files are fully derived from the database, so they can be deleted and
 regenerated at any time (`githints init` re-creates an empty changelog).
 
-Both renderers escape agent-supplied text so it cannot inject markup when the
-files are rendered in an MCP client's webview. Prose fields go through `escape`
-(HTML entities plus backslash-escaped markdown metacharacters); values wrapped in
-a `` `code span` `` go through `codeSpan` instead, which strips backticks and
-newlines — `escape`'s backslashes would render literally inside a span.
+Both renderers escape agent-supplied text through `internal/textsafe`, the one
+escaper shared with the index notes. Prose is flattened to a single line (so a
+newline cannot forge a heading or an entry), HTML-escaped, and has markdown
+metacharacters backslash-escaped, including Obsidian's `==`, `%%` and `#tag`.
+Values in a `` `code span` `` get a fence longer than any backtick run inside
+them instead, since backslashes would render literally there.
 
-All writes go through `os.Root`, so a symlink or Windows junction under
-`.githints/` cannot redirect a render outside the repository. Path validation
-alone is lexical and cannot see links.
+Per-file hints are written through an `os.Root` opened on `.githints/` itself,
+so no link inside it can redirect a write anywhere else, not even elsewhere in
+the repository. A source path whose hint would overwrite githints' own output
+(`CHANGES`, `INDEX`, `index/`, `.obsidian/`) is skipped with a warning.
 
 ## Local Ollama integration
 
@@ -143,6 +167,63 @@ returned. On any failure the caller falls back to the existing generic text.
 
 The MCP server exposes the integration through optional `summarize` flags on
 `get_diff` and `get_recent_changes`.
+
+## Untrusted input
+
+A repository is attacker-controlled input: a clone can ship symlinks, a
+`config.json`, a `tsconfig.json`, even a `.githints/` directory. The rules:
+
+- **All githints-managed file I/O goes through `internal/safefs`.** Directories
+  must be plain (not a symlink or junction, which `os.OpenRoot` would follow in
+  its last component); reads and writes go through an `os.Root`; reads accept
+  regular files only (a FIFO is refused before it can block) and are size-capped.
+  This covers hints, index notes, `INDEX.md`, the stale-note prune, the
+  databases, `config.json`, `go.mod`, `tsconfig.json`, `package.json` and the
+  graph page. `init` refuses to rewrite `AGENTS.md`, `CLAUDE.md` or `.gitignore`
+  if it is a link.
+- **State that arrived in a clone is refused.** A `store.db`, `index.db` or
+  legacy `.salt` that git tracks did not come from this machine. A tracked
+  `repo-id` is ignored. SQLite opens with `trusted_schema=OFF` on every
+  connection.
+- **Text is neutralized before it is displayed** (`internal/textsafe`): markdown,
+  terminal output and MCP responses never carry control characters, escapes or
+  bidi overrides from recorded text, file names or symbol names.
+- **git runs with fixed behaviour.** Diffs use `--no-ext-diff --no-textconv`, so
+  a repository's `.gitattributes` cannot make githints run a diff driver. Every
+  git call has a timeout and a capped buffer, and every commit-ish is checked
+  with `IsValidCommitish` before it reaches argv.
+- **Repository config is bounded.** `config.json` limits have ceilings, and a
+  repository that enables Ollama is announced on stderr.
+
+## Structural index
+
+`internal/index` keeps a second SQLite database, `.githints/index.db`, with
+`symbols`, `imports` and `facets` tables, renders one note per file under
+`.githints/index/` and a rollup at `.githints/INDEX.md`. It is a cache: it has no
+integrity chain and `githints index` rebuilds it from scratch.
+
+- **Scanning.** A full scan walks the tree (skipping gitignored and
+  `.githintsignore`d files, decided in two batched `git check-ignore` calls) and
+  parses on a worker pool, merging results in walk order. The post-commit hook
+  runs an incremental scan over the files a commit touched, reading them through
+  an `os.Root` with `Lstat`, so a committed symlink is never followed.
+- **Parsing.** Go uses `go/parser`; the TypeScript family a hand-written
+  lexer-plus-patterns parser; other languages declarative specs over a shared
+  blanking lexer. Framework detectors then record facets. See
+  [extensibility.md](extensibility.md).
+- **Import resolution.** An import is stored as the key the importer wrote; a
+  file is matched to it through its language's `ImportPath`. Per-scan hooks
+  (`BeginScan`) load project configuration once per scan: the nearest `go.mod`
+  per directory, the nearest `tsconfig.json` with `extends` and the workspace's
+  `package.json` names, Python project roots. The index records a resolver
+  version so a change in resolution is reported rather than silently mixing old
+  and new keys.
+- **Graph.** `index.BuildGraph` turns import edges into a file graph, grouping
+  files that share an import path (a Go package) into one node, and supports a
+  focus with a hop depth and a node cap. `internal/index/graphexport` writes it
+  as JSON, DOT, Mermaid, or a self-contained HTML viewer whose CSP is
+  `default-src 'none'` with the inline script and style pinned by hash; graph
+  data sits in a non-executed JSON block and the viewer only uses `textContent`.
 
 ## Integrity model
 
@@ -287,13 +368,16 @@ Tools:
   Content-Security-Policy).
 - `get_index_summary` — structural index totals and top hub files by import
   in-degree.
+- `find_facets` — framework constructs by role (`route`, `model`,
+  `component`, ...), across frameworks.
 
 Every structural index tool response includes the timestamp of the last full
 or incremental index scan so the agent can decide whether the data is fresh
 enough to trust or whether it should re-index or read the file directly.
 
-The server resolves the repo root from its current working directory, so it
-should be launched with `cwd = project root` (project-scoped MCP configs).
+The server resolves the repository root from `-root`, then `GITHINTS_ROOT`,
+then `CLAUDE_PROJECT_DIR`, then its working directory, and refuses to start in a
+repository where `init` has not run. Nothing but JSON-RPC is written to stdout.
 
 ### Session tracking
 
@@ -309,37 +393,50 @@ is a new session. The stdio transport is single-session by construction, so two
 agents sharing one stdio would share the state; that is a property of the
 transport rather than something the tracker can resolve.
 
-`githints` uses `mark3labs/mcp-go`, the de facto Go MCP SDK. It is currently
-pre-1.0, so keep an eye on upstream releases for breaking API changes when
-upgrading.
+githints uses `mark3labs/mcp-go` (v1), and `internal/mcpserver` is the only
+package that imports it. Its API moved between pre-releases, so an upgrade is its
+own change: build, run the gate, and check `tools/list` still answers.
+
+### Client registration
+
+`githints setup` and `mcp-config` (`mcpconfig.go`) write the server entry into
+each MCP client's config from one table describing every client: its file, the
+top-level key, the entry shape, whether the root must be pinned, and how to
+detect it. Formats were checked against each vendor's documentation. Only
+githints' own entry is ever added or (with `-update`) replaced; JSON with
+comments is never rewritten; Codex's TOML is only appended to; global configs get
+a per-repository entry name and a one-time backup, and are written only when the
+client is named.
 
 ## CLI
 
-Commands are implemented in `main.go`:
-
-- `init` — create `.githints/`, salt, and hooks.
-- `serve` — run the MCP server.
-- `record` — manual agent-style write.
-- `hook-run` / `hook-precommit` — called by git hooks.
-- `verify` — check HMAC chain and markdown consistency.
-- `changes` — query by time range.
-- `status` — show store health and pending records.
-- `rotate-salt` — rotate the integrity salt and re-sign.
-- `salt path|export|import` — locate, back up, or restore the salt.
+Commands are dispatched from the `commands` table in `main.go`, the single
+source of truth; `TestUsageMatchesCommandTable` keeps it and the usage text in
+sync. `hook-run` and `hook-precommit` are dispatchable but hidden from usage.
+The full reference is in [usage.md](usage.md#cli-reference). Exit status: 0 ok,
+1 error, 2 usage error, 3 `verify` found problems.
 
 ## Package layout
 
 ```
-main.go                # CLI wiring
+main.go, version.go    # CLI dispatch, init, hooks, verify, status, ...
+cli_read.go            # history, recent, search, diff
+cli_graph.go           # index graph
+doctor.go              # githints doctor
+mcpconfig.go           # setup and mcp-config: the MCP client table
 internal/
-  config/              # .githints/config.json loader and env overrides
-  store/               # SQLite schema, migrations, queries
-  recorder/            # validation, secret scan, insert, render trigger
-  hint/                # markdown rendering and markdown verification
-  integrity/           # salt, key derivation, HMAC chain, Merkle root
-  gitutil/             # thin git shell wrappers
-  llm/                 # local Ollama client and diff scrubbing
-  mcpserver/           # MCP stdio server and tool handlers
-    server.go          #   tool registration and handlers
-    session.go         #   per-process session tracking
+  config/              # .githints/config.json loader, env overrides, bounds
+  store/               # change-log SQLite schema, migrations, queries
+  recorder/            # write path: validation, sanitizing, secret scan, insert, render
+  hint/                # change-log markdown rendering and verification
+  integrity/           # salt, repo id, key derivation, HMAC chain, Merkle anchors
+  gitutil/             # git invocations: timeouts, output caps, notes, hooks dir
+  safefs/              # os.Root-confined, size-capped file I/O for githints' files
+  textsafe/            # the one escaper: control characters, markdown, code spans
+  secrets/             # the one credential-pattern list
+  llm/                 # optional local Ollama client and diff scrubbing
+  index/               # structural index: store, scan, render, verify, graph
+    lang/              #   parsers, language specs, detectors, import resolution
+    graphexport/       #   JSON, DOT, Mermaid and the HTML viewer
+  mcpserver/           # MCP stdio server and tool handlers (the only mcp-go importer)
 ```
