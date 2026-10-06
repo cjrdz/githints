@@ -136,11 +136,15 @@ main() {
 	# checksums.txt comes from the same release as the archive, so it proves
 	# integrity, not origin. The build-provenance attestation proves the
 	# archive was built by this repository's release workflow; check it when
-	# the GitHub CLI is installed and signed in.
-	if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-		gh attestation verify "$tmp/$archive" --repo cjrdz/githints >/dev/null ||
-			die "build provenance attestation did not verify for $archive"
-		echo "attestation ok"
+	# the GitHub CLI is installed, new enough to have `gh attestation` (2.49+),
+	# and signed in. Older or signed-out gh is skipped, not treated as failure.
+	if command -v gh >/dev/null 2>&1 && gh attestation --help >/dev/null 2>&1 &&
+		gh auth status >/dev/null 2>&1; then
+		if gh attestation verify "$tmp/$archive" --repo cjrdz/githints >/dev/null 2>&1; then
+			echo "attestation ok"
+		else
+			unverified "build provenance attestation did not verify for $archive"
+		fi
 	fi
 
 	tar -xzf "$tmp/$archive" -C "$tmp" githints || die "could not extract the archive"
@@ -166,7 +170,7 @@ main() {
 	esac
 
 	echo
-	echo "Next: run 'githints init' inside a repository you want tracked."
+	echo "Next: run 'githints setup' inside a repository you want tracked."
 }
 
 main "$@"
