@@ -46,21 +46,37 @@ function Get-TargetArch {
 }
 
 function Get-LatestVersion {
-    # Follow the /releases/latest redirect rather than calling the API: no JSON
-    # parsing, and no unauthenticated rate limit to hit.
-    $resp = Invoke-WebRequest -Uri "https://github.com/$Repo/releases/latest" -MaximumRedirection 0 -ErrorAction SilentlyContinue
-    $location = $null
-    if ($resp -and $resp.Headers.Location) {
-        $location = $resp.Headers.Location
+    # Follow the /releases/latest redirect and read where it lands (.../tag/vX.Y.Z)
+    # rather than calling the API: no JSON parsing, and no unauthenticated rate
+    # limit to hit. Reading the 302 itself is not reliable: PowerShell 7 throws on
+    # an unfollowed redirect, even with -SkipHttpErrorCheck.
+    $resp = Invoke-WebRequest -Uri "https://github.com/$Repo/releases/latest" -UseBasicParsing
+    $base = $resp.BaseResponse
+    if ($base.PSObject.Properties['RequestMessage']) {
+        $location = $base.RequestMessage.RequestUri.AbsoluteUri   # PowerShell 7
     } else {
-        # Newer PowerShell throws rather than returning the 302; follow it.
-        $location = (Invoke-WebRequest -Uri "https://github.com/$Repo/releases/latest" -UseBasicParsing).BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+        $location = $base.ResponseUri.AbsoluteUri                 # Windows PowerShell 5.1
     }
     $tag = ($location -split '/')[-1]
     if (-not $tag -or $tag -eq 'latest') {
         throw 'could not determine the latest version'
     }
     return $tag
+}
+
+# Invoke-Native runs a native command for its exit code only. Windows PowerShell
+# 5.1 turns any stderr line from a native program into a terminating error when
+# $ErrorActionPreference is 'Stop', so a signed-out gh printing a notice would
+# otherwise end the install.
+function Invoke-Native([scriptblock]$Command) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Command *> $null
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
 }
 
 function Add-ToUserPath([string]$Dir) {
@@ -134,12 +150,10 @@ try {
     # Only with a gh new enough to have `gh attestation` (2.49+) and signed in;
     # an older or signed-out gh is skipped, not treated as a failure.
     if (Get-Command gh -ErrorAction SilentlyContinue) {
-        & gh attestation --help *> $null
-        $hasAttestation = ($LASTEXITCODE -eq 0)
-        & gh auth status *> $null
-        if ($hasAttestation -and $LASTEXITCODE -eq 0) {
-            & gh attestation verify $zipPath --repo cjrdz/githints *> $null
-            if ($LASTEXITCODE -eq 0) {
+        $hasAttestation = (Invoke-Native { gh attestation --help }) -eq 0
+        $signedIn = (Invoke-Native { gh auth status }) -eq 0
+        if ($hasAttestation -and $signedIn) {
+            if ((Invoke-Native { gh attestation verify $zipPath --repo cjrdz/githints }) -eq 0) {
                 Write-Host 'attestation ok'
             } else {
                 Fail-Unverified "build provenance attestation did not verify for $archive"
