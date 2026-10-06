@@ -182,6 +182,14 @@ try {
 
     if (Add-ToUserPath $BinDir) {
         Write-Host "added $BinDir to your user PATH"
+        # Windows hands a PATH change only to programs started afterwards, and
+        # Windows Terminal passes its own launch-time environment to every new
+        # tab. An agent started from an old window cannot find `githints serve`,
+        # and its MCP connection closes at once.
+        Write-Host ''
+        Write-Host 'Close and reopen your terminal app (all windows, not just the tab) and any'
+        Write-Host 'open editor or agent (VS Code, Kiro, Claude Desktop, ...) so they see the new'
+        Write-Host 'PATH; otherwise their MCP connection to githints fails to start.'
     }
 
     & $target version | Out-Null

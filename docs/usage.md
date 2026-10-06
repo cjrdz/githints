@@ -616,6 +616,14 @@ Export the salt where it still exists and import it here.
 **`merkle anchors` problems.** Rows were changed, deleted or moved after a commit
 anchored them. If you did not do it, treat it as tampering.
 
+**The MCP server fails to start (`CONNECTION_CLOSED`, "failed").** The client
+cannot find `githints` on its `PATH`. On Windows, a PATH change reaches only
+programs started afterwards, and Windows Terminal passes its own launch-time
+environment to every new tab: close the terminal app completely, and any open
+editor or agent, then reopen it and check that `githints version` works. Or run
+`githints setup -update` from a shell where githints is not on `PATH`, which
+writes the binary's absolute path into the configs instead.
+
 **The agent does not use githints.** Check `githints doctor`'s `mcp` line,
 restart the client, and make sure `AGENTS.md` / `CLAUDE.md` have the managed
 block.
