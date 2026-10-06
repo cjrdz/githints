@@ -131,14 +131,19 @@ try {
 
     # The checksum proves integrity, not origin. When the GitHub CLI is
     # installed and signed in, also check the build-provenance attestation.
+    # Only with a gh new enough to have `gh attestation` (2.49+) and signed in;
+    # an older or signed-out gh is skipped, not treated as a failure.
     if (Get-Command gh -ErrorAction SilentlyContinue) {
+        & gh attestation --help *> $null
+        $hasAttestation = ($LASTEXITCODE -eq 0)
         & gh auth status *> $null
-        if ($LASTEXITCODE -eq 0) {
+        if ($hasAttestation -and $LASTEXITCODE -eq 0) {
             & gh attestation verify $zipPath --repo cjrdz/githints *> $null
-            if ($LASTEXITCODE -ne 0) {
-                throw "build provenance attestation did not verify for $archive"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host 'attestation ok'
+            } else {
+                Fail-Unverified "build provenance attestation did not verify for $archive"
             }
-            Write-Host 'attestation ok'
         }
     }
 
@@ -167,7 +172,7 @@ try {
 
     & $target version | Out-Null
     Write-Host ''
-    Write-Host "Next: run 'githints init' inside a repository you want tracked."
+    Write-Host "Next: run 'githints setup' inside a repository you want tracked."
 } finally {
     Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
