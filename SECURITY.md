@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-We support the latest released version of githints. Pre-1.0 releases may
-receive security fixes as patch or minor releases.
+We support the latest released version of githints. Before 1.0, security fixes
+ship in the next patch or minor release rather than being backported.
 
-| Version  | Supported          |
-| -------- | ------------------ |
-| v0.1.x   | :white_check_mark: |
-| earlier  | :x:                |
+| Version        | Supported |
+| -------------- | --------- |
+| latest release | ✅ Yes    |
+| anything older | ❌ No     |
 
 ## Reporting a vulnerability
 
@@ -38,6 +38,27 @@ integrity chain, local storage, hook behavior). For third-party dependencies,
 please report to the upstream project and let us know so we can bump the
 vulnerable version.
 
+## What githints defends against
+
+A cloned repository is treated as hostile input. Reports that break any of these
+are vulnerabilities:
+
+- **File access stays inside the repository.** githints reads and writes its own
+  files through `os.Root` with links refused, so a committed symlink or junction
+  cannot make it read, write or delete outside the tree. Repository files it
+  reads (`config.json`, `go.mod`, `tsconfig.json`, `package.json`) are
+  size-capped and must be regular files.
+- **State from a clone is refused.** A `store.db`, `index.db` or salt that git
+  tracks is rejected; a tracked `repo-id` is ignored.
+- **Recorded text cannot become markup, terminal control or code.** Summaries,
+  file names and symbol names are neutralized before they reach markdown, a
+  terminal, an MCP response or the graph viewer.
+- **Repository config cannot run programs.** git runs without external diff or
+  textconv drivers; the hook script never interpolates the binary path into
+  code; the Ollama endpoint is confined to loopback.
+- **Edited, deleted or re-signed history is detected** by `githints verify`
+  through the Merkle anchors, within the limits below.
+
 ## Threat model
 
 githints is a local, single-user tool. Everything below is a known and accepted
@@ -47,9 +68,15 @@ not be treated as vulnerabilities.
 **The integrity chain does not defend against the same OS user.** The HMAC salt
 is stored with `0600` permissions in a per-user directory, so any process running
 as you can read it and forge a chain from scratch. The compensating control is
-the per-commit Merkle root written to `refs/notes/githints`: forging the database
-is easy, but forging it *and* rewriting a note that may already have been pushed
-is not. Treat the chain as tamper-**evident**, not tamper-proof.
+the Merkle anchor written to `refs/notes/githints` after every commit, which
+`githints verify` recomputes and compares. Each note pins that commit's rows and
+a high-water mark over the whole log, so editing, deleting, or re-pointing an
+anchored row fails verify. Forging the database is easy, but forging it *and*
+rewriting a note that has already been pushed is not -- and git does not push
+notes by default, so push them yourself (`git push origin refs/notes/githints`)
+if you want the anchor to exist anywhere but your own machine. Rows recorded
+since the last commit are not anchored yet. Treat the chain as
+tamper-**evident**, not tamper-proof.
 
 **`commit_hash` is not covered by the row signature.** It is assigned after
 insert, when the post-commit hook claims a pending row, so it cannot be part of
@@ -59,9 +86,11 @@ is again what catches this. `clock_tamper_warning` *is* covered, as of the chang
 that added it — clearing it now breaks the signature.
 
 **Secret scanning is a backstop, not a control.** `internal/secrets` recognizes
-four high-signal shapes (AWS access key ids, GitHub tokens, PEM private keys,
-JWTs). Generic `API_KEY=` assignments, passwords, and database connection strings
-pass through into stored summaries and rendered markdown. Do not rely on it.
+credential shapes with a fixed, distinctive prefix: AWS access key ids, GitHub
+classic and fine-grained tokens, Slack tokens, Anthropic, OpenAI and Google API
+keys, Stripe live keys, PEM and PGP private keys, and JWTs. Generic `API_KEY=`
+assignments, passwords, and database connection strings pass through into
+stored summaries and rendered markdown. Do not rely on it.
 
 **`get_diff` redacts, it does not withhold.** Diffs are passed through the same
 scrubber used before anything reaches a local model: hunks belonging to

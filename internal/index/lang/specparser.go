@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // maxDeclScan bounds the forward search for a declaration's closing line. A
@@ -30,6 +31,8 @@ type SpecParser struct {
 	importPath  ImportPathStyle
 	indexNames  []string
 	stripPrefix []string
+	rootMarkers []string
+	rootSubdirs []string
 	blanker     *Blanker
 	symbols     []compiledRule
 	imports     []compiledRule
@@ -62,6 +65,8 @@ func NewSpecParser(spec Spec) (*SpecParser, error) {
 		importPath:  spec.ImportPath,
 		indexNames:  append([]string(nil), spec.ImportPathIndexNames...),
 		stripPrefix: append([]string(nil), spec.ImportPathStripPrefixes...),
+		rootMarkers: append([]string(nil), spec.ImportPathRootMarkers...),
+		rootSubdirs: append([]string(nil), spec.ImportPathRootSubdirs...),
 		blanker:     NewBlanker(spec.BlankSpec()),
 	}
 	var err error
@@ -140,7 +145,11 @@ func (p *SpecParser) Parse(path string, src []byte) ([]Symbol, []Import, error) 
 
 		for _, rule := range p.imports {
 			if m := rule.match(importLines[i]); m != nil {
-				if v := m[rule.valueIdx]; v != "" && !seenImport[v] {
+				v := m[rule.valueIdx]
+				if strings.HasPrefix(v, ".") && p.importPath == ImportPathDotted {
+					v = p.resolveRelativeImport(path, v)
+				}
+				if v != "" && !seenImport[v] {
 					seenImport[v] = true
 					imports = append(imports, Import{FilePath: path, ImportedPath: v})
 				}
@@ -298,20 +307,12 @@ func indentWidth(line string) int {
 // import_path style. A spec that declares none does not implement the
 // behaviour at all, so the registry reports the language as not resolving
 // import paths rather than inventing a key that nothing would match.
-func (p *SpecParser) ImportPath(_, file string) (string, error) {
+func (p *SpecParser) ImportPath(root, file string) (string, error) {
 	if p.importPath == ImportPathNone {
 		return "", fmt.Errorf("language %s does not resolve import paths", p.language)
 	}
 
-	key := filepath.ToSlash(file)
-	// Source roots are not part of the import path.
-	for _, prefix := range p.stripPrefix {
-		prefix = strings.TrimSuffix(filepath.ToSlash(prefix), "/") + "/"
-		if strings.HasPrefix(key, prefix) {
-			key = strings.TrimPrefix(key, prefix)
-			break
-		}
-	}
+	key := p.sourceRelative(root, filepath.ToSlash(file))
 	if ext := path.Ext(key); ext != "" {
 		key = strings.TrimSuffix(key, ext)
 	}
@@ -332,6 +333,143 @@ func (p *SpecParser) ImportPath(_, file string) (string, error) {
 		key = strings.ReplaceAll(key, "/", ".")
 	}
 	return key, nil
+}
+
+// sourceRelative strips the part of a repository path that is not part of
+// the import path.
+//
+// A strip prefix (Java's src/main/java) is removed wherever it sits, not
+// only at the repository root: in a multi-module build every module has its
+// own. Failing that, a project root marker (Python's pyproject.toml) makes
+// the path relative to the nearest marked directory, and to its src/ when
+// the file is under one.
+func (p *SpecParser) sourceRelative(root, key string) string {
+	for _, prefix := range p.stripPrefix {
+		prefix = strings.Trim(filepath.ToSlash(prefix), "/")
+		if strings.HasPrefix(key, prefix+"/") {
+			return strings.TrimPrefix(key, prefix+"/")
+		}
+		if i := strings.Index(key, "/"+prefix+"/"); i >= 0 {
+			return key[i+len(prefix)+2:]
+		}
+	}
+	if len(p.rootMarkers) == 0 || root == "" {
+		return key
+	}
+	project, ok := p.projectDir(root, path.Dir(key))
+	if !ok {
+		return key
+	}
+	rel := key
+	if project != "." {
+		rel = strings.TrimPrefix(key, project+"/")
+	}
+	for _, sub := range p.rootSubdirs {
+		sub = strings.Trim(filepath.ToSlash(sub), "/")
+		if strings.HasPrefix(rel, sub+"/") {
+			return strings.TrimPrefix(rel, sub+"/")
+		}
+	}
+	return rel
+}
+
+// projectDir returns the nearest directory at or above dir that holds one of
+// the root markers.
+func (p *SpecParser) projectDir(root, dir string) (string, bool) {
+	for {
+		for _, m := range p.rootMarkers {
+			if fileExists(root, path.Join(dir, m)) {
+				return dir, true
+			}
+		}
+		if dir == "." || dir == "/" || dir == "" {
+			return "", false
+		}
+		dir = path.Dir(dir)
+	}
+}
+
+// resolveRelativeImport turns a relative dotted import (Python's
+// "from .models import X", ".models"; "from .. import y", "..") into the
+// absolute module path, using the importing file's own import path. That
+// needs the repository root, so outside a scan -- or when the file has no
+// import path, or the import climbs above its project -- the specifier is
+// kept as written: it still shows in the file's note, it just links nowhere.
+func (p *SpecParser) resolveRelativeImport(file, rel string) string {
+	root := activeSpecRoot()
+	if root == "" {
+		return rel
+	}
+	key, err := p.ImportPath(root, file)
+	if err != nil {
+		return rel
+	}
+	// The package a module lives in: the module itself for an index file
+	// (__init__), its parent otherwise.
+	pkg := key
+	stem := strings.TrimSuffix(path.Base(filepath.ToSlash(file)), path.Ext(file))
+	isIndex := false
+	for _, n := range p.indexNames {
+		if stem == n {
+			isIndex = true
+		}
+	}
+	parts := strings.Split(pkg, ".")
+	if !isIndex {
+		parts = parts[:len(parts)-1]
+	}
+	dots := len(rel) - len(strings.TrimLeft(rel, "."))
+	up := dots - 1
+	if up > len(parts) {
+		return rel // climbs above the project
+	}
+	parts = parts[:len(parts)-up]
+	if rest := strings.TrimLeft(rel, "."); rest != "" {
+		parts = append(parts, rest)
+	}
+	return strings.Join(parts, ".")
+}
+
+// BeginScan installs the repository root that relative imports resolve
+// against for the duration of a scan.
+func (p *SpecParser) BeginScan(root string) func() {
+	if p.importPath != ImportPathDotted {
+		return nil
+	}
+	return beginSpecScan(root)
+}
+
+// activeSpec holds the root for the scan in progress; Parse has no root
+// parameter. Every dotted spec language begins a scan, so it is counted.
+var activeSpec struct {
+	mu   sync.Mutex
+	root string
+	refs int
+}
+
+func beginSpecScan(root string) func() {
+	activeSpec.mu.Lock()
+	if activeSpec.root != root {
+		activeSpec.root, activeSpec.refs = root, 0
+	}
+	activeSpec.refs++
+	activeSpec.mu.Unlock()
+	return func() {
+		activeSpec.mu.Lock()
+		defer activeSpec.mu.Unlock()
+		if activeSpec.root != root {
+			return
+		}
+		if activeSpec.refs--; activeSpec.refs <= 0 {
+			activeSpec.root, activeSpec.refs = "", 0
+		}
+	}
+}
+
+func activeSpecRoot() string {
+	activeSpec.mu.Lock()
+	defer activeSpec.mu.Unlock()
+	return activeSpec.root
 }
 
 // BlankLines returns the comment- and string-free view of the file.

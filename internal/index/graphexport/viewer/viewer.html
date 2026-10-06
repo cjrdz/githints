@@ -1,0 +1,39 @@
+<header>
+  <h1>githints · dependency graph</h1>
+  <span class="stats" id="stats"></span>
+  <span class="warn" id="truncated" hidden></span>
+  <div class="controls">
+    <input type="search" id="search" placeholder="Find a file  ( / )" aria-label="Find a file" autocomplete="off">
+    <span class="stats" id="match-count" aria-live="polite"></span>
+    <label>Color by
+      <select id="color-by">
+        <option value="language">language</option>
+        <option value="directory">top-level directory</option>
+        <option value="facet">framework role</option>
+      </select>
+    </label>
+    <button type="button" id="toggle-labels" aria-pressed="true">Labels</button>
+    <button type="button" id="toggle-table" aria-pressed="false">Table</button>
+    <button type="button" id="fit">Fit</button>
+  </div>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="graph" aria-label="File dependency graph. Use the Table button for an accessible list."></canvas>
+    <div id="legend" aria-label="Legend"></div>
+    <div id="tooltip" hidden></div>
+    <div id="table-view" hidden>
+      <table>
+        <thead><tr>
+          <th><button type="button" data-key="id">File</button></th>
+          <th><button type="button" data-key="language">Language</button></th>
+          <th class="num"><button type="button" data-key="in">Imported by</button></th>
+          <th class="num"><button type="button" data-key="out">Imports</button></th>
+          <th class="num"><button type="button" data-key="symbols">Symbols</button></th>
+        </tr></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+  <aside id="panel" aria-live="polite"></aside>
+</main>

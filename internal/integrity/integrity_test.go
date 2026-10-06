@@ -1,7 +1,9 @@
 package integrity
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -300,5 +302,130 @@ func TestRotateSalt(t *testing.T) {
 	errs := VerifyChain(newKey, rows)
 	if len(errs) != 0 {
 		t.Fatalf("chain invalid after rotation: %+v", errs)
+	}
+}
+
+// A legacy in-repo salt that git tracks came from a commit: anyone with the
+// repository has the key. It must be refused, not silently used.
+func TestLoadOrCreateSaltRefusesTrackedLegacySalt(t *testing.T) {
+	root := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "t@example.com"}} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".githints"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".githints", ".salt"), make([]byte, saltSize), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateSalt(root); err != nil {
+		t.Fatalf("untracked legacy salt should load: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", root, "add", "-f", ".githints/.salt").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	if _, err := LoadOrCreateSalt(root); err == nil {
+		t.Fatal("LoadOrCreateSalt used a salt that git tracks")
+	}
+}
+
+// The salt used to be keyed on the absolute path, so renaming or moving the
+// checkout silently produced a new salt and every row failed verify.
+func TestSaltSurvivesMovingTheRepository(t *testing.T) {
+	t.Setenv(saltDirEnv, t.TempDir())
+	base := t.TempDir()
+	before := filepath.Join(base, "before")
+	if err := os.MkdirAll(before, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s1, err := LoadOrCreateSalt(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := filepath.Join(base, "after")
+	if err := os.Rename(before, after); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := LoadOrCreateSalt(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(s1) != string(s2) {
+		t.Fatal("moving the repository produced a different salt")
+	}
+}
+
+// A salt created before repo ids (keyed on the path) is adopted under a repo
+// id the first time it is loaded, so the following move keeps it.
+func TestPathKeyedSaltIsAdopted(t *testing.T) {
+	t.Setenv(saltDirEnv, t.TempDir())
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	if err := os.MkdirAll(filepath.Join(root, ".githints"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := make([]byte, saltSize)
+	old[0] = 7
+	if err := os.WriteFile(pathKeyedSaltPath(root), old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadOrCreateSalt(root)
+	if err != nil || string(got) != string(old) {
+		t.Fatalf("legacy salt not used: %v", err)
+	}
+	moved := filepath.Join(base, "moved")
+	if err := os.Rename(root, moved); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadOrCreateSalt(moved)
+	if err != nil || string(got) != string(old) {
+		t.Fatalf("adopted salt lost after a move: %v", err)
+	}
+}
+
+// With signed rows in the log and no salt, a new salt would make every row
+// fail verify. LoadOrCreateSalt refuses and explains; export/import recovers.
+func TestMissingSaltWithRowsIsAnErrorAndImportRecovers(t *testing.T) {
+	t.Setenv(saltDirEnv, t.TempDir())
+	root := t.TempDir()
+	salt, err := LoadOrCreateSalt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := ExportSalt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(root, ".githints", "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := store.Change{FilePath: "a.go", Source: "agent", Summary: "x"}
+	c.HMAC = mustHMAC(t, DeriveKey(salt, ""), c)
+	if _, err := st.Insert(c); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	if err := os.Remove(SaltPath(root)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateSalt(root); !errors.Is(err, ErrSaltMissing) {
+		t.Fatalf("want ErrSaltMissing, got %v", err)
+	}
+	if _, err := ImportSalt(root, exported, false); err != nil {
+		t.Fatalf("ImportSalt: %v", err)
+	}
+	got, err := LoadOrCreateSalt(root)
+	if err != nil || string(got) != string(salt) {
+		t.Fatalf("imported salt not used: %v", err)
+	}
+	if _, err := ImportSalt(root, exported, false); err == nil {
+		t.Fatal("ImportSalt replaced an existing salt without -force")
+	}
+	if _, err := ImportSalt(root, "nothex", true); err == nil {
+		t.Fatal("ImportSalt accepted garbage")
 	}
 }

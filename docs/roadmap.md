@@ -1,70 +1,72 @@
 # githints roadmap
 
-This document captures future directions and decisions that are intentionally
-out of scope for the current release.
+Directions under consideration, and decisions taken against alternatives. Nothing
+here is a commitment; what has shipped is described in [usage.md](usage.md).
 
-## Short term
+## Next
 
-### CI linting
+### Import resolution for Rust, PHP and C#
 
-Add `golangci-lint` to the CI workflow once the project has settled. This is
-kept out of the initial CI pass to avoid blocking PRs on linter nits while the
-codebase is still taking shape.
+These languages index symbols and outbound imports but receive no inbound edges,
+because a file's import name does not follow from its path: Rust needs `mod`
+declarations and the crate root, PHP needs PSR-4 maps from `composer.json`, C#
+needs project files. Each is a `BeginScan` hook plus an `ImportPath`, in the same
+shape as the Go and TypeScript resolvers.
 
-### Dependency risk tracking
+### Project-aware matching in monorepos
 
-`mark3labs/mcp-go` is the de facto Go MCP SDK but is currently pre-1.0
-(v0.57.0). Track its releases and be ready for API changes when upgrading.
+Imports are matched by name. Two projects in one repository that both expose a
+module called `app` share that name, so an import can attach to the wrong one.
+Resolving relative to the importing project, as relative imports already are,
+would fix it.
 
-## Medium term
+### Pushing the Merkle anchors
 
-### Shared / remote store
+Each commit's anchor lives in `refs/notes/githints`, which git does not push by
+default, so the anchors only protect history on the machine that wrote them
+until someone pushes them. Options: push notes from the hook when a remote is
+configured, or a CI check that they were pushed.
 
-The current shared-history mode commits rendered markdown only. A true team
-store could be:
+## Later
 
-- A remote SQLite database (e.g. litestream-replicated, or a small server).
-- A per-repo `store.db` committed to a separate protected branch or
-  `refs/notes/githints`-style git objects.
-- Export/import commands that let teams merge independent local stores at
-  release time.
+### Cross-repository view
 
-Any shared-store design must preserve the HMAC chain semantics and decide who
-holds the salt (likely a CI secret or team keyring).
+Each repository is fully isolated today. A workspace file listing several
+repositories, with read-only queries across their stores and a combined graph,
+would serve multi-repo systems. It must not merge the integrity chains, which are
+per repository by design.
 
-### Merkle root distribution
+### Shared or remote store
 
-Today the per-commit Merkle root is stored only in the local
-`refs/notes/githints` git note. Future work could:
-
-- Push notes to the remote so CI and other clones can verify them.
-- Store the root in commit messages or as a signed tag for stronger
-  cross-machine guarantees.
-
-### Key storage hardening
-
-We evaluated moving the salt into the OS keychain and rejected it for now:
-
-- On headless Linux, most keyring backends require a desktop session or
-  dbus/Secret Service, which is fragile in CI/server contexts.
-- On macOS and Windows, a keyring is readable by the same OS user session,
-  so it does not materially change the same-user-agent threat model.
-- The real defense against a malicious same-user agent is an external,
-  out-of-band anchor (e.g. signed Merkle roots in a protected remote) or a
-  passphrase-derived key.
-
-If the project later supports passphrase-protected keys or team-wide keys,
-revisit keychain integration as a convenience layer.
-
-## Long term
+Shared mode commits rendered markdown only. A real team store could be a
+replicated SQLite database, store objects on a protected ref, or export and
+import commands that merge local stores. Any design has to keep the HMAC chain
+semantics and decide who holds the salt (a CI secret, a team keyring).
 
 ### Native Windows hooks
 
-The current hooks are POSIX sh scripts because Git for Windows provides sh.
-A native PowerShell/cmd hook path could remove that dependency for Windows-only
-shops, at the cost of maintaining two hook implementations.
+The hooks are POSIX sh, which Git for Windows provides. A PowerShell or cmd hook
+would remove that dependency for Windows-only teams, at the cost of maintaining
+two hook implementations.
 
-### Web / read-only dashboard
+## Decided against, for now
 
-A small HTTP server that serves the rendered markdown and a timeline view would
-make githints useful for teammates who do not run an MCP client.
+### OS keychain for the salt
+
+On headless Linux most keyring backends need a desktop session or D-Bus, which is
+fragile in CI and on servers; on macOS and Windows a keyring is readable by the
+same user session, so it does not change the same-user threat model. The real
+defense against a same-user attacker is an external anchor (pushed or signed
+Merkle roots) or a passphrase-derived key. Revisit if passphrase or team keys
+arrive.
+
+### A local web server for the graph
+
+The dependency graph ships as a static, offline HTML file instead. A server would
+add an attack surface (authentication, DNS rebinding, CSRF) for little gain over
+a file that opens anywhere and cannot reach the network.
+
+### tree-sitter
+
+The maintained Go bindings need cgo, which would break the pure-Go,
+cross-compiled release. See [extensibility.md](extensibility.md#design-decisions).

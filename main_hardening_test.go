@@ -1,10 +1,17 @@
 package main
 
 import (
+	"database/sql"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/cjrdz/githints/internal/integrity"
+	"github.com/cjrdz/githints/internal/store"
 )
 
 // Claude Code reads CLAUDE.md and does not read AGENTS.md, so both have to
@@ -111,10 +118,13 @@ func TestHookSurvivesBinaryMoving(t *testing.T) {
 
 	// The recorded path wins while it exists, so a local dev build is not
 	// displaced by an unrelated githints on PATH.
-	if !strings.Contains(hook, `[ -x "`+filepath.ToSlash(recorded)+`" ]`) {
+	// The path is held in a shell variable, single-quoted (see
+	// TestHookScriptQuotesHostilePath), and tested before anything else.
+	if !strings.Contains(hook, `githints_bin='`+filepath.ToSlash(recorded)+`'`) ||
+		!strings.Contains(hook, `[ -x "$githints_bin" ]`) {
 		t.Errorf("hook does not test the recorded path first:\n%s", hook)
 	}
-	idxRecorded := strings.Index(hook, filepath.ToSlash(recorded))
+	idxRecorded := strings.Index(hook, `[ -x "$githints_bin" ]`)
 	idxPath := strings.Index(hook, "command -v githints")
 	if idxRecorded < 0 || idxPath < 0 || idxRecorded > idxPath {
 		t.Errorf("the recorded path must be tried before PATH:\n%s", hook)
@@ -148,5 +158,248 @@ func TestHookIsPosixSh(t *testing.T) {
 		if strings.Contains(hook, bashism) {
 			t.Errorf("hook uses the bash-only %q:\n%s", bashism, hook)
 		}
+	}
+}
+
+// The HMAC chain cannot see rows deleted from its tail, and a same-user
+// attacker can re-sign the whole table anyway. verify used to print a Merkle
+// root and never compare it with the one anchored in refs/notes/githints, so
+// this deletion verified clean.
+func TestVerifyDetectsRowsDeletedAfterAnchoring(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := chdirTempRepo(t)
+	if err := cmdInit(nil); err != nil {
+		t.Fatalf("cmdInit: %v", err)
+	}
+	// The hooks init installed would run the test binary, so the commit below
+	// bypasses them and cmdHookRun is called directly instead.
+	for _, f := range []string{"a.go", "b.go"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("package a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := cmdRecord([]string{"-file=" + f, "-summary=add " + f}); err != nil {
+			t.Fatalf("cmdRecord: %v", err)
+		}
+	}
+	runGit(t, dir, "add", "a.go", "b.go")
+	runGit(t, dir, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "first")
+	if err := cmdHookRun(); err != nil {
+		t.Fatalf("cmdHookRun: %v", err)
+	}
+	if err := cmdVerify(); err != nil {
+		t.Fatalf("verify on an untouched log: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.AllChanges()
+	if err != nil || len(rows) < 2 {
+		t.Fatalf("AllChanges: %d rows, %v", len(rows), err)
+	}
+	last := rows[len(rows)-1].ID
+	if err := st.WithTx(func(tx *sql.Tx) error {
+		_, err := tx.Exec("DELETE FROM changes WHERE id = ?", last)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	if err := cmdVerify(); err == nil {
+		t.Fatal("verify passed after the newest anchored row was deleted")
+	}
+}
+
+// The pre-commit hook is a warning by design. An internal failure -- here an
+// unopenable store -- must not abort the commit, even in blocking mode.
+func TestPreCommitNeverBlocksOnInternalError(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	t.Setenv("GITHINTS_PRECOMMIT_BLOCK", "1")
+	dir := chdirTempRepo(t)
+	// A regular file where the .githints directory should be.
+	if err := os.WriteFile(filepath.Join(dir, ".githints"), []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "a.go")
+	if err := cmdPreCommit(); err != nil {
+		t.Fatalf("pre-commit failed the commit on an internal error: %v", err)
+	}
+}
+
+// Blocking mode still blocks for what it is for: staged files with no record.
+func TestPreCommitBlocksUnrecordedFilesWhenAsked(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	t.Setenv("GITHINTS_PRECOMMIT_BLOCK", "1")
+	dir := chdirTempRepo(t)
+	if err := cmdInit(nil); err != nil {
+		t.Fatalf("cmdInit: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "a.go")
+	if err := cmdPreCommit(); err == nil {
+		t.Fatal("blocking mode let an unrecorded file through")
+	}
+}
+
+// init wrote to <root>/.git/hooks unconditionally, so with core.hooksPath set
+// the hooks were installed where git never looks and silently never ran.
+func TestInitInstallsIntoCoreHooksPath(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := chdirTempRepo(t)
+	hooks := t.TempDir()
+	runGit(t, dir, "config", "core.hooksPath", hooks)
+	if err := cmdInit(nil); err != nil {
+		t.Fatalf("cmdInit: %v", err)
+	}
+	for _, h := range []string{"post-commit", "pre-commit"} {
+		if _, err := os.Stat(filepath.Join(hooks, h)); err != nil {
+			t.Errorf("%s not installed in core.hooksPath: %v", h, err)
+		}
+	}
+}
+
+// A hooks path inside the work tree is committed (husky, lefthook); init must
+// not write this machine's binary path into it.
+func TestInitRefusesHooksPathInsideWorkTree(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := chdirTempRepo(t)
+	runGit(t, dir, "config", "core.hooksPath", ".husky")
+	err := cmdInit(nil)
+	if err == nil || !strings.Contains(err.Error(), "githints hook-run") {
+		t.Fatalf("expected a refusal naming the lines to add, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".husky", "post-commit")); err == nil {
+		t.Fatal("hook written into the committed hooks directory")
+	}
+}
+
+// In a linked worktree .git is a file, so "<root>/.git/hooks" does not exist.
+func TestInitWorksInLinkedWorktree(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	main := t.TempDir()
+	runGit(t, main, "init", "-q")
+	runGit(t, main, "config", "user.email", "t@example.com")
+	runGit(t, main, "config", "user.name", "T")
+	runGit(t, main, "commit", "-q", "--allow-empty", "-m", "root")
+	wt := filepath.Join(t.TempDir(), "wt")
+	runGit(t, main, "worktree", "add", "-q", wt)
+
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(wt); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := cmdInit(nil); err != nil {
+		t.Fatalf("cmdInit in a worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(main, ".git", "hooks", "post-commit")); err != nil {
+		t.Fatalf("hook not installed in the shared hooks directory: %v", err)
+	}
+}
+
+// -chain keeps a user's hook: it is moved aside and runs before githints'.
+func TestInitChainKeepsExistingHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("runs the hook with sh")
+	}
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := chdirTempRepo(t)
+	marker := filepath.Join(t.TempDir(), "ran")
+	pre := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(pre, []byte("#!/bin/sh\n: > '"+marker+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cmdInit(nil); err == nil || !strings.Contains(err.Error(), "-chain") {
+		t.Fatalf("init over a foreign hook should suggest -chain, got %v", err)
+	}
+	if err := cmdInit([]string{"-chain"}); err != nil {
+		t.Fatalf("cmdInit -chain: %v", err)
+	}
+	if _, err := os.Stat(pre + chainedHookSuffix); err != nil {
+		t.Fatalf("existing hook not kept: %v", err)
+	}
+
+	// init recorded the test binary as githints; point the hook at a missing
+	// binary so running it exercises only the chain and the exit-0 fallback.
+	if err := os.WriteFile(pre, []byte(hookScriptFor(filepath.Join(t.TempDir(), "githints"), "hook-precommit")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", pre)
+	cmd.Env = append(os.Environ(), "PATH=/nonexistent")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("chained hook run: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("the chained hook did not run")
+	}
+
+	// Re-running init leaves the chain intact.
+	if err := cmdInit([]string{"-chain"}); err != nil {
+		t.Fatalf("second cmdInit -chain: %v", err)
+	}
+}
+
+// A failing chained hook fails the githints hook too, so a user's own
+// pre-commit check still blocks.
+func TestChainedHookFailurePropagates(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("runs the hook with sh")
+	}
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "pre-commit")
+	if err := os.WriteFile(hook+chainedHookSuffix, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte(hookScriptFor(filepath.Join(dir, "missing"), "hook-precommit")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", hook)
+	cmd.Env = append(os.Environ(), "PATH=/nonexistent")
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Fatalf("chained failure not propagated: %v", err)
+	}
+}
+
+// When every signed row fails, verify says why that usually happens instead of
+// leaving the user to conclude the whole log was tampered with.
+func TestKeyChangedHint(t *testing.T) {
+	rows := []store.Change{{ID: 1, HMAC: "a"}, {ID: 2, HMAC: "b"}}
+	all := []integrity.IntegrityError{{ID: 1, Problem: integrity.ProblemHMACMismatch}, {ID: 2, Problem: integrity.ProblemHMACMismatch}}
+	if !strings.Contains(keyChangedHint(rows, all), "user.email") {
+		t.Error("no hint when every signed row fails")
+	}
+	if keyChangedHint(rows, all[:1]) != "" {
+		t.Error("hint shown for a partial failure, which does look like tampering")
+	}
+}
+
+// Every command but init used to create .githints/store.db as a side effect,
+// so `githints serve` in a fresh repository came up with no hooks, no salt,
+// and no explanation.
+func TestCommandsRequireInit(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := chdirTempRepo(t)
+	for name, run := range map[string]func() error{
+		"status": cmdStatus,
+		"verify": cmdVerify,
+		"record": func() error { return cmdRecord([]string{"-file=a.go", "-summary=x"}) },
+	} {
+		if err := run(); !errors.Is(err, errNotInitialized) {
+			t.Errorf("%s before init: got %v, want errNotInitialized", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".githints")); err == nil {
+		t.Error("a command other than init created .githints/")
 	}
 }

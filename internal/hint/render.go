@@ -7,53 +7,25 @@ package hint
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cjrdz/githints/internal/safefs"
 	"github.com/cjrdz/githints/internal/store"
+	"github.com/cjrdz/githints/internal/textsafe"
 )
 
 const dirName = ".githints"
 
-// escape renders a plain-text string safe for inclusion in markdown. It
-// prevents HTML injection (<script>, onclick, etc.) and markdown injection
-// (links, images, headings) that could be exploited when the hint markdown
-// is later rendered in an MCP client's webview. The escaped text remains
-// human-readable; markdown formatting from the agent is intentionally lost
-// in favor of safety.
-func escape(s string) string {
-	replacer := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		"\\", "\\\\",
-		"`", "\\`",
-		"*", "\\*",
-		"_", "\\_",
-		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-	)
-	return replacer.Replace(s)
-}
-
-// codeSpan renders a string safe for inclusion inside a `backtick` span.
-// escape() is wrong here: its backslashes would render literally inside a code
-// span. A backtick or newline in the value is what would break out of the
-// span, so those are simply dropped.
-func codeSpan(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch r {
-		case '`', '\n', '\r':
-			return -1
-		}
-		return r
-	}, s)
-}
+// escape and codeSpan are the shared textsafe renderers; the short names keep
+// the format strings below readable.
+func escape(s string) string   { return textsafe.Markdown(s) }
+func codeSpan(s string) string { return textsafe.CodeSpanText(s) }
 
 // FilePath returns where the hint file for a repo-relative source path
 // would live, e.g. "cmd/api/main.go" -> "<root>/.githints/cmd/api/main.go.md".
@@ -61,29 +33,45 @@ func FilePath(root, srcPath string) string {
 	return filepath.Join(root, dirName, srcPath+".md")
 }
 
-// writeUnder writes data to a path relative to root, refusing to follow any
-// symlink out of root.
+// writeUnder writes data to a path relative to <root>/.githints, refusing to
+// follow any symlink out of that directory.
 //
 // recorder.ValidateFilePath already rejects "..", absolute paths, and Windows
 // device names, but that is a lexical check: MkdirAll and WriteFile happily
 // follow a symlink. In shared mode the contents of .githints/ are committed, so
 // a repository can ship .githints/x -> ../../.ssh and a record_change for
-// "x/authorized_keys" would have written outside the tree. os.Root resolves
-// every component against the root and fails on escape.
+// "x/authorized_keys" would have written outside the tree.
+//
+// The root is .githints, not the repository: anchored at the repo root, a
+// committed .githints/up -> .. plus a record for "up/CLAUDE" stayed inside the
+// root and overwrote the repo's CLAUDE.md with agent-supplied text.
 func writeUnder(root, rel string, data []byte) error {
-	r, err := os.OpenRoot(root)
-	if err != nil {
-		return fmt.Errorf("open repo root: %w", err)
-	}
-	defer r.Close()
+	return safefs.WriteFile(filepath.Join(root, dirName), rel, data, safefs.StateDirPerm, 0o644)
+}
 
-	if dir := filepath.Dir(rel); dir != "." {
-		if err := r.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create %s: %w", dir, err)
+// reservedNames are githints' own outputs at the top of .githints/. A hint for
+// a source file whose hint path matches one would overwrite it.
+var reservedNames = []string{"CHANGES", "INDEX"}
+
+// reservedDirs hold githints-managed files that a hint must never land in.
+// "index" holds the structural index notes; ".obsidian" the vault settings.
+var reservedDirs = []string{"index", ".obsidian"}
+
+// checkReserved refuses a source path whose hint would collide with a file
+// githints writes for another purpose. The match is case-insensitive because
+// macOS and Windows filesystems are.
+func checkReserved(srcPath string) error {
+	p := filepath.ToSlash(srcPath)
+	for _, n := range reservedNames {
+		if strings.EqualFold(p, n) {
+			return fmt.Errorf("hint for %q would overwrite .githints/%s.md; not rendered", srcPath, n)
 		}
 	}
-	if err := r.WriteFile(rel, data, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", rel, err)
+	first, _, _ := strings.Cut(p, "/")
+	for _, d := range reservedDirs {
+		if strings.EqualFold(first, d) {
+			return fmt.Errorf("hint for %q would land in githints' own .githints/%s/ directory; not rendered", srcPath, d)
+		}
 	}
 	return nil
 }
@@ -94,7 +82,15 @@ func RenderFile(st *store.Store, root, srcPath string, limit int) error {
 	if err != nil {
 		return fmt.Errorf("load history for %s: %w", srcPath, err)
 	}
-	return writeUnder(root, filepath.Join(dirName, srcPath+".md"), renderFileContent(changes, srcPath))
+	if err := checkReserved(srcPath); err != nil {
+		// Skipped, not fatal: a repo may legitimately contain a file named
+		// CHANGES or a directory named index/, and failing here would abort
+		// the post-commit loop for every other file. The row is still in the
+		// store and reachable through history queries.
+		fmt.Fprintf(os.Stderr, "githints: %v\n", err)
+		return nil
+	}
+	return writeUnder(root, srcPath+".md", renderFileContent(changes, srcPath))
 }
 
 func renderFileContent(changes []store.Change, srcPath string) []byte {
@@ -142,7 +138,7 @@ func RenderChangelog(st *store.Store, root string, limit int) error {
 		return fmt.Errorf("load recent changes: %w", err)
 	}
 
-	return writeUnder(root, filepath.Join(dirName, "CHANGES.md"), renderChangelogContent(changes))
+	return writeUnder(root, "CHANGES.md", renderChangelogContent(changes))
 }
 
 func renderChangelogContent(changes []store.Change) []byte {
@@ -206,7 +202,7 @@ func VerifyRendered(st *store.Store, root string, changelogLimit, historyLimitPe
 		return nil, fmt.Errorf("load recent changes: %w", err)
 	}
 	wantChangelog := sha256.Sum256(renderChangelogContent(changes))
-	gotChangelog, err := fileSHA256(filepath.Join(root, dirName, "CHANGES.md"))
+	gotChangelog, err := fileSHA256(root, "CHANGES.md")
 	if err != nil {
 		return nil, err
 	}
@@ -221,12 +217,16 @@ func VerifyRendered(st *store.Store, root string, changelogLimit, historyLimitPe
 		return nil, fmt.Errorf("list files with history: %w", err)
 	}
 	for _, f := range files {
+		if checkReserved(f) != nil {
+			// Never rendered, so there is nothing on disk to compare.
+			continue
+		}
 		history, err := st.FileHistory(f, historyLimitPerFile)
 		if err != nil {
 			return nil, fmt.Errorf("load history for %s: %w", f, err)
 		}
 		want := sha256.Sum256(renderFileContent(history, f))
-		got, err := fileSHA256(FilePath(root, f))
+		got, err := fileSHA256(root, f+".md")
 		if err != nil {
 			return nil, err
 		}
@@ -238,10 +238,14 @@ func VerifyRendered(st *store.Store, root string, changelogLimit, historyLimitPe
 	return diverged, nil
 }
 
-func fileSHA256(path string) ([sha256.Size]byte, error) {
-	data, err := os.ReadFile(path)
+// maxRenderedBytes caps how much of a rendered file verify will read. A
+// committed .githints/ can contain anything, including a link to /dev/zero.
+const maxRenderedBytes = 64 << 20
+
+func fileSHA256(root, rel string) ([sha256.Size]byte, error) {
+	data, err := safefs.ReadFile(filepath.Join(root, dirName), rel, maxRenderedBytes)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			// A missing file diverges from any non-empty expected content.
 			return sha256.Sum256(nil), nil
 		}

@@ -6,6 +6,9 @@
 # Options, as environment variables:
 #   GITHINTS_VERSION   tag to install (default: the latest release)
 #   GITHINTS_BIN_DIR   where to put the binary (default: see pick_bin_dir)
+#   GITHINTS_INSECURE_SKIP_VERIFY=1
+#                      install even if the checksum cannot be checked (not
+#                      recommended; a mismatch is still always fatal)
 #
 # The install directory matters more here than for most tools. `githints init`
 # records the binary's path in each repository's git hooks, so installing to a
@@ -98,25 +101,46 @@ main() {
 		die "download failed: $base/$archive"
 
 	# Verify against the published checksums. A tool that installs itself into
-	# every repository's git hooks should not skip this.
+	# every repository's git hooks should not skip this, so being unable to
+	# check is fatal too unless the user explicitly opts out. A mismatch is
+	# fatal regardless.
+	unverified() {
+		if [ "${GITHINTS_INSECURE_SKIP_VERIFY:-}" = "1" ]; then
+			echo "githints install: WARNING: $1; installing unverified because GITHINTS_INSECURE_SKIP_VERIFY=1" >&2
+		else
+			die "$1; refusing to install unverified (set GITHINTS_INSECURE_SKIP_VERIFY=1 to override)"
+		fi
+	}
 	if curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt" 2>/dev/null; then
+		expected=$(grep " $archive\$" "$tmp/checksums.txt" | cut -d' ' -f1)
 		if command -v sha256sum >/dev/null 2>&1; then
-			expected=$(grep " $archive\$" "$tmp/checksums.txt" | cut -d' ' -f1)
 			actual=$(sha256sum "$tmp/$archive" | cut -d' ' -f1)
 		elif command -v shasum >/dev/null 2>&1; then
-			expected=$(grep " $archive\$" "$tmp/checksums.txt" | cut -d' ' -f1)
 			actual=$(shasum -a 256 "$tmp/$archive" | cut -d' ' -f1)
 		else
-			expected=""
+			actual=""
 		fi
-		if [ -n "$expected" ]; then
-			[ "$expected" = "$actual" ] || die "checksum mismatch for $archive"
-			echo "checksum ok"
+		if [ -z "$expected" ]; then
+			unverified "$archive is not listed in checksums.txt"
+		elif [ -z "$actual" ]; then
+			unverified "no sha256 tool (sha256sum or shasum) found"
+		elif [ "$expected" != "$actual" ]; then
+			die "checksum mismatch for $archive"
 		else
-			echo "githints install: no sha256 tool found; skipping verification" >&2
+			echo "checksum ok"
 		fi
 	else
-		echo "githints install: checksums.txt unavailable; skipping verification" >&2
+		unverified "could not download checksums.txt"
+	fi
+
+	# checksums.txt comes from the same release as the archive, so it proves
+	# integrity, not origin. The build-provenance attestation proves the
+	# archive was built by this repository's release workflow; check it when
+	# the GitHub CLI is installed and signed in.
+	if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+		gh attestation verify "$tmp/$archive" --repo cjrdz/githints >/dev/null ||
+			die "build provenance attestation did not verify for $archive"
+		echo "attestation ok"
 	fi
 
 	tar -xzf "$tmp/$archive" -C "$tmp" githints || die "could not extract the archive"

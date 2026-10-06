@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -504,5 +505,49 @@ func TestFileDiffAtCommit(t *testing.T) {
 	}
 	if !strings.Contains(diff, "func Run()") {
 		t.Errorf("commit diff missing added line:\n%s", diff)
+	}
+}
+
+// A repository's .gitattributes can name a diff driver, and config decides
+// what that driver runs. githints must get git's own diff and never run it.
+func TestDiffDoesNotRunExternalDiffOrTextconv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script as the driver")
+	}
+	dir := makeRepo(t)
+	restore := chdir(t, dir)
+	defer restore()
+
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := filepath.Join(t.TempDir(), "driver.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch '"+marker+"'\ncat \"$1\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, ".gitattributes", "*.go diff=evil\n")
+	runGit(t, dir, "config", "diff.evil.textconv", script)
+	runGit(t, dir, "config", "diff.external", script)
+	writeFile(t, dir, "main.go", "package main\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "initial")
+	writeFile(t, dir, "main.go", "package main\n\nfunc Run() {}\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "second")
+
+	hash, err := LastCommitHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "main.go", "package main\n\nfunc Run() { _ = 1 }\n")
+	if _, err := FileDiff(hash, "main.go"); err != nil {
+		t.Fatalf("FileDiff: %v", err)
+	}
+	if _, err := FileDiff("", "main.go"); err != nil {
+		t.Fatalf("FileDiff worktree: %v", err)
+	}
+	_, _ = DiffHash(hash, "main.go")
+	_ = DiffStat(hash, "main.go")
+	_ = WorktreeDiffStat("main.go")
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a repository-configured diff driver was executed")
 	}
 }

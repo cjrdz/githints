@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/recorder"
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // FullScan walks the repository under opts.Root, parses every supported file,
@@ -186,6 +188,9 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	if err := db.SetMeta(meta); err != nil {
 		return err
 	}
+	if err := db.SetResolverVersion(); err != nil {
+		return err
+	}
 	if err := db.ReclaimSpace(); err != nil {
 		// Vacuum is purely an optimization; log and continue.
 		fmt.Fprintf(os.Stderr, "githints: index vacuum: %v\n", err)
@@ -333,15 +338,12 @@ func shouldIgnoreFile(root, rel string) bool {
 // excludesFile is non-empty, it is passed via -c core.excludesFile so the file
 // is treated as an additional global exclude file.
 func gitCheckIgnore(root, rel, excludesFile string) bool {
-	var cmd *exec.Cmd
+	var args []string
 	if excludesFile != "" {
-		cmd = exec.Command("git", "-c", "core.excludesFile="+excludesFile, "check-ignore", "--no-index", "--stdin")
-	} else {
-		cmd = exec.Command("git", "check-ignore", "--no-index", "--stdin")
+		args = append(args, "-c", "core.excludesFile="+excludesFile)
 	}
-	cmd.Dir = root
-	cmd.Stdin = strings.NewReader(rel + "\n")
-	out, err := cmd.CombinedOutput()
+	args = append(args, "check-ignore", "--no-index", "--stdin")
+	out, err := gitutil.RunIn(context.Background(), root, strings.NewReader(rel+"\n"), gitutil.MaxOutputBytes, args...)
 	// git check-ignore exits 0 when the path is ignored and outputs the path,
 	// exits 1 when the path is not ignored, and may exit non-zero on errors.
 	// We treat any output as "ignored"; missing output with exit 0 is unusual
@@ -393,6 +395,11 @@ func parseWithTimeout(p lang.LanguageParser, rel string, src []byte, timeout tim
 // when their path no longer exists on disk; existing files are parsed and
 // their rows replaced. This is the hook path used in Phase 2.
 func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes int) error {
+	if v, err := db.IndexResolverVersion(); err == nil && v < ResolverVersion {
+		if n, err := db.FileCount(); err == nil && n > 0 {
+			fmt.Fprintln(os.Stderr, "githints: the index was built by an older githints whose import resolution differs; run `githints index` once to rebuild it")
+		}
+	}
 	registry := lang.NewRegistryForRoot(opts.Root)
 	// Lenient on purpose: this runs from the post-commit hook, which only
 	// warns on a scan error, so a hard failure here means the commit succeeds
@@ -428,6 +435,12 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 		return err
 	}
 
+	repoRoot, err := os.OpenRoot(opts.Root)
+	if err != nil {
+		return fmt.Errorf("open repo root: %w", err)
+	}
+	defer repoRoot.Close()
+
 	for _, path := range paths {
 		if err := recorder.ValidateFilePath(path); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index skipped (invalid path): %s: %v\n", path, err)
@@ -437,15 +450,19 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 			continue
 		}
 		abs := filepath.Join(opts.Root, path)
-		info, err := os.Stat(abs)
+		// Lstat through an os.Root, never os.Stat: Stat follows the link, so
+		// shouldSkipFile never saw a symlink here and a committed
+		// leak.py -> ~/.aws/credentials was read into the index. The root
+		// also refuses a path whose parent directory is a link out of the repo.
+		info, err := repoRoot.Lstat(path)
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, fs.ErrNotExist) {
 				// Deleted file: remove its rows and its note.
 				if err := db.DeleteFile(path); err != nil {
 					fmt.Fprintf(os.Stderr, "githints: index delete failed: %s: %v\n", path, err)
 				}
 				if note, _, noteErr := lang.IndexNotePath(opts.Root, path); noteErr == nil {
-					if err := os.Remove(note); err != nil && !os.IsNotExist(err) {
+					if err := removeManaged(opts.Root, note); err != nil {
 						fmt.Fprintf(os.Stderr, "githints: index note delete failed: %s: %v\n", path, err)
 					}
 				}
@@ -475,7 +492,7 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 			continue
 		}
 
-		src, err := os.ReadFile(abs)
+		src, err := safefs.ReadFileIn(repoRoot, path, opts.MaxFileSize)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index skipped (read error): %s: %v\n", path, err)
 			continue
@@ -652,34 +669,25 @@ func batchCheckIgnore(root string, rels []string, excludesFile string) (ignoreSe
 	// mis-split line would silently mark the wrong file ignored.
 	args = append(args, "check-ignore", "--no-index", "--stdin", "-z")
 
-	cmd := exec.Command("git", args...)
-	cmd.Dir = root
-
 	var stdin bytes.Buffer
 	for _, rel := range rels {
 		stdin.WriteString(rel)
 		stdin.WriteByte(0)
 	}
-	cmd.Stdin = &stdin
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	// Through gitutil so the call has a timeout and a bounded buffer: it
+	// used to buffer all of stdout and check the size afterwards.
+	stdout, err := gitutil.RunIn(context.Background(), root, &stdin, gitutil.MaxOutputBytes, args...)
 	// Exit status 1 means "nothing matched", which is a normal answer rather
-	// than a failure. Anything else with output on stderr is a real problem.
+	// than a failure.
 	if err != nil {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
-			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+			return nil, err
 		}
 	}
-	if stdout.Len() > gitutil.MaxOutputBytes {
-		return nil, fmt.Errorf("check-ignore produced %d bytes, over the cap of %d", stdout.Len(), gitutil.MaxOutputBytes)
-	}
 
-	for _, p := range strings.Split(stdout.String(), "\x00") {
+	for _, p := range strings.Split(string(stdout), "\x00") {
 		if p != "" {
 			out[p] = true
 		}
@@ -755,7 +763,9 @@ func parseCandidates(work []candidate, opts lang.ScanOptions, detectors *lang.De
 // parsers and detectors are immutable once built, and the per-scan state they
 // consult is installed before the pool starts and read under a lock.
 func parseOne(c candidate, opts lang.ScanOptions, detectors *lang.DetectorSet) fileResult {
-	src, err := os.ReadFile(c.abs)
+	// Read through an os.Root with the size cap re-applied: the walk saw this
+	// path as a regular file, but it can be swapped for a link before the read.
+	src, err := safefs.ReadFile(opts.Root, c.rel, opts.MaxFileSize)
 	if err != nil {
 		return fileResult{warn: fmt.Sprintf("githints: index skipped (read error): %s: %v", c.rel, err)}
 	}

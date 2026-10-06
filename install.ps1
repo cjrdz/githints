@@ -15,11 +15,16 @@
 
 .PARAMETER BinDir
     Where to put the binary. Defaults to %LOCALAPPDATA%\Programs\githints.
+
+.PARAMETER InsecureSkipVerify
+    Install even if the checksum cannot be checked. Not recommended; a mismatch
+    is always fatal. Also settable as GITHINTS_INSECURE_SKIP_VERIFY=1.
 #>
 [CmdletBinding()]
 param(
     [string]$Version = $env:GITHINTS_VERSION,
-    [string]$BinDir = $env:GITHINTS_BIN_DIR
+    [string]$BinDir = $env:GITHINTS_BIN_DIR,
+    [switch]$InsecureSkipVerify = ($env:GITHINTS_INSECURE_SKIP_VERIFY -eq '1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -92,10 +97,26 @@ try {
 
     # Verify against the published checksums. A tool that installs itself into
     # every repository's git hooks should not skip this.
+    # A tool that installs itself into every repository's git hooks should not
+    # skip verification, so being unable to check is fatal unless the user
+    # explicitly opts out. A mismatch is fatal regardless.
+    function Fail-Unverified([string]$why) {
+        if ($InsecureSkipVerify) {
+            Write-Warning "$why; installing unverified because InsecureSkipVerify was set"
+        } else {
+            throw "$why; refusing to install unverified (set GITHINTS_INSECURE_SKIP_VERIFY=1 to override)"
+        }
+    }
+    $sumsPath = Join-Path $tmp 'checksums.txt'
+    $haveSums = $true
     try {
-        $sumsPath = Join-Path $tmp 'checksums.txt'
         Invoke-WebRequest -Uri "$base/checksums.txt" -OutFile $sumsPath -UseBasicParsing
-        $line = Select-String -Path $sumsPath -Pattern ([regex]::Escape($archive)) | Select-Object -First 1
+    } catch {
+        $haveSums = $false
+        Fail-Unverified 'could not download checksums.txt'
+    }
+    if ($haveSums) {
+        $line = Select-String -Path $sumsPath -Pattern ("\s" + [regex]::Escape($archive) + '$') | Select-Object -First 1
         if ($line) {
             $expected = ($line.Line -split '\s+')[0]
             $actual = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
@@ -104,10 +125,21 @@ try {
             }
             Write-Host 'checksum ok'
         } else {
-            Write-Warning "$archive not listed in checksums.txt; skipping verification"
+            Fail-Unverified "$archive is not listed in checksums.txt"
         }
-    } catch [System.Net.WebException] {
-        Write-Warning 'checksums.txt unavailable; skipping verification'
+    }
+
+    # The checksum proves integrity, not origin. When the GitHub CLI is
+    # installed and signed in, also check the build-provenance attestation.
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        & gh auth status *> $null
+        if ($LASTEXITCODE -eq 0) {
+            & gh attestation verify $zipPath --repo cjrdz/githints *> $null
+            if ($LASTEXITCODE -ne 0) {
+                throw "build provenance attestation did not verify for $archive"
+            }
+            Write-Host 'attestation ok'
+        }
     }
 
     Expand-Archive -Path $zipPath -DestinationPath $tmp -Force

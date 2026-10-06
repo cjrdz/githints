@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,6 +24,7 @@ import (
 	"github.com/cjrdz/githints/internal/mcpserver"
 	"github.com/cjrdz/githints/internal/recorder"
 	"github.com/cjrdz/githints/internal/store"
+	"github.com/cjrdz/githints/internal/textsafe"
 )
 
 // commands maps every subcommand name to its handler. It is the single source
@@ -37,11 +40,20 @@ var commands = map[string]func(args []string) error{
 	"record":         cmdRecord,
 	"verify":         noArgs(cmdVerify),
 	"changes":        cmdChanges,
+	"history":        cmdHistory,
+	"recent":         cmdRecent,
+	"search":         cmdSearch,
+	"diff":           cmdDiff,
 	"rotate-salt":    cmdRotateSalt,
+	"salt":           cmdSalt,
 	"status":         noArgs(cmdStatus),
 	"render":         noArgs(cmdRender),
 	"index":          cmdIndex,
+	"doctor":         noArgs(cmdDoctor),
+	"mcp-config":     cmdMCPConfig,
+	"setup":          cmdSetup,
 	"version":        noArgs(cmdVersion),
+	"help":           noArgs(cmdHelp),
 }
 
 // noArgs adapts a flagless command to the table's handler signature.
@@ -49,16 +61,41 @@ func noArgs(fn func() error) func([]string) error {
 	return func([]string) error { return fn() }
 }
 
+// hiddenCommands are dispatchable but left out of usage: git hooks call them,
+// people do not. TestUsageMatchesCommandTable checks this list too.
+var hiddenCommands = map[string]bool{
+	"hook-run":       true,
+	"hook-precommit": true,
+}
+
+// Exit codes. 1 is any other error.
+const (
+	exitUsage        = 2 // unknown command or bad arguments (the flag package also uses 2)
+	exitVerifyFailed = 3 // verify ran and found problems, as opposed to failing to run
+)
+
+// errVerifyFailed marks a completed verify that found problems.
+var errVerifyFailed = errors.New("verification failed")
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
-		os.Exit(1)
+		os.Exit(exitUsage)
+	}
+
+	switch os.Args[1] {
+	case "-h", "-help", "--help":
+		_ = cmdHelp() // cannot fail
+		return
+	case "-v", "-version", "--version":
+		fmt.Println(versionString())
+		return
 	}
 
 	cmd, ok := commands[os.Args[1]]
 	if !ok {
-		usage()
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "githints: unknown command %q; run `githints help` for the list\n", os.Args[1])
+		os.Exit(exitUsage)
 	}
 	mustRun(func() error { return cmd(os.Args[2:]) })
 }
@@ -70,16 +107,23 @@ func usage() {
 const usageText = `githints — lightweight change tracking for AI coding agents
 
 Usage:
-  githints init [-force] [-share] set up .githints/ + install the git hooks
+  githints init [-chain|-force] [-share]
+                                  set up .githints/ + install the git hooks
   githints serve [-root=PATH]     run the MCP stdio server (root also via $GITHINTS_ROOT)
-  githints hook-run               (internal) called by .git/hooks/post-commit
-  githints hook-precommit         (internal) called by .git/hooks/pre-commit
   githints record -file=... -summary=... [-reason=...] [-agent-id=...]
                                   manually record a change (useful for testing)
   githints verify                 check HMAC chain + markdown consistency
-  githints changes -since=... -until=T [-file=...] [-limit=...]
-                                  timeline forensics query
+  githints history -file=F [-limit=N]
+                                  why a file looks the way it does (get_file_history)
+  githints recent [-limit=N]      latest changes across the repo (get_recent_changes)
+  githints search -query=Q [-limit=N]
+                                  full-text search of summaries and reasons (search_changes)
+  githints diff -file=F [-hash=H] redacted diff of the working tree or one commit (get_diff)
+  githints changes -since=T -until=T [-file=F] [-limit=N]
+                                  timeline query (get_changes_in_range)
   githints rotate-salt [-force]   generate a new integrity salt and re-sign the chain
+  githints salt path|export [-o FILE]|import [-force] FILE
+                                  locate, back up, or restore the integrity salt
   githints status                 show store health and pending records
   githints render                 re-render all markdown from the store
   githints index                  re-index the structural symbol cache
@@ -88,20 +132,65 @@ Usage:
   githints index languages        list the languages this binary can index
   githints index facets [-facet=] [-framework=] [-file=] [-limit=]
                                   list detected framework constructs
-  githints version                print the githints version`
+  githints index graph [-format=html|json|dot|mermaid] [-o=FILE] [-focus=F -depth=N]
+                                  export the file dependency graph (default: an
+                                  offline viewer at .githints/graph.html)
+  githints doctor                 check hooks, salt, store, config, index and MCP setup
+  githints setup [-clients=a,b|all] [-dry-run] [-list] [-update]
+                                  init if needed, then register the MCP server with
+                                  every client detected (Claude Code, opencode, Codex,
+                                  VS Code, Cursor, Zed, Kiro, Gemini, Junie, ...)
+  githints mcp-config CLIENT [-write]
+                                  print or add the MCP entry for one client
+  githints version                print the version, commit and build date
+  githints help                   show this list
+
+Run any command with -h for its flags. Exit status: 0 ok, 1 error,
+2 usage error, 3 verify found problems.`
+
+func cmdHelp() error {
+	fmt.Println(usageText)
+	return nil
+}
 
 func cmdVersion() error {
-	fmt.Println(version)
+	fmt.Println(versionString())
 	return nil
 }
 
 func mustRun(fn func() error) {
 	if err := fn(); err != nil {
 		fmt.Fprintln(os.Stderr, "githints: "+err.Error())
+		if errors.Is(err, errVerifyFailed) {
+			os.Exit(exitVerifyFailed)
+		}
 		os.Exit(1)
 	}
 }
 
+// errNotInitialized is returned by every command but init when the repository
+// has no .githints/store.db yet.
+var errNotInitialized = errors.New("githints is not set up in this repository")
+
+// openInitialized is openRootAndStore for every command except init. Those
+// used to create .githints/store.db as a side effect, so `githints serve` in
+// a fresh repository came up with no hooks, no salt and no explanation.
+func openInitialized() (root string, st *store.Store, err error) {
+	root, err = gitutil.RepoRoot()
+	if err != nil {
+		return "", nil, fmt.Errorf("not inside a git repo: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".githints", "store.db")); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, fmt.Errorf("%w (%s); run `githints init` first", errNotInitialized, root)
+		}
+		return "", nil, err
+	}
+	return openRootAndStore()
+}
+
+// openRootAndStore resolves the repository and opens (creating if needed)
+// its store. Only init should call it directly; see openInitialized.
 func openRootAndStore() (root string, st *store.Store, err error) {
 	root, err = gitutil.RepoRoot()
 	if err != nil {
@@ -164,6 +253,7 @@ var agentsBlock = []string{
 	"If the MCP tools are unavailable, use the CLI from the repo root:",
 	"",
 	"    githints record -file=\"<repo-relative path>\" -summary=\"<what changed>\" [-reason=\"...\"]",
+	"    githints status | recent | history -file=F | search -query=Q | diff -file=F",
 	"",
 	"Do not edit anything under `.githints/` by hand — it is regenerated from the",
 	"store. Run `githints render` to rebuild it.",
@@ -196,18 +286,55 @@ var claudeBlock = []string{
 // Written in POSIX sh: Git for Windows runs hooks through its bundled sh, and
 // forward-slash paths work there too.
 func hookScriptFor(exe, cmd string) string {
-	path := filepath.ToSlash(exe)
+	// The path is assigned once, single-quoted, and only ever expanded inside
+	// double quotes. It used to be interpolated with Go's %q, which is not
+	// shell quoting: inside sh double quotes a "$(...)" or backtick in the
+	// install path still ran, in the test and in the echo line alike.
 	return fmt.Sprintf(`#!/bin/sh
 # %s — do not edit by hand
-if [ -x %q ]; then
-	exec %q %s "$@"
+# A hook that was here before githints (moved aside by init -chain) runs first;
+# if it fails, so does this hook.
+chained="$0%s"
+if [ -x "$chained" ]; then
+	"$chained" "$@" || exit $?
+fi
+githints_bin=%s
+if [ -x "$githints_bin" ]; then
+	exec "$githints_bin" %s "$@"
 fi
 if command -v githints >/dev/null 2>&1; then
 	exec githints %s "$@"
 fi
-echo "githints: not found at %s and not on PATH; run 'githints init' to repoint this hook" >&2
+echo "githints: not found at $githints_bin and not on PATH; run 'githints init' to repoint this hook" >&2
 exit 0
-`, managedHookMarker, path, path, cmd, cmd, path)
+`, managedHookMarker, chainedHookSuffix, shellQuote(filepath.ToSlash(exe)), cmd, cmd)
+}
+
+// chainedHookSuffix names where init -chain moves a pre-existing hook.
+const chainedHookSuffix = ".pre-githints"
+
+// writeHook replaces the hook at path. It removes what is there first rather
+// than writing through it: os.WriteFile follows a symlink and keeps an
+// existing file's mode, so a hook that was a link, or not executable, stayed
+// that way.
+func writeHook(path, script string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(script); err != nil {
+		_ = f.Close() // the write error is the one worth reporting
+		return err
+	}
+	return f.Close()
+}
+
+// shellQuote returns s as a single POSIX sh word that expands to exactly s.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func hookExistsAndManaged(path string) (exists bool, managed bool, err error) {
@@ -235,6 +362,12 @@ func hookExistsAndManaged(path string) (exists bool, managed bool, err error) {
 // Used for .gitignore, AGENTS.md, and CLAUDE.md so re-running init updates its
 // own block and never clobbers hand-written content.
 func ensureManagedBlock(path, startMarker, endMarker string, body []string) error {
+	// A cloned repository can commit CLAUDE.md -> ~/.bashrc. Writing through
+	// it would append githints' block to a file outside the repo, so a link
+	// (or a junction, or anything else that isn't a plain file) is refused.
+	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file (symlink?); refusing to rewrite it", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		// Do not fall through to writing on a permission or I/O error: the
@@ -294,6 +427,8 @@ func ensureGitignore(root string, share bool) error {
 			".githints/store.db*",
 			".githints/index.db*",
 			".githints/.salt",
+			".githints/.salt.new", // left behind if a legacy-location rotation fails
+			".githints/repo-id",   // keys this machine's salt; a shared one could steer it
 			".githints/config.json",
 		}
 	}
@@ -312,9 +447,15 @@ func ensureAgentFiles(root string) error {
 
 // cmdInit creates .githints/, the store, installs the git hooks, and writes
 // the .gitignore rule for githints' output.
-func cmdInit(args []string) error {
+func cmdInit(args []string) error { return runInit(args, true) }
+
+// cmdInitQuiet is init for setup, which prints its own summary.
+func cmdInitQuiet(args []string) error { return runInit(args, false) }
+
+func runInit(args []string, verbose bool) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite existing git hooks even if not managed by githints")
+	chain := fs.Bool("chain", false, "keep existing git hooks: move each aside and run it before githints'")
 	share := fs.Bool("share", false, "share rendered markdown with the team (only state files are gitignored)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -366,48 +507,77 @@ func cmdInit(args []string) error {
 	// not block a commit, and the pre-commit gate is a warning by design.
 	hookScript := func(cmd string) string { return hookScriptFor(exe, cmd) }
 
-	postCommit := filepath.Join(root, ".git", "hooks", "post-commit")
-	preCommit := filepath.Join(root, ".git", "hooks", "pre-commit")
+	hooksDir, err := gitutil.HooksDir(root)
+	if err != nil {
+		return fmt.Errorf("locate git hooks directory: %w", err)
+	}
+	// core.hooksPath pointing inside the work tree is a hook manager (husky,
+	// lefthook, a committed .githooks/). Those files are committed and shared,
+	// so writing a hook carrying this machine's binary path there would ship
+	// it to everyone. Say what to add instead.
+	if rel, err := filepath.Rel(root, hooksDir); err == nil && filepath.IsLocal(rel) && !strings.HasPrefix(filepath.ToSlash(rel), ".git/") && !*force {
+		return fmt.Errorf("git runs hooks from %s, inside the repository (core.hooksPath; husky or lefthook?).\n"+
+			"githints will not write machine-specific hooks into a committed directory. Add these lines to the hooks there:\n"+
+			"  post-commit:  githints hook-run\n"+
+			"  pre-commit:   githints hook-precommit\n"+
+			"or re-run with -force to write them anyway", rel)
+	}
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		return fmt.Errorf("create hooks directory: %w", err)
+	}
+
+	postCommit := filepath.Join(hooksDir, "post-commit")
+	preCommit := filepath.Join(hooksDir, "pre-commit")
 
 	for _, path := range []string{postCommit, preCommit} {
 		exists, managed, err := hookExistsAndManaged(path)
 		if err != nil {
 			return err
 		}
-		if exists && !managed && !*force {
-			return fmt.Errorf("%s already exists and was not installed by githints; use -force to overwrite", path)
+		if !exists || managed {
+			continue
+		}
+		switch {
+		case *chain:
+			aside := path + chainedHookSuffix
+			if _, err := os.Lstat(aside); err == nil {
+				return fmt.Errorf("%s already exists; refusing to overwrite it with %s", aside, path)
+			}
+			if err := os.Rename(path, aside); err != nil {
+				return fmt.Errorf("move existing hook aside: %w", err)
+			}
+			fmt.Printf("kept your existing hook as %s; it runs before githints'\n", aside)
+		case *force:
+			// Overwritten below.
+		default:
+			return fmt.Errorf("%s already exists and was not installed by githints;\n"+
+				"use -chain to keep it (it will run first), or -force to replace it", path)
 		}
 	}
 
-	if err := os.WriteFile(postCommit, []byte(hookScript("hook-run")), 0o755); err != nil {
-		return fmt.Errorf("write post-commit hook: %w", err)
-	}
-	if err := os.WriteFile(preCommit, []byte(hookScript("hook-precommit")), 0o755); err != nil {
-		return fmt.Errorf("write pre-commit hook: %w", err)
+	for path, cmd := range map[string]string{postCommit: "hook-run", preCommit: "hook-precommit"} {
+		if err := writeHook(path, hookScript(cmd)); err != nil {
+			return fmt.Errorf("write %s hook: %w", filepath.Base(path), err)
+		}
 	}
 
 	mode := "private"
 	if *share {
 		mode = "shared"
 	}
+	if !verbose {
+		return nil
+	}
 	fmt.Printf("githints initialized at %s/.githints\nhooks installed at %s, %s\nmode: %s\n", root, postCommit, preCommit, mode)
 	fmt.Print(`wrote agent instructions to AGENTS.md and CLAUDE.md (managed blocks)
 
-Next: register the MCP server with your client.
+Next: register the MCP server with your editors and agents:
 
-  Claude Code — .mcp.json in the repo root:
-    {"mcpServers":{"githints":{"command":"githints","args":["serve"]}}}
+  githints setup               # every client detected here
+  githints setup -list         # what is supported and detected
 
-  opencode — opencode.json in the repo root:
-    {"mcp":{"githints":{"type":"local","command":["githints","serve"],"enabled":true}}}
-
-  Codex CLI — its config is global, so run:
-    codex mcp add githints -- githints serve
+Then run ` + "`githints doctor`" + ` to check the whole setup.
 `)
-	fmt.Printf(`
-If your client launches the server from a directory other than this repo, pin
-the root explicitly: githints serve -root=%s (or set GITHINTS_ROOT).
-`, root)
 	return nil
 }
 
@@ -415,7 +585,8 @@ the root explicitly: githints serve -root=%s (or set GITHINTS_ROOT).
 // The repo root normally comes from the working directory, but not every MCP
 // client launches a server from the project directory — Codex CLI's config is
 // global, and some clients start servers from an arbitrary cwd. -root (or
-// GITHINTS_ROOT) lets the client pin it. Precedence: flag, env, cwd.
+// GITHINTS_ROOT) lets the client pin it. Precedence: flag, GITHINTS_ROOT,
+// CLAUDE_PROJECT_DIR, cwd.
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	rootFlag := fs.String("root", "", "path to the git repo to serve (default: current directory, or $GITHINTS_ROOT)")
@@ -427,13 +598,18 @@ func cmdServe(args []string) error {
 	if pinned == "" {
 		pinned = os.Getenv("GITHINTS_ROOT")
 	}
+	if pinned == "" {
+		// Claude Code sets this for the servers it starts; its docs do not
+		// promise the working directory.
+		pinned = os.Getenv("CLAUDE_PROJECT_DIR")
+	}
 	if pinned != "" {
 		if err := os.Chdir(pinned); err != nil {
 			return fmt.Errorf("cannot use %s as repo root: %w", pinned, err)
 		}
 	}
 
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -520,7 +696,7 @@ func summarizeViaOllama(ctx context.Context, client *llm.Client, hash, file stri
 // sequence runs inside a transaction so a concurrent record_change cannot
 // slip between ClaimPending and the fallback decision.
 func cmdHookRun() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -654,6 +830,8 @@ func cmdHookRun() error {
 				Obsidian:     cfg.Index.ObsidianWikilinks,
 			}, files, cfg.Index.MaxBytes); err != nil {
 				fmt.Fprintf(os.Stderr, "githints: incremental index scan: %v\n", err)
+			} else if cfg.Index.GraphHTML {
+				refreshGraphPage(root, idxDB)
 			}
 		}
 	} else {
@@ -665,20 +843,24 @@ func cmdHookRun() error {
 		return fmt.Errorf("load commit rows: %w", err)
 	}
 	if len(commitRows) > 0 {
-		commitRoot, err := integrity.MerkleRoot(commitRows)
+		all, err := st.AllChanges()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "githints: could not load log for Merkle anchor: %v\n", err)
+			return nil
+		}
+		anchor, err := integrity.BuildAnchor(all, commitRows)
 		if err != nil {
 			// Non-fatal, like the note write below: the store-level chain is
 			// still intact, we just cannot anchor it externally.
 			fmt.Fprintf(os.Stderr, "githints: could not compute Merkle root: %v\n", err)
 			return nil
 		}
-		note := fmt.Sprintf("githints-root: %s", commitRoot)
-		if err := gitutil.AddNote("refs/notes/githints", note); err != nil {
+		if err := gitutil.AddNote("refs/notes/githints", anchor.String()); err != nil {
 			// Non-fatal: the store-level integrity is still valid; the note
 			// is an optional external anchor.
 			fmt.Fprintf(os.Stderr, "githints: could not add Merkle note: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "githints: anchored Merkle root %s for commit %s\n", commitRoot, shortCommitHash(hash))
+			fmt.Fprintf(os.Stderr, "githints: anchored Merkle root %s for commit %s\n", anchor.CommitRoot, shortCommitHash(hash))
 		}
 	}
 
@@ -696,7 +878,23 @@ func cmdHookRun() error {
 // default mode is advisory. The block mode is opt-in for teams that want
 // to enforce the discipline.
 func cmdPreCommit() error {
-	root, st, err := openRootAndStore()
+	err := preCommitCheck()
+	if err == nil || errors.Is(err, errPrecommitBlocked) {
+		return err
+	}
+	// Any other failure is githints' problem, not the commit's: a locked or
+	// corrupt store, a bad config, a missing git. The gate is a warning by
+	// design, so it must never be the reason someone cannot commit -- not
+	// even with GITHINTS_PRECOMMIT_BLOCK=1, which is about unrecorded files.
+	fmt.Fprintf(os.Stderr, "githints: pre-commit check skipped: %v\n", err)
+	return nil
+}
+
+// errPrecommitBlocked is the one pre-commit outcome that may fail a commit.
+var errPrecommitBlocked = errors.New("pre-commit gate blocked the commit")
+
+func preCommitCheck() error {
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -732,7 +930,7 @@ func cmdPreCommit() error {
 	fmt.Fprintln(os.Stderr, "call record_change for each before committing, or set GITHINTS_PRECOMMIT_BLOCK=1 to enforce.")
 
 	if os.Getenv("GITHINTS_PRECOMMIT_BLOCK") == "1" {
-		return fmt.Errorf("pre-commit gate blocked commit of %d unrecorded file(s); set GITHINTS_PRECOMMIT_BLOCK=0 to warn only", len(missing))
+		return fmt.Errorf("%w: %d unrecorded file(s); set GITHINTS_PRECOMMIT_BLOCK=0 to warn only", errPrecommitBlocked, len(missing))
 	}
 	_ = root // root reserved for future pre-commit rendering hooks
 	return nil
@@ -756,7 +954,7 @@ func cmdRecord(args []string) error {
 		return err
 	}
 
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -778,13 +976,29 @@ func cmdRecord(args []string) error {
 
 // cmdStatus prints a quick health/dashboard view of the githints store.
 func cmdStatus() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
 	fmt.Printf("store: %s\n", filepath.Join(root, ".githints", "store.db"))
+
+	hooksOK := true
+	for _, r := range checkHooks(root) {
+		if r.level != levelOK {
+			hooksOK = false
+			fmt.Printf("hooks: %s (fix: %s)\n", r.detail, r.fix)
+		}
+	}
+	if hooksOK {
+		fmt.Println("hooks: installed")
+	}
+	if _, path, err := integrity.ExistingKey(root); err != nil {
+		fmt.Printf("salt: %v\n", err)
+	} else {
+		fmt.Printf("salt: %s\n", path)
+	}
 
 	total, err := st.Count()
 	if err != nil {
@@ -815,9 +1029,10 @@ func cmdStatus() error {
 		return err
 	}
 	if len(recent) > 0 && recent[0].Branch != "" {
-		fmt.Printf("latest branch: %s\n", recent[0].Branch)
+		fmt.Printf("latest branch: %s\n", textsafe.OneLine(recent[0].Branch))
 	}
 
+	fmt.Println("(run `githints doctor` for a full health check)")
 	return nil
 }
 
@@ -825,7 +1040,7 @@ func cmdStatus() error {
 // current store. Useful after resolving a merge conflict on the rendered
 // markdown or after switching shared-history modes.
 func cmdRender() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -863,6 +1078,9 @@ func cmdIndex(args []string) error {
 	}
 	if len(args) > 0 && args[0] == "facets" {
 		return cmdIndexFacets(args[1:])
+	}
+	if len(args) > 0 && args[0] == "graph" {
+		return cmdIndexGraph(args[1:])
 	}
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
@@ -913,6 +1131,9 @@ func cmdIndex(args []string) error {
 		return fmt.Errorf("index meta: %w", err)
 	}
 	fmt.Printf("indexed %d files, %d symbols\n", meta.FileCount, meta.SymbolCount)
+	if cfg.Index.GraphHTML {
+		refreshGraphPage(root, db)
+	}
 	return nil
 }
 
@@ -1032,9 +1253,9 @@ func cmdIndexFacets(args []string) error {
 		return nil
 	}
 	for _, f := range found {
-		line := fmt.Sprintf("%-10s %-12s %s:%d  %s", f.Facet, f.Framework, f.FilePath, f.Line, f.Name)
+		line := fmt.Sprintf("%-10s %-12s %s:%d  %s", f.Facet, f.Framework, textsafe.OneLine(f.FilePath), f.Line, textsafe.OneLine(f.Name))
 		if f.Detail != "" {
-			line += "  -> " + f.Detail
+			line += "  -> " + textsafe.OneLine(f.Detail)
 		}
 		fmt.Println(line)
 	}
@@ -1186,7 +1407,7 @@ func cmdIndexVerify(args []string) error {
 	if len(report.Uncovered) > 0 {
 		fmt.Printf("tracked files not indexed: %d\n", len(report.Uncovered))
 		for _, u := range report.Uncovered {
-			fmt.Printf("  - %s (%s)\n", u.Path, u.Reason)
+			fmt.Printf("  - %s (%s)\n", textsafe.OneLine(u.Path), u.Reason)
 		}
 	}
 	if !report.Drift() && len(report.Uncovered) == 0 {
@@ -1214,7 +1435,7 @@ func sortedStringKeys(m map[string]int) []string {
 // recorded_at timestamps, and that the rendered markdown files match the
 // database. It prints the Merkle root of the current log.
 func cmdVerify() error {
-	root, st, err := openRootAndStore()
+	root, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -1241,6 +1462,9 @@ func cmdVerify() error {
 			fmt.Printf("  row %d: %s\n", e.ID, e.Problem)
 		}
 	}
+	if hint := keyChangedHint(rows, chainErrs); hint != "" {
+		fmt.Println(hint)
+	}
 
 	clockWarnings := 0
 	for _, c := range rows {
@@ -1265,16 +1489,35 @@ func cmdVerify() error {
 		}
 	}
 
-	rootHash, err := integrity.MerkleRoot(rows)
+	// The HMAC chain alone cannot catch a same-user attacker: the salt is
+	// readable by that user, so the whole table can be re-signed. The anchors
+	// in refs/notes/githints are the external check, and nothing read them
+	// back until now.
+	notes, err := gitutil.ReadNotes("refs/notes/githints")
 	if err != nil {
-		return fmt.Errorf("merkle root: %w", err)
+		return fmt.Errorf("read anchor notes: %w", err)
 	}
-	if rootHash != "" {
-		fmt.Printf("merkle root: %s\n", rootHash)
+	anchors := integrity.VerifyAnchors(rows, notes)
+	switch {
+	case anchors.Notes == 0:
+		fmt.Println("merkle anchors: none found (nothing committed yet, or refs/notes/githints was not fetched)")
+	case len(anchors.Problems) == 0:
+		fmt.Printf("merkle anchors: OK (%d note(s) checked)\n", anchors.Checked)
+	default:
+		fmt.Printf("merkle anchors: %d problem(s)\n", len(anchors.Problems))
+		for _, p := range anchors.Problems {
+			fmt.Printf("  - %s\n", p)
+		}
+	}
+	if n := len(anchors.Unanchored); n > 0 {
+		fmt.Printf("unanchored commits: %d (rows exist but no note; the note write failed or was removed)\n", n)
+	}
+	if anchors.Unanchorable > 0 {
+		fmt.Printf("rows after the newest anchor: %d (anchored at the next commit)\n", anchors.Unanchorable)
 	}
 
-	if len(chainErrs) > 0 || len(diverged) > 0 || clockWarnings > 0 {
-		return fmt.Errorf("verification failed")
+	if len(chainErrs) > 0 || len(diverged) > 0 || clockWarnings > 0 || len(anchors.Problems) > 0 {
+		return errVerifyFailed
 	}
 
 	if err := st.MetaSet("last_verify_at", fmt.Sprintf("%d", time.Now().Unix())); err != nil {
@@ -1303,7 +1546,7 @@ func cmdChanges(args []string) error {
 		}
 	}
 
-	_, st, err := openRootAndStore()
+	_, st, err := openInitialized()
 	if err != nil {
 		return err
 	}
@@ -1328,22 +1571,32 @@ func cmdChanges(args []string) error {
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
+	printChanges(changes, "no changes in range", false)
+	return nil
+}
+
+// printChanges writes one line per change, newest data as the store returned
+// it. Rows written before record-time sanitizing can still hold terminal
+// escapes, so every recorded field is flattened on output too.
+func printChanges(changes []store.Change, empty string, withReason bool) {
 	if len(changes) == 0 {
-		fmt.Println("no changes in range")
-		return nil
+		fmt.Println(empty)
+		return
 	}
 	for _, c := range changes {
 		when := time.Unix(c.RecordedAt, 0).Format(time.RFC3339)
-		fmt.Fprintf(os.Stdout, "[%s] %s (%s", when, c.FilePath, c.Source)
+		fmt.Fprintf(os.Stdout, "[%s] %s (%s", when, textsafe.OneLine(c.FilePath), c.Source)
 		if c.AgentID != "" {
-			fmt.Fprintf(os.Stdout, ", %s", c.AgentID)
+			fmt.Fprintf(os.Stdout, ", %s", textsafe.OneLine(c.AgentID))
 		}
 		if c.ClockTamperWarning {
 			fmt.Fprintf(os.Stdout, " [CLOCK TAMPER WARNING]")
 		}
-		fmt.Fprintf(os.Stdout, ", %s): %s\n", shortCommitHash(c.CommitHash), c.Summary)
+		fmt.Fprintf(os.Stdout, ", %s): %s\n", shortCommitHash(c.CommitHash), textsafe.OneLine(c.Summary))
+		if withReason && c.Reason != "" {
+			fmt.Fprintf(os.Stdout, "    why: %s\n", textsafe.OneLine(c.Reason))
+		}
 	}
-	return nil
 }
 
 func shortCommitHash(h string) string {
@@ -1392,4 +1645,99 @@ func cmdRotateSalt(args []string) error {
 	}
 	fmt.Println("salt rotated; all rows re-signed with the new key")
 	return nil
+}
+
+// cmdSalt locates, exports, and imports the integrity salt. The salt lives
+// outside the repository on purpose, which means moving to a new machine or
+// recovering a backup needs a way to carry it across.
+func cmdSalt(args []string) error {
+	const usage = "usage: githints salt path | export [-o FILE] | import [-force] FILE"
+	if len(args) == 0 {
+		return errors.New(usage)
+	}
+	root, err := gitutil.RepoRoot()
+	if err != nil {
+		return fmt.Errorf("not inside a git repo: %w", err)
+	}
+
+	switch args[0] {
+	case "path":
+		fmt.Println(integrity.SaltPath(root))
+		return nil
+
+	case "export":
+		fs := flag.NewFlagSet("salt export", flag.ExitOnError)
+		out := fs.String("o", "-", "file to write (created 0600; must not exist), or - for stdout")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		encoded, err := integrity.ExportSalt(root)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "githints: this is the integrity key for this repository's change log; keep it as private as a password")
+		if *out == "-" {
+			fmt.Println(encoded)
+			return nil
+		}
+		f, err := os.OpenFile(*out, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(f, encoded); err != nil {
+			_ = f.Close() // the write error is the one worth reporting
+			return err
+		}
+		return f.Close()
+
+	case "import":
+		fs := flag.NewFlagSet("salt import", flag.ExitOnError)
+		force := fs.Bool("force", false, "replace an existing salt (orphans every row signed with it)")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return errors.New(usage)
+		}
+		data, err := os.ReadFile(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		path, err := integrity.ImportSalt(root, string(data), *force)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("salt installed at %s; run `githints verify` to confirm it matches the log\n", path)
+		return nil
+	}
+	return errors.New(usage)
+}
+
+// keyChangedHint explains the most common cause of a wholesale verify failure.
+// When every signed row fails to recompute, the rows are almost certainly
+// fine and the key is different: it is derived from the salt and from git's
+// user.email, and either may have changed since the rows were signed.
+func keyChangedHint(rows []store.Change, errs []integrity.IntegrityError) string {
+	signed, failed := 0, 0
+	for _, r := range rows {
+		if r.HMAC != "" {
+			signed++
+		}
+	}
+	for _, e := range errs {
+		if e.Problem == integrity.ProblemHMACMismatch {
+			failed++
+		}
+	}
+	if signed < 2 || failed != signed {
+		return ""
+	}
+	email, _ := gitutil.UserEmail()
+	return fmt.Sprintf(`
+Every signed row fails, which usually means the integrity key changed rather
+than the rows. The key is derived from the salt and from git user.email
+(currently %q):
+  - changed user.email? set it back for this repo: git config user.email <old>
+  - moved machines or lost the salt? githints salt import <file>
+  - neither recoverable? githints rotate-salt -force (discards tamper evidence)`, email)
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,8 @@ func chdirTempRepo(t *testing.T) string {
 	dir := t.TempDir()
 	runGit(t, dir, "init")
 	runGit(t, dir, "config", "user.email", "test@example.com")
+	// CI machines have no global identity; commits in tests need one.
+	runGit(t, dir, "config", "user.name", "Test User")
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -177,8 +180,70 @@ func TestUsageMatchesCommandTable(t *testing.T) {
 		}
 	}
 	for name := range commands {
-		if !advertised[name] {
+		if !advertised[name] && !hiddenCommands[name] {
 			t.Errorf("command %q is dispatchable but missing from usage", name)
 		}
+	}
+	// Hidden is a deliberate, listed exception, not a way to lose a command:
+	// every hidden name must still dispatch and must not also be advertised.
+	for name := range hiddenCommands {
+		if _, ok := commands[name]; !ok {
+			t.Errorf("hidden command %q is not in the command table", name)
+		}
+		if advertised[name] {
+			t.Errorf("hidden command %q is advertised in usage", name)
+		}
+	}
+}
+
+// A cloned repository can commit CLAUDE.md -> a file outside the repo; init
+// must not append its managed block at the far end of the link.
+func TestEnsureManagedBlockRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "bashrc")
+	if err := os.WriteFile(outside, []byte("# mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "CLAUDE.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("cannot create a file symlink on this platform: %v", err)
+	}
+
+	if err := ensureManagedBlock(link, "<!-- s -->", "<!-- e -->", []string{"x"}); err == nil {
+		t.Fatal("ensureManagedBlock wrote through a symlink")
+	}
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "# mine\n" {
+		t.Fatalf("link target was modified: %q", got)
+	}
+}
+
+// The install path is data. With Go's %q it landed inside sh double quotes,
+// where "$(...)" still ran -- in the -x test and again in the echo line.
+func TestHookScriptQuotesHostilePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX sh")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "pwned")
+	exe := filepath.Join(dir, "it's $(touch "+marker+") `touch "+marker+"`", "githints")
+	hook := filepath.Join(dir, "hook")
+	if err := os.WriteFile(hook, []byte(hookScriptFor(exe, "hook-run")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", hook)
+	cmd.Env = append(os.Environ(), "PATH=/nonexistent") // so the PATH fallback cannot fire either
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hook should exit 0 when the binary is missing: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("hook executed part of the install path:\n%s", out)
+	}
+	if !strings.Contains(string(out), "it's $(touch") {
+		t.Errorf("hook did not print the path verbatim: %s", out)
 	}
 }

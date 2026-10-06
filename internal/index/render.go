@@ -1,13 +1,17 @@
 package index
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/cjrdz/githints/internal/index/lang"
+	"github.com/cjrdz/githints/internal/safefs"
+	"github.com/cjrdz/githints/internal/textsafe"
 )
 
 // RenderNotes writes the per-file index notes and the root rollup from the
@@ -58,20 +62,56 @@ func RenderNotes(db *Store, root string, obsidian bool) error {
 // the change-journal notes. It never overwrites an existing configuration:
 // once the user touches Graph view settings, their choices win.
 func writeObsidianGraphPreset(root string) {
-	path := filepath.Join(root, ".githints", ".obsidian", "graph.json")
-	if _, err := os.Stat(path); err == nil {
+	r, err := safefs.Open(githintsDir(root), safefs.StateDirPerm)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "githints: could not write Obsidian graph preset: %v\n", err)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	defer r.Close()
+	rel := filepath.Join(".obsidian", "graph.json")
+	if _, err := r.Lstat(rel); err == nil {
 		return
 	}
 	// Missing keys fall back to Obsidian defaults. hideUnresolved drops
 	// dangling links to notes that don't exist; showOrphans keeps
 	// legitimately isolated files (entrypoints) visible.
 	preset := `{"search":"path:index","hideUnresolved":true,"showOrphans":true}` + "\n"
-	if err := os.WriteFile(path, []byte(preset), 0o644); err != nil {
+	if err := safefs.WriteFileIn(r, rel, []byte(preset), safefs.StateDirPerm, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "githints: could not write Obsidian graph preset: %v\n", err)
 	}
+}
+
+// githintsDir is the directory every index write is confined to.
+func githintsDir(root string) string {
+	return filepath.Join(root, ".githints")
+}
+
+// writeManaged writes an absolute path under .githints/ through an os.Root, so
+// a link committed inside .githints/ cannot redirect the write.
+func writeManaged(root, abs string, data []byte) error {
+	rel, err := filepath.Rel(githintsDir(root), abs)
+	if err != nil || !filepath.IsLocal(rel) {
+		return fmt.Errorf("%s is not under .githints", abs)
+	}
+	return safefs.WriteFile(githintsDir(root), rel, data, safefs.StateDirPerm, 0o644)
+}
+
+// removeManaged deletes an absolute path under .githints/ through an os.Root.
+// A missing file is not an error.
+func removeManaged(root, abs string) error {
+	rel, err := filepath.Rel(githintsDir(root), abs)
+	if err != nil || !filepath.IsLocal(rel) {
+		return fmt.Errorf("%s is not under .githints", abs)
+	}
+	r, err := safefs.Open(githintsDir(root), safefs.StateDirPerm)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	if err := r.Remove(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // pruneStaleNotes deletes note files under the index notes directory that
@@ -79,24 +119,38 @@ func writeObsidianGraphPreset(root string) {
 // deleted, renamed, or dropped from the configured languages. Empty
 // directories are removed afterwards, children before parents.
 func pruneStaleNotes(root string, keep map[string]struct{}) {
-	notesRoot := lang.IndexNotesPath(root)
+	// Walked and deleted through an os.Root: a clone that ships
+	// .githints -> .. (or .githints/index -> somewhere) must not turn the
+	// prune into "delete every .md file over there".
+	r, err := safefs.Open(githintsDir(root), safefs.StateDirPerm)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "githints: stale note prune skipped: %v\n", err)
+		return
+	}
+	defer r.Close()
+	if fi, err := r.Lstat("index"); err != nil || !fi.IsDir() {
+		// Missing is the normal first-run case; anything other than a plain
+		// directory (a link) is not ours to walk.
+		return
+	}
 	var dirs []string
-	err := filepath.WalkDir(notesRoot, func(path string, d os.DirEntry, walkErr error) error {
+	err = fs.WalkDir(r.FS(), "index", func(rel string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
-			if path != notesRoot {
-				dirs = append(dirs, path)
+			if rel != "index" {
+				dirs = append(dirs, rel)
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".md") {
+		if !strings.HasSuffix(rel, ".md") {
 			return nil
 		}
-		if _, ok := keep[filepath.Clean(path)]; !ok {
-			if err := os.Remove(path); err != nil {
-				fmt.Fprintf(os.Stderr, "githints: could not remove stale index note %s: %v\n", path, err)
+		abs := filepath.Join(githintsDir(root), filepath.FromSlash(rel))
+		if _, ok := keep[filepath.Clean(abs)]; !ok {
+			if err := r.Remove(filepath.FromSlash(rel)); err != nil {
+				fmt.Fprintf(os.Stderr, "githints: could not remove stale index note %s: %v\n", abs, err)
 			}
 		}
 		return nil
@@ -106,12 +160,11 @@ func pruneStaleNotes(root string, keep map[string]struct{}) {
 		return
 	}
 	// Parents are always shorter than their children, so length-descending
-	// order guarantees children are processed first.
+	// order guarantees children are processed first. Remove fails on a
+	// non-empty directory, which is exactly the check wanted here.
 	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
 	for _, dir := range dirs {
-		if entries, err := os.ReadDir(dir); err == nil && len(entries) == 0 {
-			_ = os.Remove(dir)
-		}
+		_ = r.Remove(filepath.FromSlash(dir)) // non-empty directories are meant to stay
 	}
 }
 
@@ -146,14 +199,14 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\n", src)
+	fmt.Fprintf(&b, "# %s\n\n", textsafe.Markdown(src))
 
 	if len(symbols) > 0 {
 		b.WriteString("## Symbols\n\n")
 		for _, sym := range symbols {
-			fmt.Fprintf(&b, "- `%s` (%s) lines %d-%d", sym.Name, sym.Kind, sym.LineStart, sym.LineEnd)
+			fmt.Fprintf(&b, "- %s (%s) lines %d-%d", textsafe.CodeSpan(sym.Name), textsafe.Markdown(string(sym.Kind)), sym.LineStart, sym.LineEnd)
 			if sym.Signature != "" {
-				fmt.Fprintf(&b, " — `%s`", sym.Signature)
+				fmt.Fprintf(&b, " — %s", textsafe.CodeSpan(sym.Signature))
 			}
 			b.WriteString("\n")
 		}
@@ -170,9 +223,9 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 	if len(facets) > 0 {
 		b.WriteString("## Framework\n\n")
 		for _, f := range facets {
-			fmt.Fprintf(&b, "- %s `%s` (%s) line %d", f.Facet, lang.EscapeMarkdown(f.Name), f.Framework, f.Line)
+			fmt.Fprintf(&b, "- %s %s (%s) line %d", textsafe.Markdown(f.Facet), textsafe.CodeSpan(f.Name), textsafe.Markdown(f.Framework), f.Line)
 			if f.Detail != "" {
-				fmt.Fprintf(&b, " — `%s`", lang.EscapeMarkdown(f.Detail))
+				fmt.Fprintf(&b, " — %s", textsafe.CodeSpan(f.Detail))
 			}
 			b.WriteString("\n")
 		}
@@ -191,7 +244,7 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 				fmt.Fprintf(&b, "- %s\n", lang.NoteLink(indexDirOf(src), imp.ImportedPath, file, obsidian))
 			} else {
 				// Stdlib, external package, or unresolvable alias.
-				fmt.Fprintf(&b, "- `%s`\n", imp.ImportedPath)
+				fmt.Fprintf(&b, "- %s\n", textsafe.CodeSpan(imp.ImportedPath))
 			}
 		}
 		b.WriteString("\n")
@@ -205,10 +258,7 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 		b.WriteString("\n")
 	}
 
-	if err := os.MkdirAll(filepath.Dir(notePath), 0o755); err != nil {
-		return fmt.Errorf("mkdir note dir: %w", err)
-	}
-	return os.WriteFile(notePath, []byte(b.String()), 0o644)
+	return writeManaged(root, notePath, []byte(b.String()))
 }
 
 func renderIndexRollup(db *Store, root string, obsidian bool, registry *lang.Registry) error {
@@ -262,16 +312,12 @@ func renderIndexRollup(db *Store, root string, obsidian bool, registry *lang.Reg
 			} else {
 				// Stdlib packages, external modules, and unresolvable path
 				// aliases have no note to link to.
-				fmt.Fprintf(&b, "- %d import(s): `%s`\n", h.Dependents, h.File)
+				fmt.Fprintf(&b, "- %d import(s): %s\n", h.Dependents, textsafe.CodeSpan(h.File))
 			}
 		}
 	}
 
-	roll := lang.IndexRollupPath(root)
-	if err := os.MkdirAll(filepath.Dir(roll), 0o755); err != nil {
-		return fmt.Errorf("mkdir rollup dir: %w", err)
-	}
-	return os.WriteFile(roll, []byte(b.String()), 0o644)
+	return writeManaged(root, lang.IndexRollupPath(root), []byte(b.String()))
 }
 
 // indexDirOf returns the directory, relative to .githints/, containing the

@@ -240,3 +240,44 @@ func TestLoadDisabledOllamaSkipsValidation(t *testing.T) {
 		t.Fatalf("disabled ollama should not validate endpoint: %v", err)
 	}
 }
+
+// config.json travels in clones, so the index limits have ceilings as well
+// as floors: a repository must not be able to make the post-commit hook read
+// multi-gigabyte files or wait an hour on a parser.
+func TestLoadRejectsOversizedIndexLimits(t *testing.T) {
+	for _, body := range []string{
+		`{"index":{"enabled":true,"languages":["go"],"max_file_size":1073741824}}`,
+		`{"index":{"enabled":true,"languages":["go"],"max_bytes":2000000000}}`,
+		`{"index":{"enabled":true,"languages":["go"],"parse_timeout_ms":3600000}}`,
+	} {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, ".githints"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".githints", "config.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(dir); err == nil {
+			t.Errorf("Load accepted %s", body)
+		}
+	}
+}
+
+// A config.json that links outside the repository is refused rather than
+// followed.
+func TestLoadRefusesConfigLinkedOutside(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".githints"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(outside, []byte(`{"ollama":{"enabled":true}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, ".githints", "config.json")); err != nil {
+		t.Skipf("cannot create a file symlink on this platform: %v", err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("Load followed config.json out of the repository")
+	}
+}

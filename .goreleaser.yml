@@ -1,8 +1,7 @@
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
+# No `go mod tidy` hook: a release must build exactly the module graph that was
+# committed and reviewed. CI checks that it is tidy (go mod tidy -diff).
 
 builds:
   - id: githints
@@ -18,7 +17,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
 
 archives:
   - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"

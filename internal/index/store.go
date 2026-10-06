@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/cjrdz/githints/internal/index/lang"
 	_ "modernc.org/sqlite"
+
+	"github.com/cjrdz/githints/internal/gitutil"
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // Store is the SQLite-backed index cache. It is a separate database from
@@ -23,10 +25,24 @@ type Store struct {
 
 // Open opens or creates index.db at path, applying the schema if necessary.
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if strings.Contains(path, "?") {
+		// The driver splits the name at "?" for its DSN parameters; a path
+		// containing one would open (and create) a different file.
+		return nil, fmt.Errorf("database path %q contains '?', which the sqlite driver cannot open safely", path)
+	}
+	// PrepareDatabase rather than MkdirAll: a clone can ship .githints as a
+	// link, and the database (and its WAL and SHM siblings) would be created
+	// at the far end of it. It also creates the file 0600.
+	if err := safefs.RefuseTrackedState(path, gitutil.IsTracked); err != nil {
+		return nil, err
+	}
+	if err := safefs.PrepareDatabase(path); err != nil {
 		return nil, fmt.Errorf("create index db dir: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	// trusted_schema=OFF on every pooled connection (a DSN pragma, not an
+	// Exec, which would reach only one): functions with side effects cannot
+	// be invoked from triggers or views stored in the schema itself.
+	db, err := sql.Open("sqlite", path+"?_pragma=trusted_schema(0)")
 	if err != nil {
 		return nil, fmt.Errorf("open index db: %w", err)
 	}
@@ -228,6 +244,26 @@ func (s *Store) metaGet(key string) (string, error) {
 func (s *Store) metaSet(key, value string) error {
 	_, err := s.db.Exec("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", key, value, value)
 	return err
+}
+
+// ResolverVersion identifies how import keys are computed. It is bumped when a
+// change to resolution (nearest go.mod, per-package tsconfig, workspace
+// packages, project roots) makes keys stored by an older scan disagree with
+// keys computed now. An incremental scan only re-parses the files a commit
+// touched, so the mismatch would otherwise persist silently until a full
+// rebuild; doctor and the hook report it instead.
+const ResolverVersion = 2
+
+// IndexResolverVersion returns the resolver version of the last full scan, 0
+// for an index built before versions were recorded.
+func (s *Store) IndexResolverVersion() (int, error) {
+	return s.metaInt("resolver_version")
+}
+
+// SetResolverVersion records that the index was fully built with the current
+// resolver.
+func (s *Store) SetResolverVersion() error {
+	return s.metaSet("resolver_version", fmt.Sprintf("%d", ResolverVersion))
 }
 
 // LastIndexedAt returns the stored timestamp or 0 if never indexed.
@@ -457,8 +493,18 @@ func (s *Store) SymbolsForFile(path string) ([]lang.Symbol, error) {
 }
 
 // FindSymbolsByName returns exact and prefix matches for a name across the repo.
-func (s *Store) FindSymbolsByName(name string) ([]lang.Symbol, error) {
-	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature, language FROM symbols WHERE name LIKE ? ESCAPE '\\' ORDER BY LENGTH(name), file_path, line_start", lang.EscapeLike(name)+"%")
+//
+// At most limit rows are returned, bounded in SQL: an empty or one-letter
+// prefix matches most of the table, and this runs inside the MCP server.
+// An empty name is an error rather than "everything".
+func (s *Store) FindSymbolsByName(name string, limit int) ([]lang.Symbol, error) {
+	if name == "" {
+		return nil, fmt.Errorf("symbol name is required")
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("limit must be positive, got %d", limit)
+	}
+	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature, language FROM symbols WHERE name LIKE ? ESCAPE '\\' ORDER BY LENGTH(name), file_path, line_start LIMIT ?", lang.EscapeLike(name)+"%", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -698,4 +744,42 @@ func (s *Store) FacetCount() (int, error) {
 		return 0, fmt.Errorf("count facets: %w", err)
 	}
 	return n, nil
+}
+
+// AllImports returns every import edge in the index, ordered for stable
+// output. Edges point at import paths, not files; see BuildGraph.
+func (s *Store) AllImports() ([]lang.Import, error) {
+	rows, err := s.db.Query("SELECT file_path, imported_path FROM imports ORDER BY file_path, imported_path")
+	if err != nil {
+		return nil, fmt.Errorf("query imports: %w", err)
+	}
+	defer rows.Close()
+	var out []lang.Import
+	for rows.Next() {
+		var imp lang.Import
+		if err := rows.Scan(&imp.FilePath, &imp.ImportedPath); err != nil {
+			return nil, err
+		}
+		out = append(out, imp)
+	}
+	return out, rows.Err()
+}
+
+// SymbolCountsByFile returns how many symbols each indexed file defines.
+func (s *Store) SymbolCountsByFile() (map[string]int, error) {
+	rows, err := s.db.Query("SELECT file_path, COUNT(*) FROM symbols GROUP BY file_path")
+	if err != nil {
+		return nil, fmt.Errorf("query symbol counts: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var f string
+		var n int
+		if err := rows.Scan(&f, &n); err != nil {
+			return nil, err
+		}
+		out[f] = n
+	}
+	return out, rows.Err()
 }

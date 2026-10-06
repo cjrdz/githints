@@ -716,3 +716,58 @@ func TestBatchRecord(t *testing.T) {
 		t.Fatalf("changelog not rendered: %v", err)
 	}
 }
+
+// Control and invisible formatting characters are removed at record time: a
+// terminal escape in a summary rewrote the screen when `githints changes`
+// printed it, and a zero-width space inside a credential hid it from the
+// secret scan.
+func TestRecordStripsControlCharacters(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	if err := Record(st, dir, testKey, Input{
+		FilePath: "a.go",
+		Summary:  "clear\x1b[2J screen\u202e",
+		Reason:   "multi\nline\r ok",
+		AgentID:  "agent\x07-1\n",
+		Source:   "agent",
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	rows, err := st.FileHistory("a.go", 1)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("FileHistory: %v, %d rows", err, len(rows))
+	}
+	r := rows[0]
+	if r.Summary != "clear[2J screen" || r.Reason != "multi\nline ok" || r.AgentID != "agent-1" {
+		t.Fatalf("not sanitized: summary=%q reason=%q agent=%q", r.Summary, r.Reason, r.AgentID)
+	}
+
+	// A zero-width space splitting an AWS key id no longer slips past the scan.
+	err = Record(st, dir, testKey, Input{FilePath: "b.go", Summary: "AKIA\u200bIOSFODNN7EXAMPLE", Source: "agent"})
+	if err == nil || !strings.Contains(err.Error(), "secret") {
+		t.Fatalf("split credential was recorded: %v", err)
+	}
+}
+
+func TestRecordRejectsLongAgentIDAndControlPaths(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	if err := Record(st, dir, testKey, Input{FilePath: "a.go", Summary: "x", AgentID: strings.Repeat("a", MaxAgentIDLen+1), Source: "agent"}); err == nil {
+		t.Error("oversized agent_id accepted")
+	}
+	for _, p := range []string{"a\nb.go", "evil\u202eog.txt", "tab\t.go"} {
+		if err := ValidateFilePath(p); err == nil {
+			t.Errorf("ValidateFilePath(%q) accepted", p)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cjrdz/githints/internal/textsafe"
 	"io"
 	"net"
 	"net/http"
@@ -12,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/cjrdz/githints/internal/config"
 )
@@ -105,27 +105,51 @@ func NewClient(cfg config.Config) (*Client, error) {
 // point before the packet leaves.
 func loopbackDialer(allowNonLoopback bool) func(context.Context, string, string) (net.Conn, error) {
 	d := &net.Dialer{Timeout: 5 * time.Second}
+	return pinnedLoopbackDialer(allowNonLoopback, net.DefaultResolver.LookupIPAddr, d.DialContext)
+}
+
+// pinnedLoopbackDialer resolves the host once, requires every answer to be
+// loopback, and then dials those vetted IPs directly. Dialing the hostname
+// after the check, as this used to, resolved it a second time -- the same
+// rebinding window the check exists to close, just narrower. The lookup and
+// dial functions are parameters so a test can see which address is dialed.
+func pinnedLoopbackDialer(
+	allowNonLoopback bool,
+	lookup func(context.Context, string) ([]net.IPAddr, error),
+	dial func(context.Context, string, string) (net.Conn, error),
+) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if allowNonLoopback {
-			return d.DialContext(ctx, network, addr)
+			return dial(ctx, network, addr)
 		}
-		host, _, err := net.SplitHostPort(addr)
+		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, fmt.Errorf("parse dial address %q: %w", addr, err)
 		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		ips, err := lookup(ctx, host)
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", host, err)
 		}
-		// Every candidate must be loopback: dialing picks one of them, so a
-		// single routable answer is enough to make this unsafe.
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("resolve %s: no addresses", host)
+		}
+		// Every candidate must be loopback: a single routable answer means
+		// the name is not what the config claims it is.
 		for _, ip := range ips {
 			if !ip.IP.IsLoopback() {
 				return nil, fmt.Errorf("refusing to dial non-loopback address %s for %s "+
 					"(set GITHINTS_OLLAMA_ALLOW_NON_LOOPBACK=1 to allow)", ip.IP, host)
 			}
 		}
-		return d.DialContext(ctx, network, addr)
+		var lastErr error
+		for _, ip := range ips {
+			conn, err := dial(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		return nil, lastErr
 	}
 }
 
@@ -262,15 +286,9 @@ func sanitizeResponse(s string) (string, error) {
 		}
 	}
 
-	clean := strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, s)
+	// Controls and Unicode format characters (bidi overrides, zero-width
+	// spaces) become spaces; Fields below collapses the runs.
+	clean := textsafe.OneLine(s)
 
 	clean = strings.Join(strings.Fields(clean), " ")
 	clean = strings.TrimSpace(clean)

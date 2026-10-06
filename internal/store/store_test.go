@@ -1,9 +1,11 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -806,5 +808,76 @@ func TestWithTxAtomicClaimAndInsert(t *testing.T) {
 	}
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+}
+
+// A clone can ship .githints as a link; the database must not be created at
+// the far end of it.
+func TestOpenRefusesSymlinkedDir(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "elsewhere")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, ".githints")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create a directory symlink on this platform: %v", err)
+	}
+	if st, err := Open(filepath.Join(link, "store.db")); err == nil {
+		st.Close()
+		t.Fatal("Open accepted a symlinked .githints directory")
+	}
+	if _, err := os.Stat(filepath.Join(target, "store.db")); err == nil {
+		t.Fatal("store.db was created in the link target")
+	}
+}
+
+// A store.db that git tracks came from a clone, with rows (or triggers) that
+// were never recorded on this machine.
+func TestOpenRefusesTrackedDatabase(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	path := filepath.Join(root, ".githints", "store.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open untracked: %v", err)
+	}
+	st.Close()
+	if out, err := exec.Command("git", "-C", root, "add", "-f", ".githints/store.db").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	if st, err := Open(path); err == nil {
+		st.Close()
+		t.Fatal("Open accepted a store.db tracked by git")
+	}
+}
+
+func TestOpenSetsTrustedSchemaOffOnEveryConnection(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	// Hold several connections at once so the pool has to open new ones.
+	ctx := context.Background()
+	var conns []*sql.Conn
+	for range 3 {
+		c, err := st.db.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+	}
+	for i, c := range conns {
+		var v int
+		if err := c.QueryRowContext(ctx, "PRAGMA trusted_schema").Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		if v != 0 {
+			t.Errorf("connection %d: trusted_schema = %d, want 0", i, v)
+		}
+		_ = c.Close()
 	}
 }

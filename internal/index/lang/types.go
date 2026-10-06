@@ -7,6 +7,7 @@ package lang
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/cjrdz/githints/internal/textsafe"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -418,25 +419,9 @@ func SortedKeys(m map[string]int) []string {
 	return keys
 }
 
-// EscapeMarkdown is a minimal escape used for Obsidian display text in Phase 6.
-// It mirrors the safe subset of the hint package's escape logic without importing
-// it, keeping the index/hint boundary clean.
-func EscapeMarkdown(s string) string {
-	replacer := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		"\\", "\\\\",
-		"`", "\\`",
-		"*", "\\*",
-		"_", "\\_",
-		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-	)
-	return replacer.Replace(s)
-}
+// EscapeMarkdown escapes display text for an index note. It is the same
+// escaping the hint renderer uses (textsafe.Markdown); there is one copy.
+func EscapeMarkdown(s string) string { return textsafe.Markdown(s) }
 
 // FileLink returns either a markdown link or an Obsidian wikilink.
 //
@@ -467,13 +452,18 @@ func NoteLink(fromDir, display, target string, obsidian bool) string {
 		t = strings.ReplaceAll(t, "[", "%5B")
 		t = strings.ReplaceAll(t, "]", "%5D")
 		t = strings.ReplaceAll(t, "|", "%7C")
+		// Obsidian does not honor backslash escapes inside a wikilink. The
+		// display runs from the first "|" to the first "]]", so a lone bracket
+		// or pipe is harmless; a doubled bracket would end or nest the link
+		// early, so those pairs are split.
+		display = strings.NewReplacer("]]", "] ]", "[[", "[ [").Replace(textsafe.OneLine(display))
 		return fmt.Sprintf("[[%s|%s]]", t, display)
 	}
 	rel, err := filepath.Rel(fromDir, filepath.Join("index", target+".md"))
 	if err != nil {
 		rel = filepath.Join("index", target+".md")
 	}
-	return fmt.Sprintf("[%s](%s)", display, encodeMarkdownTarget(filepath.ToSlash(rel)))
+	return fmt.Sprintf("[%s](%s)", textsafe.Markdown(display), encodeMarkdownTarget(filepath.ToSlash(rel)))
 }
 
 // encodeMarkdownTarget percent-encodes the characters that break markdown
