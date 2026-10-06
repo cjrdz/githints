@@ -128,3 +128,36 @@ func ReadFileIn(r *os.Root, rel string, max int64) ([]byte, error) {
 	}
 	return data, nil
 }
+
+// ReadRepoFile reads rel under a repository root the user chose (the
+// toplevel git reported, or -root). Unlike ReadFile it does not require root
+// itself to be a plain directory -- a checkout reached through a symlinked
+// path is normal -- but rel still cannot resolve outside it, and the same
+// regular-file and size checks apply. For files a clone controls, such as
+// go.mod and tsconfig.json.
+func ReadRepoFile(root, rel string, max int64) ([]byte, error) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return ReadFileIn(r, rel, max)
+}
+
+// RefuseTrackedState returns an error if the githints state file at path
+// (<repo>/.githints/<name>) is tracked by git. Such a file arrived in a clone:
+// a database somebody else wrote, possibly with rows, triggers or views of
+// their choosing. Outside a git repository there is nothing to check.
+func RefuseTrackedState(path string, isTracked func(root, rel string) (bool, error)) error {
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) != ".githints" {
+		return nil
+	}
+	rel := filepath.Join(".githints", filepath.Base(path))
+	tracked, err := isTracked(filepath.Dir(dir), rel)
+	if err != nil || !tracked {
+		return nil
+	}
+	return fmt.Errorf("%s is tracked by git, so it came from the repository rather than this machine; "+
+		"run `git rm --cached %s` and delete the file (githints recreates it)", rel, filepath.ToSlash(rel))
+}

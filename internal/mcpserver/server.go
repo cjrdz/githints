@@ -7,6 +7,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"github.com/cjrdz/githints/internal/textsafe"
 	"log"
 	"os"
 	"strconv"
@@ -607,15 +608,11 @@ func formatChanges(changes []store.Change) string {
 	return b.String()
 }
 
-// oneLine collapses newlines and carriage returns so stored text cannot inject
-// extra lines into the listing above.
+// oneLine flattens stored text onto one line -- newlines, terminal escapes,
+// bidi overrides and zero-width characters all become spaces -- so it cannot
+// inject extra lines into a listing or read differently from what it says.
 func oneLine(s string) string {
-	if !strings.ContainsAny(s, "\r\n") {
-		return s
-	}
-	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
-		return r == '\n' || r == '\r'
-	}), " ")
+	return textsafe.OneLine(s)
 }
 
 func formatTime(unix int64) string {
@@ -686,9 +683,9 @@ func handleListSymbols(db *index.Store) server.ToolHandlerFunc {
 			symbols = symbols[:limit]
 		}
 		for _, sym := range symbols {
-			fmt.Fprintf(&b, "- `%s` (%s) lines %d-%d", sym.Name, sym.Kind, sym.LineStart, sym.LineEnd)
+			fmt.Fprintf(&b, "- %s (%s) lines %d-%d", textsafe.CodeSpan(sym.Name), oneLine(string(sym.Kind)), sym.LineStart, sym.LineEnd)
 			if sym.Signature != "" {
-				fmt.Fprintf(&b, " — `%s`", sym.Signature)
+				fmt.Fprintf(&b, " — %s", textsafe.CodeSpan(sym.Signature))
 			}
 			b.WriteString("\n")
 		}
@@ -724,7 +721,7 @@ func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 			matches = matches[:limit]
 		}
 		for _, sym := range matches {
-			fmt.Fprintf(&b, "- `%s` (%s) in %s:%d\n", sym.Name, sym.Kind, sym.FilePath, sym.LineStart)
+			fmt.Fprintf(&b, "- %s (%s) in %s:%d\n", textsafe.CodeSpan(sym.Name), oneLine(string(sym.Kind)), oneLine(sym.FilePath), sym.LineStart)
 		}
 		return mcp.NewToolResultText(b.String()), nil
 	}

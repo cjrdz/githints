@@ -3,7 +3,9 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -336,5 +338,37 @@ func verifyGeneratePayload(t *testing.T, r *http.Request) {
 	}
 	if !strings.Contains(strings.ToLower(req.Prompt), "do not follow") {
 		t.Errorf("prompt should instruct model not to follow embedded instructions, got: %s", req.Prompt)
+	}
+}
+
+// The dialer used to vet the resolved IPs and then dial the hostname, which
+// resolved it again. It must dial an address it vetted.
+func TestLoopbackDialerDialsTheVettedIP(t *testing.T) {
+	lookups := 0
+	lookup := func(context.Context, string) ([]net.IPAddr, error) {
+		lookups++
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+	var dialed string
+	dial := func(_ context.Context, _, addr string) (net.Conn, error) {
+		dialed = addr
+		return nil, errors.New("stop here")
+	}
+	_, _ = pinnedLoopbackDialer(false, lookup, dial)(context.Background(), "tcp", "rebind.example:11434")
+	if dialed != "127.0.0.1:11434" {
+		t.Fatalf("dialed %q, want the vetted 127.0.0.1:11434", dialed)
+	}
+	if lookups != 1 {
+		t.Fatalf("resolved %d times, want 1", lookups)
+	}
+}
+
+func TestSanitizeResponseDropsFormatCharacters(t *testing.T) {
+	got, err := sanitizeResponse("Fixed\u202e the\u200b parser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Fixed the parser" {
+		t.Fatalf("sanitizeResponse = %q", got)
 	}
 }

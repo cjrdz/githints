@@ -109,6 +109,12 @@ silent truncation:
 
 - `summary` and `reason`: 4000 bytes each. A call carrying an obvious credential
   shape (AWS key id, GitHub token, PEM private key, JWT) is refused outright.
+  Control characters, terminal escapes, bidi overrides and zero-width
+  characters are removed before storing; newlines in a summary or reason are
+  kept but rendered on one line.
+- `agent_id`: 128 bytes, one line.
+- `file`: must be repo-relative, without `..`, and free of control or invisible
+  formatting characters.
 - `record_batch`: at most 100 changes, and it is atomic — either every row lands
   or none does. If it fails, nothing was recorded; fix the reported item and
   retry the whole call.

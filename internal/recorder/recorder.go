@@ -7,7 +7,9 @@ package recorder
 import (
 	"database/sql"
 	"fmt"
+	"github.com/cjrdz/githints/internal/textsafe"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cjrdz/githints/internal/gitutil"
@@ -29,6 +31,7 @@ const ChangelogLimit = 100
 const (
 	MaxSummaryLen = 4000
 	MaxReasonLen  = 4000
+	MaxAgentIDLen = 128
 	MaxBatchSize  = 100
 )
 
@@ -86,6 +89,12 @@ func ValidateFilePath(p string) error {
 	}
 	if !filepath.IsLocal(p) {
 		return fmt.Errorf("file path must be a local, relative path without '..' segments: %s", p)
+	}
+	// A newline in a path forges lines in every place it is rendered (the
+	// hint heading, CHANGES.md, terminal output); a bidi override makes it
+	// read as a different path.
+	if textsafe.Remove(p) != p {
+		return fmt.Errorf("file path contains control or invisible formatting characters: %q", p)
 	}
 	return nil
 }
@@ -187,14 +196,29 @@ func prepare(st *store.Store, in Input) (store.Change, error) {
 	if len(in.Reason) > MaxReasonLen {
 		return store.Change{}, fmt.Errorf("reason too long: %d bytes (max %d)", len(in.Reason), MaxReasonLen)
 	}
+	if len(in.AgentID) > MaxAgentIDLen {
+		return store.Change{}, fmt.Errorf("agent_id too long: %d bytes (max %d)", len(in.AgentID), MaxAgentIDLen)
+	}
+
+	// Terminal escapes, bidi overrides and zero-width characters are removed
+	// before anything else looks at the text: they can rewrite a terminal
+	// when `githints changes` prints the row, and they can split a credential
+	// so the secret scan below no longer recognizes it. Newlines survive in
+	// summary and reason (renderers flatten them); agent_id is one line.
+	in.Summary = textsafe.StripControls(in.Summary)
+	in.Reason = textsafe.StripControls(in.Reason)
+	in.AgentID = textsafe.Remove(in.AgentID)
+	if strings.TrimSpace(in.Summary) == "" {
+		return store.Change{}, fmt.Errorf("summary is empty after removing control characters")
+	}
 
 	// Defense-in-depth: never let an agent or hook persist a row whose
 	// summary or reason contains an obvious secret. The hint markdown is
 	// committed to git, so a leaked credential here is as bad as one in
 	// source.
-	for _, text := range []string{in.Summary, in.Reason} {
+	for _, text := range []string{in.Summary, in.Reason, in.AgentID} {
 		if r := ScanSecrets(text); r.Matched {
-			return store.Change{}, fmt.Errorf("refusing to record change: summary/reason matches a known secret pattern (%s)", r.Pattern)
+			return store.Change{}, fmt.Errorf("refusing to record change: summary/reason/agent_id matches a known secret pattern (%s)", r.Pattern)
 		}
 	}
 

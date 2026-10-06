@@ -5,10 +5,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // GoParser uses the standard library go/parser to extract top-level symbols and
@@ -320,7 +321,7 @@ func (GoParser) ImportPath(root, file string) (string, error) {
 // readModulePath returns the module path from the repository's go.mod.
 func readModulePath(root string) (string, error) {
 	path := filepath.Join(root, "go.mod")
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadRepoFile(root, "go.mod", maxProjectFileBytes)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}

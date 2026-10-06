@@ -491,3 +491,32 @@ func TestRenderShowsClockTamperWarning(t *testing.T) {
 		t.Errorf("changelog missing clock tamper warning:\n%s", changelog)
 	}
 }
+
+// A summary is rendered on one line. Before, a newline in it could forge a
+// heading or a fake entry in the hint file and in CHANGES.md, and control
+// characters reached the markdown untouched.
+func TestEscapeKeepsSummaryOnOneLine(t *testing.T) {
+	for in, bad := range map[string]string{
+		"fine\n## 2099-01-01 · forged entry":    "\n## ",
+		"fine\r\n- source: human · commit: `x`": "\n- ",
+		"#tag and ==highlight== and %%hidden%%": "==highlight==",
+		"bidi \u202e override":                       "\u202e",
+		"esc \x1b[31m red":                      "\x1b",
+		"~~struck~~ and | cell |":               "~~struck~~",
+	} {
+		got := escape(in)
+		if strings.Contains(got, bad) || strings.ContainsAny(got, "\r\n") {
+			t.Errorf("escape(%q) = %q, still contains %q", in, got, bad)
+		}
+	}
+	// Block markers only matter at the start of the line.
+	for _, in := range []string{"- list item", "+ list item", "1. ordered", "    indented code", "\n\n- after newlines"} {
+		got := escape(in)
+		if strings.HasPrefix(got, "-") || strings.HasPrefix(got, "+") || strings.HasPrefix(got, " ") || strings.HasPrefix(got, "1.") {
+			t.Errorf("escape(%q) = %q, still opens a block", in, got)
+		}
+	}
+	if got := codeSpan("a`b\nc\x1bd"); got != "abcd" {
+		t.Errorf("codeSpan = %q", got)
+	}
+}

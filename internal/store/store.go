@@ -14,6 +14,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/safefs"
 )
 
@@ -141,7 +142,18 @@ func Open(path string) (*Store, error) {
 	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file (symlink?); refusing to open it", path)
 	}
-	db, err := sql.Open("sqlite", path)
+	if err := safefs.RefuseTrackedState(path, gitutil.IsTracked); err != nil {
+		return nil, err
+	}
+	if strings.Contains(path, "?") {
+		// The driver splits the name at "?" for its DSN parameters; a path
+		// containing one would open (and create) a different file.
+		return nil, fmt.Errorf("database path %q contains '?', which the sqlite driver cannot open safely", path)
+	}
+	// trusted_schema=OFF on every pooled connection (a DSN pragma, not an
+	// Exec, which would reach only one): functions with side effects cannot
+	// be invoked from triggers or views stored in the schema itself.
+	db, err := sql.Open("sqlite", path+"?_pragma=trusted_schema(0)")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}

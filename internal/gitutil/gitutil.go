@@ -149,6 +149,19 @@ func FileDiffCtx(ctx context.Context, hash, file string) (string, error) {
 	return runCtx(ctx, "show", "--pretty=format:", hash, "--", file)
 }
 
+// IsTracked reports whether rel (relative to root) is in git's index. Used to
+// refuse state files -- a salt, a database -- that arrived in a clone rather
+// than being created on this machine.
+func IsTracked(root, rel string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	out, err := runCtx(ctx, "-C", root, "ls-files", "--", rel)
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
+}
+
 // UserEmail returns the git user.email config, or "" if not set.
 func UserEmail() (string, error) {
 	return run("config", "--get", "user.email")

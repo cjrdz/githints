@@ -22,6 +22,7 @@ import (
 	"github.com/cjrdz/githints/internal/mcpserver"
 	"github.com/cjrdz/githints/internal/recorder"
 	"github.com/cjrdz/githints/internal/store"
+	"github.com/cjrdz/githints/internal/textsafe"
 )
 
 // commands maps every subcommand name to its handler. It is the single source
@@ -300,6 +301,7 @@ func ensureGitignore(root string, share bool) error {
 			".githints/store.db*",
 			".githints/index.db*",
 			".githints/.salt",
+			".githints/.salt.new", // left behind if a legacy-location rotation fails
 			".githints/config.json",
 		}
 	}
@@ -1042,9 +1044,9 @@ func cmdIndexFacets(args []string) error {
 		return nil
 	}
 	for _, f := range found {
-		line := fmt.Sprintf("%-10s %-12s %s:%d  %s", f.Facet, f.Framework, f.FilePath, f.Line, f.Name)
+		line := fmt.Sprintf("%-10s %-12s %s:%d  %s", f.Facet, f.Framework, textsafe.OneLine(f.FilePath), f.Line, textsafe.OneLine(f.Name))
 		if f.Detail != "" {
-			line += "  -> " + f.Detail
+			line += "  -> " + textsafe.OneLine(f.Detail)
 		}
 		fmt.Println(line)
 	}
@@ -1196,7 +1198,7 @@ func cmdIndexVerify(args []string) error {
 	if len(report.Uncovered) > 0 {
 		fmt.Printf("tracked files not indexed: %d\n", len(report.Uncovered))
 		for _, u := range report.Uncovered {
-			fmt.Printf("  - %s (%s)\n", u.Path, u.Reason)
+			fmt.Printf("  - %s (%s)\n", textsafe.OneLine(u.Path), u.Reason)
 		}
 	}
 	if !report.Drift() && len(report.Uncovered) == 0 {
@@ -1363,14 +1365,16 @@ func cmdChanges(args []string) error {
 	}
 	for _, c := range changes {
 		when := time.Unix(c.RecordedAt, 0).Format(time.RFC3339)
-		fmt.Fprintf(os.Stdout, "[%s] %s (%s", when, c.FilePath, c.Source)
+		fmt.Fprintf(os.Stdout, "[%s] %s (%s", when, textsafe.OneLine(c.FilePath), c.Source)
 		if c.AgentID != "" {
-			fmt.Fprintf(os.Stdout, ", %s", c.AgentID)
+			fmt.Fprintf(os.Stdout, ", %s", textsafe.OneLine(c.AgentID))
 		}
 		if c.ClockTamperWarning {
 			fmt.Fprintf(os.Stdout, " [CLOCK TAMPER WARNING]")
 		}
-		fmt.Fprintf(os.Stdout, ", %s): %s\n", shortCommitHash(c.CommitHash), c.Summary)
+		// Rows written before record-time sanitizing can still hold terminal
+		// escapes, so the text is flattened on output too.
+		fmt.Fprintf(os.Stdout, ", %s): %s\n", shortCommitHash(c.CommitHash), textsafe.OneLine(c.Summary))
 	}
 	return nil
 }

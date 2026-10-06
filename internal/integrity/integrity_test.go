@@ -2,6 +2,7 @@ package integrity
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -300,5 +301,31 @@ func TestRotateSalt(t *testing.T) {
 	errs := VerifyChain(newKey, rows)
 	if len(errs) != 0 {
 		t.Fatalf("chain invalid after rotation: %+v", errs)
+	}
+}
+
+// A legacy in-repo salt that git tracks came from a commit: anyone with the
+// repository has the key. It must be refused, not silently used.
+func TestLoadOrCreateSaltRefusesTrackedLegacySalt(t *testing.T) {
+	root := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "t@example.com"}} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".githints"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".githints", ".salt"), make([]byte, saltSize), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateSalt(root); err != nil {
+		t.Fatalf("untracked legacy salt should load: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", root, "add", "-f", ".githints/.salt").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	if _, err := LoadOrCreateSalt(root); err == nil {
+		t.Fatal("LoadOrCreateSalt used a salt that git tracks")
 	}
 }

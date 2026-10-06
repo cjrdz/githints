@@ -2,11 +2,11 @@ package lang
 
 import (
 	"encoding/json"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // TSPathsConfig holds the compilerOptions.paths mappings from a tsconfig.json
@@ -27,7 +27,7 @@ type TSPathsConfig struct {
 // commas) is tolerated.
 func LoadTSPathsConfig(root string) *TSPathsConfig {
 	for _, name := range []string{"tsconfig.json", "jsconfig.json"} {
-		data, err := os.ReadFile(filepath.Join(root, name))
+		data, err := safefs.ReadRepoFile(root, name, maxProjectFileBytes)
 		if err != nil {
 			continue
 		}
@@ -198,3 +198,8 @@ func beginTSScan(root string) func() {
 	SetActiveTSPathsConfig(LoadTSPathsConfig(root))
 	return func() { SetActiveTSPathsConfig(nil) }
 }
+
+// maxProjectFileBytes caps project files the index reads for configuration
+// (go.mod, tsconfig.json). They come from the repository, which may be a
+// hostile clone, and a link to /dev/zero must not hang the post-commit hook.
+const maxProjectFileBytes = 4 << 20

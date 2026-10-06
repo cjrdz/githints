@@ -5,13 +5,17 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // Ollama holds the optional local-LLM summarization settings. Every field has
@@ -86,12 +90,14 @@ func Load(root string) (Config, error) {
 
 	path := filepath.Join(root, ".githints", "config.json")
 	repoEnabledOllama := false
-	if data, err := os.ReadFile(path); err == nil {
+	// config.json arrives in clones, so it is read like any other untrusted
+	// file: through an os.Root, regular files only, size-capped.
+	if data, err := safefs.ReadFile(filepath.Join(root, ".githints"), "config.json", maxConfigBytes); err == nil {
 		if err := json.Unmarshal(data, &cfg); err != nil {
 			return Config{}, fmt.Errorf("parse %s: %w", path, err)
 		}
 		repoEnabledOllama = cfg.Ollama.Enabled
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, fs.ErrNotExist) {
 		return Config{}, fmt.Errorf("read %s: %w", path, err)
 	}
 
@@ -205,8 +211,20 @@ func truthy(s string) bool {
 	return false
 }
 
-// validateIndex enforces the minimums that keep the indexer from
-// misbehaving. It is only called when index.enabled is true.
+// maxConfigBytes caps config.json. The real file is a few hundred bytes.
+const maxConfigBytes = 1 << 20
+
+// Upper bounds for the index settings. config.json travels in clones, so
+// without them a repository could set a multi-gigabyte file cap or an
+// hour-long parse timeout, and the post-commit hook would honor it.
+const (
+	maxIndexBytes        = 1 << 30
+	maxIndexFileSize     = 64 << 20
+	maxIndexParseTimeout = 60_000
+)
+
+// validateIndex enforces the bounds that keep the indexer from misbehaving.
+// It is only called when index.enabled is true.
 func validateIndex(i Index) error {
 	if len(i.Languages) == 0 {
 		return fmt.Errorf("index.languages is empty; add at least one supported language")
@@ -219,6 +237,15 @@ func validateIndex(i Index) error {
 	}
 	if i.ParseTimeoutMS <= 0 {
 		return fmt.Errorf("index.parse_timeout_ms must be positive, got %d", i.ParseTimeoutMS)
+	}
+	if i.MaxBytes > maxIndexBytes {
+		return fmt.Errorf("index.max_bytes must be at most %d, got %d", maxIndexBytes, i.MaxBytes)
+	}
+	if i.MaxFileSize > maxIndexFileSize {
+		return fmt.Errorf("index.max_file_size must be at most %d, got %d", maxIndexFileSize, i.MaxFileSize)
+	}
+	if i.ParseTimeoutMS > maxIndexParseTimeout {
+		return fmt.Errorf("index.parse_timeout_ms must be at most %d, got %d", maxIndexParseTimeout, i.ParseTimeoutMS)
 	}
 	return nil
 }

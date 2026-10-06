@@ -11,6 +11,7 @@ import (
 
 	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/safefs"
+	"github.com/cjrdz/githints/internal/textsafe"
 )
 
 // RenderNotes writes the per-file index notes and the root rollup from the
@@ -198,14 +199,14 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\n", src)
+	fmt.Fprintf(&b, "# %s\n\n", textsafe.Markdown(src))
 
 	if len(symbols) > 0 {
 		b.WriteString("## Symbols\n\n")
 		for _, sym := range symbols {
-			fmt.Fprintf(&b, "- `%s` (%s) lines %d-%d", sym.Name, sym.Kind, sym.LineStart, sym.LineEnd)
+			fmt.Fprintf(&b, "- %s (%s) lines %d-%d", textsafe.CodeSpan(sym.Name), textsafe.Markdown(string(sym.Kind)), sym.LineStart, sym.LineEnd)
 			if sym.Signature != "" {
-				fmt.Fprintf(&b, " — `%s`", sym.Signature)
+				fmt.Fprintf(&b, " — %s", textsafe.CodeSpan(sym.Signature))
 			}
 			b.WriteString("\n")
 		}
@@ -222,9 +223,9 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 	if len(facets) > 0 {
 		b.WriteString("## Framework\n\n")
 		for _, f := range facets {
-			fmt.Fprintf(&b, "- %s `%s` (%s) line %d", f.Facet, lang.EscapeMarkdown(f.Name), f.Framework, f.Line)
+			fmt.Fprintf(&b, "- %s %s (%s) line %d", textsafe.Markdown(f.Facet), textsafe.CodeSpan(f.Name), textsafe.Markdown(f.Framework), f.Line)
 			if f.Detail != "" {
-				fmt.Fprintf(&b, " — `%s`", lang.EscapeMarkdown(f.Detail))
+				fmt.Fprintf(&b, " — %s", textsafe.CodeSpan(f.Detail))
 			}
 			b.WriteString("\n")
 		}
@@ -243,7 +244,7 @@ func renderFileNote(db *Store, root, src string, obsidian bool, importToFile map
 				fmt.Fprintf(&b, "- %s\n", lang.NoteLink(indexDirOf(src), imp.ImportedPath, file, obsidian))
 			} else {
 				// Stdlib, external package, or unresolvable alias.
-				fmt.Fprintf(&b, "- `%s`\n", imp.ImportedPath)
+				fmt.Fprintf(&b, "- %s\n", textsafe.CodeSpan(imp.ImportedPath))
 			}
 		}
 		b.WriteString("\n")
@@ -311,7 +312,7 @@ func renderIndexRollup(db *Store, root string, obsidian bool, registry *lang.Reg
 			} else {
 				// Stdlib packages, external modules, and unresolvable path
 				// aliases have no note to link to.
-				fmt.Fprintf(&b, "- %d import(s): `%s`\n", h.Dependents, h.File)
+				fmt.Fprintf(&b, "- %d import(s): %s\n", h.Dependents, textsafe.CodeSpan(h.File))
 			}
 		}
 	}

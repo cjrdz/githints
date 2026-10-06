@@ -79,6 +79,9 @@ func repoSaltKey(root string) string {
 // the repo tree (see SaltPath); legacy repos keep using .githints/.salt.
 func LoadOrCreateSalt(root string) ([]byte, error) {
 	path := SaltPath(root)
+	if err := refuseTrackedSalt(root, path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err == nil {
 		if len(data) != saltSize {
@@ -95,12 +98,37 @@ func LoadOrCreateSalt(root string) ([]byte, error) {
 		return nil, fmt.Errorf("generate salt: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create .githints dir: %w", err)
+		return nil, fmt.Errorf("create salt dir: %w", err)
+	}
+	// MkdirAll leaves an existing directory's mode alone, and one created
+	// earlier by something else may be group- or world-readable.
+	if filepath.Dir(path) == saltDir(root) && filepath.Base(filepath.Dir(path)) != ".githints" {
+		if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+			return nil, fmt.Errorf("restrict salt dir: %w", err)
+		}
 	}
 	if err := os.WriteFile(path, salt, 0o600); err != nil {
 		return nil, fmt.Errorf("write salt: %w", err)
 	}
 	return salt, nil
+}
+
+// refuseTrackedSalt rejects a legacy in-repo salt that git tracks. A file that
+// is in the index came from a commit, so anyone with the repository has it:
+// the HMAC key would be public, or chosen by whoever committed it.
+func refuseTrackedSalt(root, path string) error {
+	legacy := filepath.Join(root, ".githints", saltFileName)
+	if path != legacy {
+		return nil
+	}
+	tracked, err := gitutil.IsTracked(root, filepath.Join(".githints", saltFileName))
+	if err != nil || !tracked {
+		// Not a git repository (tests, or a bare directory): nothing to check.
+		return nil
+	}
+	return fmt.Errorf("%s is tracked by git, so the integrity key is public; "+
+		"run `git rm --cached .githints/.salt`, delete the file, then `githints rotate-salt -force` "+
+		"to re-sign the log under a private salt", legacy)
 }
 
 // DeriveKey produces the integrity key from the salt and the git user's

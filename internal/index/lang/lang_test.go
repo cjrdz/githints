@@ -342,9 +342,23 @@ func TestNoteLinkDefaultResolvesToNoteFile(t *testing.T) {
 
 func TestNoteLinkDefaultEncodesTarget(t *testing.T) {
 	got := NoteLink("index", "file[weird].go", "file[weird].go", false)
-	want := "[file[weird].go](file%5Bweird%5D.go.md)"
+	// The display text is escaped too: an unbalanced bracket in a file name
+	// would otherwise end the link text early.
+	want := "[file\\[weird\\].go](file%5Bweird%5D.go.md)"
 	if got != want {
 		t.Errorf("NoteLink = %q, want %q", got, want)
+	}
+}
+
+// A file name shaped like the tail of a link must not produce a live link to
+// an attacker-chosen URL, in either link mode.
+func TestNoteLinkDisplayCannotBreakOut(t *testing.T) {
+	name := "x](https://evil.example) [y"
+	if got := NoteLink("index", name, "x", false); strings.Contains(got, "](https://evil") {
+		t.Errorf("markdown link display broke out: %q", got)
+	}
+	if got := NoteLink("index", "a]]b\n# h", "x", true); strings.Contains(got, "a]]") || strings.Contains(got, "\n") {
+		t.Errorf("wikilink display broke out: %q", got)
 	}
 }
 

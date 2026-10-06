@@ -17,46 +17,15 @@ import (
 
 	"github.com/cjrdz/githints/internal/safefs"
 	"github.com/cjrdz/githints/internal/store"
+	"github.com/cjrdz/githints/internal/textsafe"
 )
 
 const dirName = ".githints"
 
-// escape renders a plain-text string safe for inclusion in markdown. It
-// prevents HTML injection (<script>, onclick, etc.) and markdown injection
-// (links, images, headings) that could be exploited when the hint markdown
-// is later rendered in an MCP client's webview. The escaped text remains
-// human-readable; markdown formatting from the agent is intentionally lost
-// in favor of safety.
-func escape(s string) string {
-	replacer := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		"\\", "\\\\",
-		"`", "\\`",
-		"*", "\\*",
-		"_", "\\_",
-		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-	)
-	return replacer.Replace(s)
-}
-
-// codeSpan renders a string safe for inclusion inside a `backtick` span.
-// escape() is wrong here: its backslashes would render literally inside a code
-// span. A backtick or newline in the value is what would break out of the
-// span, so those are simply dropped.
-func codeSpan(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch r {
-		case '`', '\n', '\r':
-			return -1
-		}
-		return r
-	}, s)
-}
+// escape and codeSpan are the shared textsafe renderers; the short names keep
+// the format strings below readable.
+func escape(s string) string   { return textsafe.Markdown(s) }
+func codeSpan(s string) string { return textsafe.CodeSpanText(s) }
 
 // FilePath returns where the hint file for a repo-relative source path
 // would live, e.g. "cmd/api/main.go" -> "<root>/.githints/cmd/api/main.go.md".
