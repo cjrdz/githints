@@ -5,10 +5,10 @@
 We support the latest released version of githints. Before 1.0, security fixes
 ship in the next patch or minor release rather than being backported.
 
-| Version         | Supported          |
-| --------------- | ------------------ |
-| latest release  | :white_check_mark: |
-| anything older  | :x:                |
+| Version        | Supported |
+| -------------- | --------- |
+| latest release | ✅ Yes    |
+| anything older | ❌ No     |
 
 ## Reporting a vulnerability
 
