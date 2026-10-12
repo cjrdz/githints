@@ -111,7 +111,7 @@ func benchTSSource(i, n int) string {
 	return string(b)
 }
 
-// benchScanOptions mirrors what cmdIndex builds from config defaults, so the
+// benchScanOptions mirrors what indexcmd.Run builds from config defaults, so the
 // benchmark measures the real configuration.
 func benchScanOptions(root string) lang.ScanOptions {
 	return lang.ScanOptions{

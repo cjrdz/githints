@@ -1,17 +1,23 @@
-package main
+package doctor
 
 import (
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/cjrdz/githints/internal/cli/initialize"
+	"github.com/cjrdz/githints/internal/clitest"
+	"github.com/cjrdz/githints/internal/integrity"
+	"github.com/cjrdz/githints/internal/recorder"
+	"github.com/cjrdz/githints/internal/store"
 )
 
-func doctorLevels(results []checkResult) map[string]checkLevel {
-	worst := map[string]checkLevel{}
+func doctorLevels(results []Result) map[string]Level {
+	worst := map[string]Level{}
 	for _, r := range results {
-		if r.level > worst[r.name] {
-			worst[r.name] = r.level
+		if r.Level > worst[r.Name] {
+			worst[r.Name] = r.Level
 		}
 	}
 	return worst
@@ -19,23 +25,34 @@ func doctorLevels(results []checkResult) map[string]checkLevel {
 
 func TestDoctorBeforeInit(t *testing.T) {
 	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
-	chdirTempRepo(t)
-	if got := doctorLevels(runDoctor()); got["init"] != levelFail {
+	clitest.ChdirTempRepo(t)
+	if got := doctorLevels(runChecks()); got["init"] != LevelFail {
 		t.Fatalf("doctor before init: %v", got)
 	}
 }
 
 func TestDoctorHealthyRepo(t *testing.T) {
 	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
-	dir := chdirTempRepo(t)
-	if err := cmdInit(nil); err != nil {
+	dir := clitest.ChdirTempRepo(t)
+	if err := initialize.Init(nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmdRecord([]string{"-file=a.go", "-summary=x"}); err != nil {
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	for name, level := range doctorLevels(runDoctor()) {
-		if level == levelFail {
+	key, err := integrity.KeyFromRepo(dir)
+	if err != nil {
+		st.Close()
+		t.Fatal(err)
+	}
+	if err := recorder.Record(st, dir, key, recorder.Input{FilePath: "a.go", Summary: "x", Source: "agent"}); err != nil {
+		st.Close()
+		t.Fatal(err)
+	}
+	st.Close()
+	for name, level := range doctorLevels(runChecks()) {
+		if level == LevelFail {
 			t.Errorf("%s failed on a freshly initialized repo", name)
 		}
 	}
@@ -45,7 +62,7 @@ func TestDoctorHealthyRepo(t *testing.T) {
 	if err := os.Chmod(hook, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := doctorLevels(runDoctor()); got["hooks"] != levelFail && runtime.GOOS != "windows" {
+	if got := doctorLevels(runChecks()); got["hooks"] != LevelFail && runtime.GOOS != "windows" {
 		t.Errorf("non-executable hook not reported: %v", got)
 	}
 }
@@ -54,8 +71,8 @@ func TestDoctorHealthyRepo(t *testing.T) {
 func TestDoctorIsReadOnly(t *testing.T) {
 	saltDir := t.TempDir()
 	t.Setenv("GITHINTS_SALT_DIR", saltDir)
-	chdirTempRepo(t)
-	if err := cmdInit(nil); err != nil {
+	clitest.ChdirTempRepo(t)
+	if err := initialize.Init(nil); err != nil {
 		t.Fatal(err)
 	}
 	entries, _ := os.ReadDir(saltDir)
@@ -64,7 +81,7 @@ func TestDoctorIsReadOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	runDoctor()
+	runChecks()
 	if entries, _ := os.ReadDir(saltDir); len(entries) != 0 {
 		t.Fatalf("doctor created %d salt file(s)", len(entries))
 	}

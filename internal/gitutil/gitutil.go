@@ -411,3 +411,16 @@ func AddNote(ref, message string) error {
 	_, err := run("notes", "--ref="+ref, "add", "--force", "-m", message, "HEAD")
 	return err
 }
+
+// DeleteRef deletes a ref, e.g. refs/notes/githints during uninstall. A
+// missing ref is not an error.
+func DeleteRef(ref string) error {
+	_, err := run("update-ref", "-d", ref)
+	return err
+}
+
+// RefExists reports whether a ref exists in the current repository.
+func RefExists(ref string) bool {
+	_, err := run("show-ref", "--verify", "--quiet", ref)
+	return err == nil
+}

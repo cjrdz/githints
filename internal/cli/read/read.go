@@ -1,4 +1,6 @@
-package main
+// Package read implements the CLI read commands: history, recent, search,
+// diff, and changes. They are the shell twins of the MCP read tools.
+package read
 
 import (
 	"errors"
@@ -6,15 +8,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/llm"
 	"github.com/cjrdz/githints/internal/mcpserver"
 	"github.com/cjrdz/githints/internal/recorder"
 )
-
-// The read commands below are the CLI twins of the MCP read tools, for repos
-// whose agents run githints from the shell instead of over MCP. AGENTS.md
-// documented them for a long time before any of them existed.
 
 // maxCLILimit matches the MCP tools' limit ceiling.
 const maxCLILimit = 500
@@ -26,7 +25,8 @@ func checkLimit(n int) error {
 	return nil
 }
 
-func cmdHistory(args []string) error {
+// History shows the recorded history for one file.
+func History(args []string) error {
 	fs := flag.NewFlagSet("history", flag.ExitOnError)
 	file := fs.String("file", "", "repo-relative path (required)")
 	limit := fs.Int("limit", 20, "max entries (1-500)")
@@ -42,7 +42,7 @@ func cmdHistory(args []string) error {
 	if err := checkLimit(*limit); err != nil {
 		return err
 	}
-	_, st, err := openInitialized()
+	_, st, err := core.OpenInitialized()
 	if err != nil {
 		return err
 	}
@@ -51,11 +51,12 @@ func cmdHistory(args []string) error {
 	if err != nil {
 		return err
 	}
-	printChanges(changes, "no recorded history for "+*file, true)
+	core.PrintChanges(changes, "no recorded history for "+*file, true)
 	return nil
 }
 
-func cmdRecent(args []string) error {
+// Recent shows the latest changes across the repo.
+func Recent(args []string) error {
 	fs := flag.NewFlagSet("recent", flag.ExitOnError)
 	limit := fs.Int("limit", 20, "max entries (1-500)")
 	if err := fs.Parse(args); err != nil {
@@ -64,7 +65,7 @@ func cmdRecent(args []string) error {
 	if err := checkLimit(*limit); err != nil {
 		return err
 	}
-	_, st, err := openInitialized()
+	_, st, err := core.OpenInitialized()
 	if err != nil {
 		return err
 	}
@@ -73,11 +74,12 @@ func cmdRecent(args []string) error {
 	if err != nil {
 		return err
 	}
-	printChanges(changes, "no changes recorded yet", false)
+	core.PrintChanges(changes, "no changes recorded yet", false)
 	return nil
 }
 
-func cmdSearch(args []string) error {
+// Search runs a full-text search over summaries and reasons.
+func Search(args []string) error {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
 	query := fs.String("query", "", "FTS5 MATCH expression (required)")
 	limit := fs.Int("limit", 20, "max entries (1-500)")
@@ -93,7 +95,7 @@ func cmdSearch(args []string) error {
 	if err := checkLimit(*limit); err != nil {
 		return err
 	}
-	_, st, err := openInitialized()
+	_, st, err := core.OpenInitialized()
 	if err != nil {
 		return err
 	}
@@ -102,14 +104,14 @@ func cmdSearch(args []string) error {
 	if err != nil {
 		return fmt.Errorf("search (FTS5 syntax): %w", err)
 	}
-	printChanges(changes, "no matches", true)
+	core.PrintChanges(changes, "no matches", true)
 	return nil
 }
 
-// cmdDiff prints the redacted diff of one file. The output is what an agent
+// Diff prints the redacted diff of one file. The output is what an agent
 // reads, so it gets exactly what get_diff gives: scrubbed unconditionally,
 // and truncated with an explicit marker.
-func cmdDiff(args []string) error {
+func Diff(args []string) error {
 	fs := flag.NewFlagSet("diff", flag.ExitOnError)
 	file := fs.String("file", "", "repo-relative path (required)")
 	hash := fs.String("hash", "", "hex commit-ish to diff within one commit (default: working tree vs HEAD)")
@@ -135,5 +137,54 @@ func cmdDiff(args []string) error {
 		return nil
 	}
 	fmt.Println(mcpserver.TruncateDiff(llm.ScrubDiff(diff)))
+	return nil
+}
+
+// Changes queries the change log over a recorded_at time range. It accepts
+// RFC3339 timestamps or Unix seconds for -since and -until.
+func Changes(args []string) error {
+	fs := flag.NewFlagSet("changes", flag.ExitOnError)
+	sinceStr := fs.String("since", "", "start timestamp (RFC3339 or Unix seconds, required)")
+	untilStr := fs.String("until", "", "end timestamp (RFC3339 or Unix seconds, required)")
+	file := fs.String("file", "", "restrict to one repo-relative file (optional)")
+	limit := fs.Int("limit", 50, "max entries")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *sinceStr == "" || *untilStr == "" {
+		return fmt.Errorf("-since and -until are required")
+	}
+	if *file != "" {
+		if err := recorder.ValidateFilePath(*file); err != nil {
+			return err
+		}
+	}
+
+	_, st, err := core.OpenInitialized()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	since, err := core.ParseTimestamp(*sinceStr)
+	if err != nil {
+		return fmt.Errorf("since: %w", err)
+	}
+	until, err := core.ParseTimestamp(*untilStr)
+	if err != nil {
+		return fmt.Errorf("until: %w", err)
+	}
+
+	// A negative LIMIT means "unbounded" in SQLite, which is not what
+	// -limit=-1 looks like it should do.
+	if *limit <= 0 {
+		return fmt.Errorf("-limit must be positive, got %d", *limit)
+	}
+
+	changes, err := st.ChangesInRange(since, until, *file, *limit)
+	if err != nil {
+		return fmt.Errorf("query: %w", err)
+	}
+	core.PrintChanges(changes, "no changes in range", false)
 	return nil
 }
