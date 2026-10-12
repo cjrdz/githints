@@ -123,7 +123,7 @@ what tells an agent to use them. `init` writes a managed block, bracketed by
 
 | File | Content | Read by |
 | --- | --- | --- |
-| `AGENTS.md` | the workflow rules | opencode, Codex, Gemini CLI, Cursor and most other agents |
+| `AGENTS.md` | the workflow rules | opencode, Codex, Gemini CLI, Cursor, Pi and most other agents |
 | `CLAUDE.md` | `@AGENTS.md` | Claude Code, which reads `CLAUDE.md` and follows the import |
 
 So every client sees the same rules from one place. Content outside the markers
@@ -150,6 +150,7 @@ githints mcp-config <client> [-write]  # print, or add, one client's entry
 | Client | File written | Notes |
 | --- | --- | --- |
 | Claude Code (`claude`) | `.mcp.json` | Warp reads it too |
+| Pi (`pi`) | `.mcp.json` | read through the pi-mcp-adapter extension; shares the file with Claude Code |
 | opencode | `opencode.json` | an `opencode.jsonc` with comments is left to you |
 | Codex CLI | `.codex/config.toml` | read only for projects you marked trusted; pins the root |
 | VS Code / Copilot (`vscode`) | `.vscode/mcp.json` | `servers` with `type: stdio` |
@@ -569,6 +570,8 @@ found problems.
 | --- | --- |
 | `setup [-clients=a,b\|all] [-dry-run] [-list] [-update] [-share] [-chain]` | `init` if needed, then register the MCP server with clients |
 | `init [-chain\|-force] [-share]` | Set up `.githints/`, the hooks, the salt and the managed blocks |
+| `remove [-dry-run]` | Stop tracking: remove the git hooks, keep `.githints/` and configs |
+| `uninstall [-dry-run] [-force]` | Full removal: hooks, project MCP entries, managed blocks, anchors, `.githints/` and salt |
 | `mcp-config CLIENT [-write] [-update]` | Print, or add, one client's MCP entry |
 | `doctor` | Check everything githints depends on; prints a fix per problem; changes nothing |
 | `status` | Store health, hooks, salt, pending records |
@@ -632,7 +635,26 @@ block.
 
 ## Uninstall
 
-From the repository root:
+There are two ways to stop using githints:
+
+- `githints remove` stops git from tracking new commits (hooks off) but keeps
+  the store, salt, agent files, MCP configs and anchors so `githints init`
+  starts tracking again instantly.
+- `githints uninstall` removes everything githints added to the project. It
+  requires `-force` because it deletes the change log and salt.
+
+Both commands are dry-run by default with `-dry-run` and only touch hooks that
+were installed by githints; a hook preserved with `init -chain` is restored.
+Global MCP configs (Claude Desktop, Windsurf, Cline) are not touched.
+
+```sh
+githints remove                   # stop tracking; keep data
+githints uninstall -dry-run       # preview full removal
+githints uninstall -force         # remove hooks, MCP entries, managed blocks,
+                                  # anchors, .githints/ and the salt
+```
+
+If you prefer to do it by hand, from the repository root:
 
 ```sh
 # The hooks, wherever git runs them. If init -chain kept an older hook,

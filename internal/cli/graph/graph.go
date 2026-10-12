@@ -1,4 +1,6 @@
-package main
+// Package graph implements the index graph CLI command and the graph-page
+// refresh helper used by the hook path and the index command.
+package graph
 
 import (
 	"bytes"
@@ -18,10 +20,13 @@ import (
 	"github.com/cjrdz/githints/internal/safefs"
 )
 
-// cmdIndexGraph exports the index's file dependency graph. The default is a
-// single offline HTML page under .githints/, a graph view that needs neither
-// Obsidian nor a server.
-func cmdIndexGraph(args []string) error {
+// pageName is the default viewer location under .githints/.
+const pageName = "graph.html"
+
+// Run exports the index's file dependency graph. The default is a single
+// offline HTML page under .githints/, a graph view that needs neither Obsidian
+// nor a server.
+func Run(args []string) error {
 	fset := flag.NewFlagSet("index graph", flag.ExitOnError)
 	format := fset.String("format", "html", "output format: "+strings.Join(graphexport.Formats, ", "))
 	out := fset.String("o", "", "output file, or - for stdout (default: .githints/graph.html for html, stdout otherwise)")
@@ -80,11 +85,11 @@ func cmdIndexGraph(args []string) error {
 		_, err := os.Stdout.Write(buf.Bytes())
 		return err
 	case *out == "":
-		if err := writeGraphPage(root, buf.Bytes()); err != nil {
+		if err := writePage(root, buf.Bytes()); err != nil {
 			return err
 		}
 		fmt.Printf("wrote %s (%d nodes, %d imports); open it in any browser, it works offline\n",
-			filepath.Join(root, ".githints", graphPageName), len(g.Nodes), len(g.Edges))
+			filepath.Join(root, ".githints", pageName), len(g.Nodes), len(g.Edges))
 		return nil
 	default:
 		// An explicit -o is the user's own choice of path.
@@ -96,27 +101,24 @@ func cmdIndexGraph(args []string) error {
 	}
 }
 
-// graphPageName is the default viewer location under .githints/.
-const graphPageName = "graph.html"
-
-// writeGraphPage writes the viewer through safefs, like every other write
-// under .githints/.
-func writeGraphPage(root string, page []byte) error {
-	return safefs.WriteFile(filepath.Join(root, ".githints"), graphPageName, page, safefs.StateDirPerm, 0o644)
+// writePage writes the viewer through safefs, like every other write under
+// .githints/.
+func writePage(root string, page []byte) error {
+	return safefs.WriteFile(filepath.Join(root, ".githints"), pageName, page, safefs.StateDirPerm, 0o644)
 }
 
-// refreshGraphPage rebuilds .githints/graph.html with default options. It runs
+// RefreshPage rebuilds .githints/graph.html with default options. It runs
 // after a full or incremental index when index.graph_html is on, and only
 // warns on failure: the index itself was updated.
-func refreshGraphPage(root string, db *index.Store) {
+func RefreshPage(root string, db *index.Store) {
 	g, err := index.BuildGraph(db, root, index.GraphOptions{})
 	if err == nil {
 		var buf bytes.Buffer
 		if err = graphexport.Write(&buf, g, "html"); err == nil {
-			err = writeGraphPage(root, buf.Bytes())
+			err = writePage(root, buf.Bytes())
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "githints: could not refresh %s: %v\n", graphPageName, err)
+		fmt.Fprintf(os.Stderr, "githints: could not refresh %s: %v\n", pageName, err)
 	}
 }

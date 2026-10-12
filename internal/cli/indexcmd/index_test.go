@@ -1,52 +1,18 @@
-package main
+package indexcmd
 
 import (
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cjrdz/githints/internal/clitest"
 	"github.com/cjrdz/githints/internal/index/lang"
 )
 
-// captureStdout redirects os.Stdout for the duration of fn and returns what
-// it wrote. Safe only for small outputs: fn runs to completion before the
-// pipe is drained, so anything past the pipe buffer would deadlock.
-func captureStdout(t *testing.T, fn func() error) (string, error) {
-	t.Helper()
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-	orig := os.Stdout
-	os.Stdout = w
-
-	runErr := fn()
-
-	os.Stdout = orig
-	if err := w.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read captured stdout: %v", err)
-	}
-	if err := r.Close(); err != nil {
-		t.Fatalf("close reader: %v", err)
-	}
-	return string(out), runErr
-}
-
-// TestCmdIndexLanguagesListsEveryRegisteredLanguage pins the property that
-// makes the command worth having: whatever the registry knows, the command
-// prints. A language added without appearing here would leave users no way to
-// discover it.
 func TestCmdIndexLanguagesListsEveryRegisteredLanguage(t *testing.T) {
-	out, err := captureStdout(t, func() error { return cmdIndexLanguages(nil) })
+	out, err := clitest.CaptureStdout(t, func() error { return Languages(nil) })
 	if err != nil {
-		t.Fatalf("cmdIndexLanguages: %v", err)
+		t.Fatalf("Languages: %v", err)
 	}
 
 	r := lang.NewRegistry()
@@ -63,8 +29,8 @@ func TestCmdIndexLanguagesListsEveryRegisteredLanguage(t *testing.T) {
 }
 
 func TestCmdIndexLanguagesRejectsExtraArgs(t *testing.T) {
-	if _, err := captureStdout(t, func() error {
-		return cmdIndexLanguages([]string{"go"})
+	if _, err := clitest.CaptureStdout(t, func() error {
+		return Languages([]string{"go"})
 	}); err == nil {
 		t.Error("expected an error for an unexpected argument")
 	}
@@ -74,7 +40,7 @@ func TestCmdIndexLanguagesRejectsExtraArgs(t *testing.T) {
 // at the first non-flag argument, so before this check a mistyped subcommand
 // fell through to a full rebuild, which clears the index and VACUUMs the file.
 func TestCmdIndexRejectsUnknownSubcommand(t *testing.T) {
-	err := cmdIndex([]string{"langauges"})
+	err := Run([]string{"langauges"})
 	if err == nil {
 		t.Fatal("expected an error for a mistyped subcommand")
 	}

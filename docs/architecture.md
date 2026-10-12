@@ -399,7 +399,7 @@ own change: build, run the gate, and check `tools/list` still answers.
 
 ### Client registration
 
-`githints setup` and `mcp-config` (`mcpconfig.go`) write the server entry into
+`githints setup` (`internal/cli/setup`) and `mcp-config` (`internal/cli/mcpcfg`) write the server entry into
 each MCP client's config from one table describing every client: its file, the
 top-level key, the entry shape, whether the root must be pinned, and how to
 detect it. Formats were checked against each vendor's documentation. Only
@@ -410,7 +410,7 @@ client is named.
 
 ## CLI
 
-Commands are dispatched from the `commands` table in `main.go`, the single
+Commands are dispatched from the `commands` table in `internal/cli/cli.go`, the single
 source of truth; `TestUsageMatchesCommandTable` keeps it and the usage text in
 sync. `hook-run` and `hook-precommit` are dispatchable but hidden from usage.
 The full reference is in [usage.md](usage.md#cli-reference). Exit status: 0 ok,
@@ -419,12 +419,25 @@ The full reference is in [usage.md](usage.md#cli-reference). Exit status: 0 ok,
 ## Package layout
 
 ```
-main.go, version.go    # CLI dispatch, init, hooks, verify, status, ...
-cli_read.go            # history, recent, search, diff
-cli_graph.go           # index graph
-doctor.go              # githints doctor
-mcpconfig.go           # setup and mcp-config: the MCP client table
+main.go                # thin binary entry point; delegates to internal/cli
 internal/
+  cli/                 # root dispatcher: Main(), commands table, usage, help, version
+    core/              # shared CLI helpers: OpenInitialized, PrintChanges, ErrVerifyFailed, ...
+    initialize/        # githints init
+    hooks/             # githints hook-run, hook-precommit
+    record/            # githints record, status, render
+    verify/            # githints verify
+    read/              # githints history, recent, search, diff, changes
+    graph/             # githints index graph
+    indexcmd/          # githints index and subcommands
+    salt/              # githints rotate-salt, salt
+    doctor/            # githints doctor
+    mcpcfg/            # githints mcp-config and the MCP client table
+    setup/             # githints setup
+    teardown/          # githints remove, uninstall
+    serve/             # githints serve (MCP stdio server)
+  managed/             # managed hooks, managed-block primitives, agent instruction blocks
+  clitest/             # shared test helpers for the CLI packages
   config/              # .githints/config.json loader, env overrides, bounds
   store/               # change-log SQLite schema, migrations, queries
   recorder/            # write path: validation, sanitizing, secret scan, insert, render

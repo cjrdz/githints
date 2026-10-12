@@ -44,7 +44,7 @@ Each of these is load-bearing and easy to undo by accident. There is a test for
 every one; if you find yourself deleting or weakening one of those tests, stop.
 
 - **Nothing but JSON-RPC on stdout in `serve` mode.** A stray `fmt.Println`
-  anywhere reachable from `cmdServe` corrupts the framing for every client.
+  anywhere reachable from `internal/cli/serve.Run` corrupts the framing for every client.
   Diagnostics go to stderr.
 - **`get_diff` scrubs unconditionally.** `llm.ScrubDiff` must run on the
   default path, not only when `summarize=true` — Ollama is off by default, so
@@ -80,7 +80,7 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
 - **The pre-commit hook fails a commit only for `errPrecommitBlocked`.** Any
   internal error is printed and the commit proceeds.
 - **Only `init` creates `.githints/`.** Every other command goes through
-  `openInitialized` and refuses in an uninitialized repository.
+  `core.OpenInitialized` and refuses in an uninitialized repository.
 - **Every `hash` argument is checked with `IsValidCommitish`** before reaching
   argv. In `ChangedFiles` and `DiffStat` the value lands *before* the `--`
   separator, so an unchecked one is parsed as a git option.
@@ -90,7 +90,7 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   `maxGraphNodesMCP`, `gitutil.MaxOutputBytes`, the `config.json` index ceilings.
 - **`BatchRecord` is one transaction.** A partial batch leaves the caller
   unable to tell what landed.
-- **The `commands` table in `main.go` is the single source of dispatch.**
+- **The `commands` table in `internal/cli/cli.go` is the single source of dispatch.**
   `TestUsageMatchesCommandTable` keeps it in sync with `usageText`; that test
   exists because `githints render` was advertised while being unreachable.
 - **Blanking preserves one output line per input line.** Everything downstream
@@ -166,11 +166,11 @@ ship against a vulnerable stdlib. `os.Root.MkdirAll`/`WriteFile`, which
 
 ### Cross-client support
 
-githints must work in Claude Code, opencode, Codex CLI, and any other MCP
+githints must work in Claude Code, Pi, opencode, Codex CLI, and any other MCP
 client. When changing the server, remember:
 
 - **`AGENTS.md` is the canonical file for agent rules.** opencode, Codex,
-  Gemini CLI and most other agents read it. `githints init` also writes a
+  Gemini CLI, Pi and most other agents read it. `githints init` also writes a
   managed `@AGENTS.md` import into `CLAUDE.md`, which is how Claude Code gets the
   same rules; keep writing both.
 - Where things belong: rules every agent working in a repo must follow go in
@@ -178,7 +178,7 @@ client. When changing the server, remember:
   itself go in this file below the managed block; documentation for people using
   githints goes in `docs/usage.md`, and design in `docs/architecture.md`.
 - `setup` / `mcp-config` write each client's config from `mcpClientList` in
-  `mcpconfig.go`, verified against vendor docs. When a client changes its
+  `internal/cli/mcpcfg/mcpcfg.go`, verified against vendor docs. When a client changes its
   format, change the table and `TestClientEntryShapes` together.
 - Tool descriptions and the `instructions` string are the only guidance some
   clients ever show. Keep them accurate when behavior changes.
