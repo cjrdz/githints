@@ -58,9 +58,12 @@ go test -run=^$ -fuzz=FuzzExportersEscape -fuzztime=60s ./internal/index/graphex
 
 The package map, with what each package owns, is in
 [docs/architecture.md](docs/architecture.md#package-layout). In short:
-`main.go` and the `cli_*.go`, `doctor.go` and `mcpconfig.go` files are the CLI;
-`internal/` holds the store, recorder, renderers, integrity, git access, file
-and text safety, the structural index and the MCP server.
+`main.go` is a thin entry point; the CLI lives under `internal/cli/` with one
+subpackage per command area (`initialize`, `hooks`, `record`, `verify`, `read`,
+`graph`, `indexcmd`, `salt`, `doctor`, `mcpcfg`, `setup`, `teardown`, `serve`)
+plus shared helpers in `internal/cli/core` and managed-artifact primitives in
+`internal/managed`. `internal/` holds the store, recorder, renderers, integrity,
+git access, file and text safety, the structural index and the MCP server.
 
 ## Conventions
 
@@ -123,7 +126,7 @@ fixture and a test.
 
 ### Adding an MCP client to `setup`
 
-Add an entry to `mcpClientList` in `mcpconfig.go`, working from the client's own
+Add an entry to `mcpClientList` in `internal/cli/mcpcfg/mcpcfg.go`, working from the client's own
 documentation (and source, where the docs are silent): the file, the top-level
 key, the exact entry shape, whether the server starts in the project directory
 (if not documented, pin the root), and how to detect the client. Add its shape to
@@ -152,8 +155,8 @@ on `main`:
 
 ```sh
 git checkout main && git pull
-git tag -a v0.2.0 -F -   # the message becomes the top of the release notes
-git push origin v0.2.0
+git tag -a v0.2.1 -F -   # the message becomes the top of the release notes
+git push origin v0.2.1
 ```
 
 - **The tag body becomes the release notes.** `.goreleaser.yml` puts

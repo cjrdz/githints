@@ -93,3 +93,5 @@ Exceeding a limit is an error, never a silent truncation:
   `.gitignore` of a tracked repository; `githints init` rewrites them.
   (This repository's `AGENTS.md` is hand-written instead; see
   [CONTRIBUTING.md](CONTRIBUTING.md#self-tracking).)
+
+

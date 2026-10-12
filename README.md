@@ -37,7 +37,7 @@ githints setup
 
 `setup` installs the git hooks, creates `.githints/`, writes the agent
 instructions into `AGENTS.md` and `CLAUDE.md`, and registers the MCP server with
-every client it detects: Claude Code, opencode, Codex, VS Code (Copilot),
+every client it detects: Claude Code, Pi, opencode, Codex, VS Code (Copilot),
 Cursor, Zed, Kiro, Gemini CLI, JetBrains Junie and Continue. Run
 `githints setup -list` to see what it found, or `githints doctor` afterwards to
 check everything.
@@ -80,6 +80,8 @@ client setup are in the [usage guide](docs/usage.md).
 githints setup                  # set up the repo and register MCP clients
 githints doctor                 # check the whole setup; prints a fix for each problem
 githints status                 # store health, hooks, salt, pending records
+githints remove                 # stop tracking: remove hooks, keep data
+githints uninstall -force       # full removal: hooks, configs, .githints/, salt
 
 githints record -file=F -summary=S [-reason=R]   # record a change by hand
 githints history -file=F        # why a file looks the way it does
