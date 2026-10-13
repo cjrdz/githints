@@ -18,6 +18,26 @@ at the repository root, so use the CLI from the root:
 Every MCP read tool has a CLI twin with the same limits; the table below pairs
 them.
 
+## MCP tools
+
+When githints is registered as an MCP server, the following tools are available.
+Use them instead of the CLI twins.
+
+| Tool | When to call it |
+| --- | --- |
+| `get_session_context()` | **At the start of every session**, before reading files or editing. |
+| `record_change(file, summary, reason)` | **Right after editing a file.** Summaries must be specific; reason is optional but valuable. |
+| `record_batch(changes=[...])` | When several files changed in one conceptual step. Atomic: all land or none. |
+| `get_file_history(file)` | Before editing a file you have not touched this session. |
+| `get_recent_changes(limit=20)` | To catch up on work done by another agent, teammate, or manual commit. |
+| `get_diff(file, hash)` | When a recorded summary does not match what you see in the file. |
+| `search_changes(query)` | Full-text search over recorded summaries and reasons. |
+| `get_changes_in_range(since, until, file)` | Timeline forensics over a recorded_at range. |
+| `list_symbols(file)`, `find_symbol(name)`, `get_dependents(file)`, `get_dependency_graph(file, depth)` | Explore the structural index before changing unfamiliar code. |
+| `find_facets(facet)`, `get_index_summary(limit=10)` | Higher-level views of the codebase structure. |
+
+If no MCP server is registered in your client, use the CLI twins below.
+
 ## Rule: start every session by catching up
 
 | | MCP | CLI |

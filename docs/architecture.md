@@ -97,8 +97,8 @@ After a commit, `githints hook-run` (the `post-commit` hook):
 3. For each file (skipping `.githints/`):
    - Claims any pending agent rows for that file/hash.
    - Loads the agent rows already recorded for that file/hash.
-   - Compares the sum of agent diff stats to the commit's diff stat.
-   - If they match exactly, no fallback is written.
+   - If the agent already described the file for this commit, no fallback is
+     written.
    - Otherwise, asks the local Ollama model (when enabled) for a one-line
      caption of the scrubbed and truncated diff. On any error, timeout, or
      circuit-breaker-open state, it writes a generic fallback row instead.
