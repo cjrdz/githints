@@ -806,8 +806,21 @@ func TestWithTxAtomicClaimAndInsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FileHistory: %v", err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want 2", len(rows))
+	// FileHistory suppresses fallback rows that duplicate an agent-described
+	// change for the same file and commit.
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Source != "agent" {
+		t.Errorf("source = %q, want agent", rows[0].Source)
+	}
+
+	all, err := st.AllChanges()
+	if err != nil {
+		t.Fatalf("AllChanges: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("AllChanges got %d rows, want 2", len(all))
 	}
 }
 
@@ -879,5 +892,30 @@ func TestOpenSetsTrustedSchemaOffOnEveryConnection(t *testing.T) {
 			t.Errorf("connection %d: trusted_schema = %d, want 0", i, v)
 		}
 		_ = c.Close()
+	}
+}
+
+func TestCoalesceFallbacksRemovesDuplicateFallbackRows(t *testing.T) {
+	rows := []Change{
+		{FilePath: "a.go", CommitHash: "abc", Source: "agent", Summary: "agent a"},
+		{FilePath: "a.go", CommitHash: "abc", Source: "fallback", Summary: "fallback a"},
+		{FilePath: "b.go", CommitHash: "abc", Source: "fallback", Summary: "fallback b"},
+		{FilePath: "c.go", CommitHash: "abc", Source: "agent", Summary: "agent c"},
+		{FilePath: "c.go", CommitHash: "def", Source: "fallback", Summary: "fallback c-other"},
+	}
+	got := CoalesceFallbacks(rows)
+	want := []Change{
+		{FilePath: "a.go", CommitHash: "abc", Source: "agent", Summary: "agent a"},
+		{FilePath: "b.go", CommitHash: "abc", Source: "fallback", Summary: "fallback b"},
+		{FilePath: "c.go", CommitHash: "abc", Source: "agent", Summary: "agent c"},
+		{FilePath: "c.go", CommitHash: "def", Source: "fallback", Summary: "fallback c-other"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].FilePath != want[i].FilePath || got[i].CommitHash != want[i].CommitHash || got[i].Source != want[i].Source {
+			t.Errorf("row %d: got %v, want %v", i, got[i], want[i])
+		}
 	}
 }

@@ -24,38 +24,6 @@ import (
 	"github.com/cjrdz/githints/internal/store"
 )
 
-// agentCoversCommit reports whether the agent rows for a file account for
-// the entire diff in the commit. It returns two booleans:
-//   - covered: true if the agent rows' diff stats sum to the commit's diff
-//     stat, meaning no hook fallback is needed.
-//   - verifiable: false when any agent row lacks a diff stat or the commit's
-//     diff stat cannot be parsed. In that case we cannot prove coverage, so
-//     the hook writes an "unverifiable" fallback rather than silently giving
-//     the agent the benefit of the doubt.
-func agentCoversCommit(agentRows []store.Change, commitStat string) (covered bool, verifiable bool) {
-	var agentAdd, agentDel int
-	haveAllStats := true
-	for _, r := range agentRows {
-		a, d, ok := gitutil.ParseDiffStat(r.DiffStat)
-		if !ok {
-			haveAllStats = false
-			break
-		}
-		agentAdd += a
-		agentDel += d
-	}
-
-	commitAdd, commitDel, ok := gitutil.ParseDiffStat(commitStat)
-	if !ok {
-		// Binary, first commit, or otherwise unmeasurable: we can't compare.
-		return false, false
-	}
-	if !haveAllStats {
-		return false, false
-	}
-	return agentAdd == commitAdd && agentDel == commitDel, true
-}
-
 // hookSummaryFor decides what text the post-commit hook should record when
 // it has to write a fallback entry.
 func hookSummaryFor(verifiable bool) string {
@@ -92,10 +60,10 @@ func summarizeViaOllama(ctx context.Context, client *llm.Client, hash, file stri
 }
 
 // HookRun is invoked by .git/hooks/post-commit. It records a low-detail
-// fallback entry only for files the agent didn't already record via
-// record_change for this exact commit. Each file's claim-check-insert
-// sequence runs inside a transaction so a concurrent record_change cannot
-// slip between ClaimPending and the fallback decision.
+// fallback entry only for files the agent did not describe at all for this
+// exact commit. Each file's claim-check-insert sequence runs inside a
+// transaction so a concurrent record_change cannot slip between ClaimPending
+// and the fallback decision.
 func HookRun() error {
 	root, st, err := core.OpenInitialized()
 	if err != nil {
@@ -157,27 +125,21 @@ func HookRun() error {
 			return fmt.Errorf("process %s: %w", f, err)
 		}
 
-		if claimed > 0 {
-			// Re-render the per-file hint so the "uncommitted" label is
-			// replaced with the real commit hash we just stamped.
-			if err := hint.RenderFile(st, root, f, recorder.HistoryLimitPerFile); err != nil {
-				return fmt.Errorf("render file hint for %s: %w", f, err)
-			}
-			rendered = true
-		}
-
-		needsFallback := true
-		verifiable := false
 		if len(agentRows) > 0 {
-			var covered bool
-			covered, verifiable = agentCoversCommit(agentRows, gitutil.DiffStat(hash, f))
-			needsFallback = !covered
-		}
-		if !needsFallback {
+			// The agent already described this file. Re-render the per-file
+			// hint if we just claimed pending rows so the "uncommitted" label
+			// is replaced with the real commit hash.
+			if claimed > 0 {
+				if err := hint.RenderFile(st, root, f, recorder.HistoryLimitPerFile); err != nil {
+					return fmt.Errorf("render file hint for %s: %w", f, err)
+				}
+				rendered = true
+			}
 			continue
 		}
 
 		diffStat := gitutil.DiffStat(hash, f)
+		_, _, verifiable := gitutil.ParseDiffStat(diffStat)
 		summary, source := hookFallbackSummary(verifiable)
 		if client != nil {
 			summary, source = summarizeViaOllama(ctx, client, hash, f, verifiable)

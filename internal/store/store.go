@@ -317,10 +317,19 @@ func boolToInt(b bool) int {
 
 // FileHistory returns the most recent changes for one file, newest first.
 // Ordering is by recorded_at (Go-managed, monotonically checked) then id.
+const noDuplicateFallback = `NOT (c.source = 'fallback' AND EXISTS (
+	SELECT 1 FROM changes AS c2
+	WHERE c2.file_path = c.file_path
+	  AND c2.commit_hash = c.commit_hash
+	  AND c2.source = 'agent'
+))`
+
 func (s *Store) FileHistory(filePath string, limit int) ([]Change, error) {
 	return s.query(
-		`SELECT id, file_path, COALESCE(commit_hash,''), COALESCE(branch,''), source, summary, COALESCE(reason,''), COALESCE(diff_stat,''), COALESCE(diff_hash,''), COALESCE(agent_id,''), recorded_at, COALESCE(hmac,''), COALESCE(prev_hmac,''), clock_tamper_warning, created_at
-		 FROM changes WHERE file_path = ? ORDER BY recorded_at DESC, id DESC LIMIT ?`,
+		`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+		 FROM changes AS c
+		 WHERE c.file_path = ? AND `+noDuplicateFallback+`
+		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
 		filePath, limit,
 	)
 }
@@ -328,8 +337,10 @@ func (s *Store) FileHistory(filePath string, limit int) ([]Change, error) {
 // RecentChanges returns the most recent changes across the whole repo.
 func (s *Store) RecentChanges(limit int) ([]Change, error) {
 	return s.query(
-		`SELECT id, file_path, COALESCE(commit_hash,''), COALESCE(branch,''), source, summary, COALESCE(reason,''), COALESCE(diff_stat,''), COALESCE(diff_hash,''), COALESCE(agent_id,''), recorded_at, COALESCE(hmac,''), COALESCE(prev_hmac,''), clock_tamper_warning, created_at
-		 FROM changes ORDER BY recorded_at DESC, id DESC LIMIT ?`,
+		`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+		 FROM changes AS c
+		 WHERE `+noDuplicateFallback+`
+		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
 		limit,
 	)
 }
@@ -340,7 +351,7 @@ func (s *Store) Search(query string, limit int) ([]Change, error) {
 		`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
 		 FROM changes_fts f
 		 JOIN changes c ON c.id = f.rowid
-		 WHERE changes_fts MATCH ?
+		 WHERE changes_fts MATCH ? AND `+noDuplicateFallback+`
 		 ORDER BY c.recorded_at DESC LIMIT ?`,
 		query, limit,
 	)
@@ -351,18 +362,18 @@ func (s *Store) Search(query string, limit int) ([]Change, error) {
 func (s *Store) ChangesInRange(since, until int64, filePath string, limit int) ([]Change, error) {
 	if filePath != "" {
 		return s.query(
-			`SELECT id, file_path, COALESCE(commit_hash,''), COALESCE(branch,''), source, summary, COALESCE(reason,''), COALESCE(diff_stat,''), COALESCE(diff_hash,''), COALESCE(agent_id,''), recorded_at, COALESCE(hmac,''), COALESCE(prev_hmac,''), clock_tamper_warning, created_at
-		     FROM changes
-		     WHERE file_path = ? AND recorded_at >= ? AND recorded_at <= ?
-		     ORDER BY recorded_at DESC, id DESC LIMIT ?`,
+			`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+		     FROM changes AS c
+		     WHERE c.file_path = ? AND c.recorded_at >= ? AND c.recorded_at <= ? AND `+noDuplicateFallback+`
+		     ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
 			filePath, since, until, limit,
 		)
 	}
 	return s.query(
-		`SELECT id, file_path, COALESCE(commit_hash,''), COALESCE(branch,''), source, summary, COALESCE(reason,''), COALESCE(diff_stat,''), COALESCE(diff_hash,''), COALESCE(agent_id,''), recorded_at, COALESCE(hmac,''), COALESCE(prev_hmac,''), clock_tamper_warning, created_at
-		 FROM changes
-		 WHERE recorded_at >= ? AND recorded_at <= ?
-		 ORDER BY recorded_at DESC, id DESC LIMIT ?`,
+		`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+		 FROM changes AS c
+		 WHERE c.recorded_at >= ? AND c.recorded_at <= ? AND `+noDuplicateFallback+`
+		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
 		since, until, limit,
 	)
 }
@@ -572,4 +583,27 @@ func (s *Store) Count() (int, error) {
 		return 0, fmt.Errorf("count changes: %w", err)
 	}
 	return n, nil
+}
+
+// CoalesceFallbacks removes fallback rows that duplicate an agent-described
+// change for the same file and commit. It keeps fallback rows that have no
+// agent sibling, so the hook's "nobody described this" entries are preserved.
+// Order is preserved.
+func CoalesceFallbacks(rows []Change) []Change {
+	type key struct{ file, hash string }
+	hasAgent := make(map[key]bool, len(rows))
+	for _, r := range rows {
+		if r.Source == "agent" {
+			hasAgent[key{r.FilePath, r.CommitHash}] = true
+		}
+	}
+
+	out := make([]Change, 0, len(rows))
+	for _, r := range rows {
+		if r.Source == "fallback" && hasAgent[key{r.FilePath, r.CommitHash}] {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
