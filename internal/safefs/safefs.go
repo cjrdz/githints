@@ -15,7 +15,9 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 )
 
 // ErrTooLarge is returned by ReadFile when the file exceeds its cap.
@@ -52,6 +54,16 @@ func Open(dir string, perm fs.FileMode) (*os.Root, error) {
 	return os.OpenRoot(dir)
 }
 
+// OpenExisting returns an os.Root for a directory that must already exist and
+// be a plain directory. Unlike Open it never creates anything, for readers that
+// should find nothing rather than make something.
+func OpenExisting(dir string) (*os.Root, error) {
+	if err := checkRealDir(dir); err != nil {
+		return nil, err
+	}
+	return os.OpenRoot(dir)
+}
+
 // WriteFile writes data to rel under dir, creating parent directories. It
 // refuses to follow any link out of dir.
 func WriteFile(dir, rel string, data []byte, dirPerm, filePerm fs.FileMode) error {
@@ -66,6 +78,9 @@ func WriteFile(dir, rel string, data []byte, dirPerm, filePerm fs.FileMode) erro
 // WriteFileIn is WriteFile against an already-open root, for callers writing
 // many files in one pass.
 func WriteFileIn(r *os.Root, rel string, data []byte, dirPerm, filePerm fs.FileMode) error {
+	if err := refuseLinks(r, rel); err != nil {
+		return err
+	}
 	if d := filepath.Dir(rel); d != "." {
 		if err := r.MkdirAll(d, dirPerm); err != nil {
 			return fmt.Errorf("create %s: %w", d, err)
@@ -73,6 +88,34 @@ func WriteFileIn(r *os.Root, rel string, data []byte, dirPerm, filePerm fs.FileM
 	}
 	if err := r.WriteFile(rel, data, filePerm); err != nil {
 		return fmt.Errorf("write %s: %w", rel, err)
+	}
+	return nil
+}
+
+// refuseLinks reports an error if rel, or any directory on the way to it, is a
+// symlink or a Windows junction. os.Root follows a link that stays inside the
+// root, so without this a link planted in .githints/ (shared mode commits that
+// directory, and a clone can ship links) turns every rewrite of CHANGES.md, a
+// hint or a viewer page into an overwrite of whatever it points at inside the
+// directory: `CHANGES.md -> store.db` destroyed the change log on the next
+// record. A path that does not exist yet is fine; it will be created plainly.
+func refuseLinks(r *os.Root, rel string) error {
+	cur := ""
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = path.Join(cur, part)
+		fi, err := r.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return fmt.Errorf("%s is a link; refusing to write through it", cur)
+		}
 	}
 	return nil
 }
@@ -94,6 +137,20 @@ func ReadFile(dir, rel string, max int64) ([]byte, error) {
 
 // ReadFileIn is ReadFile against an already-open root.
 func ReadFileIn(r *os.Root, rel string, max int64) ([]byte, error) {
+	return readFileIn(r, rel, max, false)
+}
+
+// ReadSingleLinkFileIn is ReadFileIn for a file that must have exactly one
+// name. A hard link is a regular file, so the checks above cannot see one: a
+// second name for .githints/.salt, made by anyone who can write the directory,
+// would read as an ordinary file of whatever name it was given. Hard links do
+// not travel in a git clone, so this guards the local directory only. Where the
+// platform cannot report a link count the check is skipped.
+func ReadSingleLinkFileIn(r *os.Root, rel string, max int64) ([]byte, error) {
+	return readFileIn(r, rel, max, true)
+}
+
+func readFileIn(r *os.Root, rel string, max int64, singleLink bool) ([]byte, error) {
 	// Stat before Open: opening a FIFO blocks until a writer appears, so the
 	// regular-file check has to happen first. r.Stat follows a symlink only
 	// while it stays inside the root. The second check after Open closes the
@@ -118,6 +175,11 @@ func ReadFileIn(r *os.Root, rel string, max int64) ([]byte, error) {
 	}
 	if fi.Size() > max {
 		return nil, fmt.Errorf("%s: %w (%d > %d bytes)", rel, ErrTooLarge, fi.Size(), max)
+	}
+	if singleLink {
+		if n, ok := linkCount(f); ok && n > 1 {
+			return nil, fmt.Errorf("%s has %d hard links; refusing to read it", rel, n)
+		}
 	}
 	data, err := io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {

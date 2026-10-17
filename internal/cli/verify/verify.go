@@ -11,6 +11,7 @@ import (
 	"github.com/cjrdz/githints/internal/hint"
 	"github.com/cjrdz/githints/internal/integrity"
 	"github.com/cjrdz/githints/internal/recorder"
+	"github.com/cjrdz/githints/internal/store"
 )
 
 // Run checks the integrity of the change log: HMAC chain, monotonic
@@ -33,7 +34,16 @@ func Run() error {
 		return fmt.Errorf("load changes: %w", err)
 	}
 
-	fmt.Printf("changes: %d\n", len(rows))
+	outcomes := 0
+	for _, c := range rows {
+		if c.Kind == store.KindOutcome {
+			outcomes++
+		}
+	}
+	fmt.Printf("changes: %d\n", len(rows)-outcomes)
+	if outcomes > 0 {
+		fmt.Printf("outcomes: %d\n", outcomes)
+	}
 
 	chainErrs := integrity.VerifyChain(key, rows)
 	if len(chainErrs) == 0 {

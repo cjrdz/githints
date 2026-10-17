@@ -2,6 +2,7 @@ package gitutil
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -549,5 +550,201 @@ func TestDiffDoesNotRunExternalDiffOrTextconv(t *testing.T) {
 	_ = WorktreeDiffStat("main.go")
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("a repository-configured diff driver was executed")
+	}
+}
+
+func TestRevertedCommits(t *testing.T) {
+	a := strings.Repeat("a", 40)
+	b := strings.Repeat("b", 40)
+	sha256 := strings.Repeat("c", 64)
+	cases := map[string]struct {
+		msg  string
+		want []string
+	}{
+		"git revert":      {"Revert \"add x\"\n\nThis reverts commit " + a + ".\n", []string{a}},
+		"two":             {"Revert two\n\nThis reverts commit " + a + ".\nThis reverts commit " + b + ".\n", []string{a, b}},
+		"repeated":        {"This reverts commit " + a + ".\nThis reverts commit " + a + ".\n", []string{a}},
+		"sha-256":         {"This reverts commit " + sha256 + ".\n", []string{sha256}},
+		"abbreviated":     {"This reverts commit " + a[:12] + ".\n", nil},
+		"mid line":        {"we said: This reverts commit " + a + "\n", nil},
+		"indented":        {"  This reverts commit " + a + "\n", nil},
+		"uppercase":       {"This reverts commit " + strings.ToUpper(a) + "\n", nil},
+		"too long":        {"This reverts commit " + a + "abc\n", nil},
+		"unrelated":       {"fix: handle reverts commit\n", nil},
+		"empty":           {"", nil},
+		"flag-like claim": {"This reverts commit --output=/tmp/pwn\n", nil},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := RevertedCommits(tc.msg)
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("RevertedCommits = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	var many strings.Builder
+	for i := 0; i < maxRevertRefs+10; i++ {
+		fmt.Fprintf(&many, "This reverts commit %040x\n", i+1)
+	}
+	if got := RevertedCommits(many.String()); len(got) != maxRevertRefs {
+		t.Errorf("a message naming %d commits yielded %d, want the cap %d", maxRevertRefs+10, len(got), maxRevertRefs)
+	}
+}
+
+func TestCommitTreeHelpers(t *testing.T) {
+	dir := makeRepo(t)
+	defer chdir(t, dir)()
+	writeFile(t, dir, "a.go", "one\n")
+	runGit(t, dir, "add", "a.go")
+	runGit(t, dir, "commit", "-m", "first commit")
+	first, err := LastCommitHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "a.go", "two\n")
+	writeFile(t, dir, "b.go", "new\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "second commit")
+	second, _ := LastCommitHash()
+
+	msg, err := CommitMessage(second)
+	if err != nil || msg != "second commit" {
+		t.Errorf("CommitMessage = %q, %v", msg, err)
+	}
+	if full, ok := ResolveCommit(second[:10]); !ok || full != second {
+		t.Errorf("ResolveCommit(abbrev) = %q, %v", full, ok)
+	}
+	if _, ok := ResolveCommit(strings.Repeat("0", 40)); ok {
+		t.Error("ResolveCommit accepted a commit that does not exist")
+	}
+	if p, ok := ParentCommit(second); !ok || p != first {
+		t.Errorf("ParentCommit = %q, %v, want %q", p, ok, first)
+	}
+	if _, ok := ParentCommit(first); ok {
+		t.Error("a root commit has a parent")
+	}
+
+	// Identity: same content equal, different content different, absent empty.
+	a1, err1 := PathAt(first, "a.go")
+	a2, err2 := PathAt(second, "a.go")
+	if err1 != nil || err2 != nil || a1 == "" || a2 == "" || a1 == a2 {
+		t.Errorf("PathAt a.go: %q (%v) vs %q (%v), want two different identities", a1, err1, a2, err2)
+	}
+	if b, err := PathAt(first, "b.go"); err != nil || b != "" {
+		t.Errorf("PathAt of a file that did not exist = %q, %v, want empty", b, err)
+	}
+	if b, err := PathAt(second, "b.go"); err != nil || b == "" {
+		t.Errorf("PathAt of an existing file = %q, %v", b, err)
+	}
+	// A path that looks like an option is a path.
+	if got, err := PathAt(second, "--output=/tmp/pwn"); err != nil || got != "" {
+		t.Errorf("PathAt(option-looking path) = %q, %v", got, err)
+	}
+}
+
+// Every hash must be hex and non-empty: "" would mean the working tree, which
+// none of these can answer, and anything else lands in argv.
+func TestCommitTreeHelpersGuardTheHash(t *testing.T) {
+	dir := makeRepo(t)
+	defer chdir(t, dir)()
+	writeFile(t, dir, "a.go", "x\n")
+	runGit(t, dir, "add", "a.go")
+	runGit(t, dir, "commit", "-m", "first")
+
+	for _, bad := range []string{"", "--output=/tmp/pwn", "-x", "HEAD", "main"} {
+		if _, err := CommitMessage(bad); err == nil {
+			t.Errorf("CommitMessage(%q) accepted", bad)
+		}
+		if _, ok := ResolveCommit(bad); ok {
+			t.Errorf("ResolveCommit(%q) accepted", bad)
+		}
+		if _, ok := ParentCommit(bad); ok {
+			t.Errorf("ParentCommit(%q) accepted", bad)
+		}
+		if _, err := PathAt(bad, "a.go"); err == nil {
+			t.Errorf("PathAt(%q) accepted", bad)
+		}
+	}
+}
+
+// File names come back exactly as they are: git quotes anything unusual in
+// --name-only output ("\303\251.txt" for "é.txt") unless told not to, and a
+// quoted name matches no recorded row and no tree entry.
+func TestChangedAndStagedFilesAreNotQuoted(t *testing.T) {
+	dir := makeRepo(t)
+	defer chdir(t, dir)()
+	names := []string{"é.txt", "日本語.txt", "has space.txt", "plain.txt"}
+	if runtime.GOOS != "windows" { // '"' is not legal in a Windows file name
+		names = append(names, `quo"te.txt`)
+	}
+	for _, n := range names {
+		writeFile(t, dir, n, "one\n")
+	}
+	runGit(t, dir, "add", "--", ".")
+
+	staged, err := StagedFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "commit", "-m", "first") // the root commit: the fallback path
+	first, _ := LastCommitHash()
+	for _, n := range names {
+		writeFile(t, dir, n, "two\n")
+	}
+	runGit(t, dir, "add", "--", ".")
+	runGit(t, dir, "commit", "-m", "second")
+	second, _ := LastCommitHash()
+
+	for desc, hash := range map[string]string{"root commit": first, "ordinary commit": second} {
+		got, err := ChangedFiles(hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sameSet(got, names) {
+			t.Errorf("ChangedFiles(%s) = %q, want %q", desc, got, names)
+		}
+	}
+	if !sameSet(staged, names) {
+		t.Errorf("StagedFiles = %q, want %q", staged, names)
+	}
+}
+
+func sameSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := map[string]bool{}
+	for _, s := range a {
+		m[s] = true
+	}
+	for _, s := range b {
+		if !m[s] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestChangedFilesNoRenamesListsBothPaths(t *testing.T) {
+	dir := makeRepo(t)
+	defer chdir(t, dir)()
+	writeFile(t, dir, "old.go", "package a\n\nfunc F() {}\n\nfunc G() {}\n")
+	runGit(t, dir, "add", "--", ".")
+	runGit(t, dir, "commit", "-m", "first")
+	runGit(t, dir, "mv", "old.go", "new.go")
+	runGit(t, dir, "commit", "-m", "rename")
+	h, _ := LastCommitHash()
+
+	with, err := ChangedFiles(h)
+	if err != nil || !sameSet(with, []string{"new.go"}) {
+		t.Errorf("ChangedFiles = %v, %v, want only the new path", with, err)
+	}
+	without, err := ChangedFilesNoRenames(h)
+	if err != nil || !sameSet(without, []string{"old.go", "new.go"}) {
+		t.Errorf("ChangedFilesNoRenames = %v, %v, want both paths", without, err)
+	}
+	if _, err := ChangedFilesNoRenames("--output=/tmp/pwn"); err == nil {
+		t.Error("an option-looking hash was accepted")
 	}
 }

@@ -72,3 +72,84 @@ func TestReadFileRefusesAbsoluteLinkOut(t *testing.T) {
 		t.Fatal("ReadFile followed a link out of the directory")
 	}
 }
+
+// os.Root follows a link that stays inside the root, so a link planted in the
+// directory used to turn a routine rewrite of a rendered file into an overwrite
+// of something else in there: `CHANGES.md -> store.db` destroyed the change log.
+func TestWriteFileRefusesToWriteThroughALink(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "store.db")
+	if err := os.WriteFile(victim, []byte("ORIGINAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("store.db", filepath.Join(dir, "CHANGES.md")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	os.Symlink("nowhere-at-all", filepath.Join(dir, "dangling.md"))
+	os.Symlink("real", filepath.Join(dir, "linked-dir"))
+	os.Symlink("..", filepath.Join(dir, "up"))
+
+	for name, rel := range map[string]string{
+		"link to a file":   "CHANGES.md",
+		"dangling link":    "dangling.md",
+		"link as a parent": "linked-dir/x.md",
+		"link to a parent": "up/x.md",
+		"nested link":      "linked-dir/deeper/x.md",
+	} {
+		if err := WriteFile(dir, rel, []byte("overwritten"), 0o755, 0o644); err == nil {
+			t.Errorf("%s: wrote through the link", name)
+		}
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "ORIGINAL" {
+		t.Errorf("the file behind a link was changed: %q", b)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "real")); len(entries) != 0 {
+		t.Errorf("a file landed in the directory a link points at: %v", entries)
+	}
+}
+
+func TestWriteFileStillWritesOrdinaryFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, rel := range []string{"a.md", "sub/b.md", "sub/deeper/c.md", "a.md"} { // a.md twice: overwrite
+		if err := WriteFile(dir, rel, []byte("x "+rel), 0o755, 0o644); err != nil {
+			t.Errorf("%s: %v", rel, err)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "sub", "deeper", "c.md")); string(b) != "x sub/deeper/c.md" {
+		t.Errorf("nested write: %q", b)
+	}
+}
+
+// A hard link is a regular file, so no Lstat can tell it from any other: a second
+// name for a state file reads like an ordinary file of whatever name it is given.
+func TestReadSingleLinkFileRefusesAHardLink(t *testing.T) {
+	dir := t.TempDir()
+	orig := filepath.Join(dir, "secret.txt")
+	if err := os.WriteFile(orig, []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	if b, err := ReadSingleLinkFileIn(r, "secret.txt", 100); err != nil || string(b) != "SECRET" {
+		t.Fatalf("a file with one name: %q, %v", b, err)
+	}
+	if err := os.Link(orig, filepath.Join(dir, "alias.md")); err != nil {
+		t.Skipf("cannot create hard links here: %v", err)
+	}
+	for _, name := range []string{"alias.md", "secret.txt"} { // both names of the same file
+		if _, err := ReadSingleLinkFileIn(r, name, 100); err == nil {
+			t.Errorf("read %s, which has two names", name)
+		}
+	}
+	// The plain reader is unchanged: only callers that ask for the check get it.
+	if b, err := ReadFileIn(r, "alias.md", 100); err != nil || string(b) != "SECRET" {
+		t.Errorf("ReadFileIn changed behavior: %q, %v", b, err)
+	}
+}

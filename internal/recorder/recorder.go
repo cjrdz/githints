@@ -108,6 +108,12 @@ func Record(st *store.Store, root string, key []byte, in Input) error {
 	return err
 }
 
+// RecordChange is Record that also returns the stored row, whose ID is what
+// RecordOutcome needs later.
+func RecordChange(st *store.Store, root string, key []byte, in Input) (store.Change, error) {
+	return record(st, root, key, in, true)
+}
+
 // BatchRecord inserts multiple changes and renders each affected file and
 // the changelog exactly once. Use this from the record_batch MCP tool to
 // avoid N redundant render passes.
@@ -126,6 +132,7 @@ func BatchRecord(st *store.Store, root string, key []byte, inputs []Input) error
 	// Validate and enrich every row before opening the transaction: prepare
 	// shells out to git, which has no business running with a write lock held.
 	rows := make([]store.Change, len(inputs))
+	stamped := make([]bool, len(inputs))
 	files := make(map[string]struct{}, len(inputs))
 	for i, in := range inputs {
 		c, err := prepare(st, in)
@@ -133,6 +140,7 @@ func BatchRecord(st *store.Store, root string, key []byte, inputs []Input) error
 			return fmt.Errorf("changes[%d]: %w", i, err)
 		}
 		rows[i] = c
+		stamped[i] = in.RecordedAt == 0
 		files[c.FilePath] = struct{}{}
 	}
 
@@ -141,7 +149,17 @@ func BatchRecord(st *store.Store, root string, key []byte, inputs []Input) error
 		if err != nil {
 			return fmt.Errorf("last hmac: %w", err)
 		}
+		floor, err := store.LastRecordedAtTx(tx)
+		if err != nil {
+			return err
+		}
 		for i := range rows {
+			// Same rule as InsertSigned: a time chosen before the lock was
+			// taken must not land behind the row before it.
+			if stamped[i] && rows[i].RecordedAt < floor {
+				rows[i].RecordedAt = floor
+			}
+			floor = rows[i].RecordedAt
 			if key != nil {
 				rows[i].PrevHMAC = prev
 				h, err := integrity.ComputeHMAC(key, rows[i])
@@ -249,7 +267,7 @@ func prepare(st *store.Store, in Input) (store.Change, error) {
 	}
 
 	if in.RecordedAt == 0 {
-		in.RecordedAt = time.Now().Unix()
+		in.RecordedAt = timeNow()
 	}
 
 	return store.Change{
@@ -270,24 +288,18 @@ func prepare(st *store.Store, in Input) (store.Change, error) {
 // record is the shared implementation. When render is false it skips the
 // markdown rendering so callers can batch render themselves.
 func record(st *store.Store, root string, key []byte, in Input, render bool) (store.Change, error) {
+	stamped := in.RecordedAt == 0
 	c, err := prepare(st, in)
 	if err != nil {
 		return store.Change{}, err
 	}
 
+	var sign func(store.Change) (string, error)
 	if key != nil {
-		prev, err := st.LastHMAC()
-		if err != nil {
-			return store.Change{}, fmt.Errorf("last hmac: %w", err)
-		}
-		c.PrevHMAC = prev
-		c.HMAC, err = integrity.ComputeHMAC(key, c)
-		if err != nil {
-			return store.Change{}, err
-		}
+		sign = func(c store.Change) (string, error) { return integrity.ComputeHMAC(key, c) }
 	}
-
-	if _, err := st.Insert(c); err != nil {
+	c, err = st.InsertSigned(c, sign, stamped)
+	if err != nil {
 		return store.Change{}, fmt.Errorf("insert: %w", err)
 	}
 
@@ -301,3 +313,6 @@ func record(st *store.Store, root string, key []byte, in Input, render bool) (st
 	}
 	return c, nil
 }
+
+// timeNow is the stamp for rows the recorder dates itself.
+func timeNow() int64 { return time.Now().Unix() }

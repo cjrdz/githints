@@ -386,10 +386,26 @@ type hmacPayload struct {
 	AgentID            string `json:"agent_id"`
 	RecordedAt         int64  `json:"recorded_at"`
 	ClockTamperWarning bool   `json:"clock_tamper_warning"`
+
+	// The outcome fields come last and are omitted when empty, so an ordinary
+	// change marshals to exactly the bytes it always did. Anything added here
+	// must do the same: TestHMACPayloadBytesAreFrozen guards it.
+	Kind           string `json:"kind,omitempty"`
+	TargetID       int64  `json:"target_id,omitempty"`
+	TargetDiffHash string `json:"target_diff_hash,omitempty"`
+	Outcome        string `json:"outcome,omitempty"`
 }
 
 func payloadFromChange(c store.Change) hmacPayload {
+	kind := c.Kind
+	if kind == store.KindChange {
+		kind = "" // the default is not written, see hmacPayload
+	}
 	return hmacPayload{
+		Kind:               kind,
+		TargetID:           c.TargetID,
+		TargetDiffHash:     c.TargetDiffHash,
+		Outcome:            c.OutcomeState,
 		PrevHMAC:           c.PrevHMAC,
 		FilePath:           c.FilePath,
 		Branch:             c.Branch,
@@ -500,6 +516,39 @@ func VerifyChain(key []byte, rows []store.Change) []IntegrityError {
 		}
 
 		prev = c
+	}
+	return append(errs, verifyOutcomes(rows)...)
+}
+
+// ProblemOutcomeTarget is the Problem of an outcome row that does not point at
+// an earlier recorded change.
+const ProblemOutcomeTarget = "outcome does not reference an earlier recorded change"
+
+// verifyOutcomes checks what the HMAC cannot: that an outcome row refers to a
+// row that exists, is a change, came before it, and had the diff_hash the
+// outcome says it had. The HMAC proves the row was not edited; this proves
+// the thing it points at was not swapped out underneath it.
+func verifyOutcomes(rows []store.Change) []IntegrityError {
+	var errs []IntegrityError
+	byID := make(map[int64]store.Change, len(rows))
+	for _, c := range rows {
+		byID[c.ID] = c
+	}
+	for _, c := range rows {
+		if c.Kind != store.KindOutcome {
+			continue
+		}
+		if !store.ValidOutcome(c.OutcomeState) {
+			errs = append(errs, IntegrityError{ID: c.ID, Problem: fmt.Sprintf("outcome row has unknown state %q", c.OutcomeState)})
+		}
+		t, ok := byID[c.TargetID]
+		if !ok || t.ID >= c.ID || t.Kind == store.KindOutcome {
+			errs = append(errs, IntegrityError{ID: c.ID, Problem: ProblemOutcomeTarget})
+			continue
+		}
+		if t.DiffHash != c.TargetDiffHash {
+			errs = append(errs, IntegrityError{ID: c.ID, Problem: fmt.Sprintf("outcome was recorded against a different diff than change %d now has", t.ID)})
+		}
 	}
 	return errs
 }

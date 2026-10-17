@@ -8,8 +8,14 @@ import (
 	"fmt"
 	"strings"
 
+	"os"
+
+	"github.com/cjrdz/githints/internal/brief"
 	"github.com/cjrdz/githints/internal/cli/core"
+	"github.com/cjrdz/githints/internal/config"
 	"github.com/cjrdz/githints/internal/gitutil"
+	"github.com/cjrdz/githints/internal/index"
+	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/llm"
 	"github.com/cjrdz/githints/internal/mcpserver"
 	"github.com/cjrdz/githints/internal/recorder"
@@ -186,5 +192,42 @@ func Changes(args []string) error {
 		return fmt.Errorf("query: %w", err)
 	}
 	core.PrintChanges(changes, "no changes in range", false)
+	return nil
+}
+
+// Brief prints the session-start digest: failed attempts, uncommitted work,
+// recent commits, blast radius and co-changing files, within a token budget.
+// It is the shell twin of the digest get_session_context returns.
+func Brief(args []string) error {
+	fs := flag.NewFlagSet("brief", flag.ExitOnError)
+	budget := fs.Int("budget", brief.DefaultBudgetTokens,
+		fmt.Sprintf("approximate token budget (%d-%d)", brief.MinBudgetTokens, brief.MaxBudgetTokens))
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	root, st, err := core.OpenInitialized()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	// The index is optional, and opening one that does not exist would create
+	// it, so only an existing file is opened.
+	var idx, notesDB *index.Store
+	if fi, err := os.Lstat(lang.IndexDBPath(root)); err == nil && fi.Mode().IsRegular() {
+		if db, err := index.Open(lang.IndexDBPath(root)); err == nil {
+			defer db.Close()
+			notesDB = db // the notes' tables are here whether or not indexing is on
+			if cfg, err := config.Load(root); err == nil && cfg.Index.Enabled {
+				idx = db
+			}
+		}
+	}
+
+	out, err := brief.Build(st, idx, brief.Options{BudgetTokens: *budget, Root: root, Notes: notesDB})
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
 	return nil
 }

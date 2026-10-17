@@ -59,7 +59,12 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   `.githints/` itself, not the repository root: anchored at the root, a
   committed relative link `.githints/up -> ..` let `record_change` overwrite
   `CLAUDE.md`. The incremental scan `Lstat`s through an `os.Root` (plain
-  `os.Stat` followed links and indexed files outside the repo).
+  `os.Stat` followed links and indexed files outside the repo). `os.Root` also
+  follows a link that stays *inside* the root, so `safefs.WriteFileIn` `Lstat`s
+  the target and every directory on the way and refuses a link: `CHANGES.md ->
+  store.db`, which a clone can ship in shared mode, used to destroy the change
+  log on the next record. Every write into `.githints/` goes through it; do not
+  add one that does not.
 - **`verify` checks the Merkle anchors.** The HMAC chain cannot see deleted
   tail rows or a log re-signed with the salt; the notes in `refs/notes/githints`
   are the check, and nothing read them until v2 anchors. The per-commit root
@@ -70,6 +75,28 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   names and symbol names reach markdown, terminals, MCP output and the graph
   viewer only through it. Record-time sanitizing runs *before* the secret scan;
   a zero-width space used to hide a key from it.
+- **A note is a plain file or it is not read.** `internal/notes` `Lstat`s every
+  note and the `notes/` directory itself. `safefs.ReadFileIn` follows a link that
+  stays inside `.githints/`, so `notes/x.md -> ../store.db` would otherwise be
+  indexed and served as a note. Notes are outside the HMAC chain, say so wherever
+  they are shown, and are scanned for credentials *after* control characters are
+  stripped and the raw tags *before* they are lowercased, and the index is never
+  believed over the file (`Recheck`). A note with more than one hard link is
+  refused too. `FuzzParse` and
+  `TestSymlinkedNotesAreNotRead` exist for this; the front matter stays a
+  hand-written subset, never a YAML library.
+- **Compare identity, not paths, wherever a link could change the answer.** Since
+  Go 1.23 `filepath.EvalSymlinks` does not resolve a Windows junction, so a
+  resolved-path check passes `junction\x` where the junction points at
+  `.githints/`. `os.SameFile` on the path and each ancestor does not care how the
+  directory was reached. Anything that guards by location needs a Windows run.
+- **An export is built from queries, never by copying `.githints/`.** That
+  directory holds the salt, `repo-id` and the databases. `internal/export` writes
+  only into a new or empty directory (`O_EXCL` through an `os.Root`), neutralizes
+  CSV cells that would run as formulas, keeps every log string out of the DuckDB
+  script, and puts no salt and no path of this machine in the manifest (an error
+  message can name one, so the manifest uses fixed text).
+  `TestExportContainsNoSaltAndNoMachinePaths` plants a salt and walks the pack.
 - **State from a clone is refused.** A git-tracked `store.db`, `index.db` or
   legacy `.salt` is rejected and a tracked `repo-id` ignored; both databases
   open with `trusted_schema=OFF` through the DSN (an `Exec` reaches only one
@@ -131,6 +158,12 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   and a test asserts rows were written in walk order.
 
 ### Conventions specific to this codebase
+
+- **Keep `CHANGELOG.md` current.** A user-visible change (a command, an MCP tool, a
+  format, a behavior, a fix, a security fix) gets a line under `Unreleased`, and
+  anything an upgrade needs from the user goes under "Upgrade notes". Release notes
+  are built from commit subjects, so a large change committed as one `feat:` is a
+  single line there; the changelog and the tag body carry the detail.
 
 - Tests use the standard library `testing` only — no testify, no fixtures,
   despite testify appearing in `go.sum` as a transitive dependency.

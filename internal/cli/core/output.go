@@ -23,7 +23,11 @@ func PrintChanges(changes []store.Change, empty string, withReason bool) {
 	}
 	for _, c := range changes {
 		when := time.Unix(c.RecordedAt, 0).Format(time.RFC3339)
-		fmt.Fprintf(os.Stdout, "[%s] %s (%s", when, textsafe.OneLine(c.FilePath), c.Source)
+		fmt.Fprintf(os.Stdout, "[%s] ", when)
+		if c.ID > 0 {
+			fmt.Fprintf(os.Stdout, "#%d ", c.ID) // what `githints outcome -id` takes
+		}
+		fmt.Fprintf(os.Stdout, "%s (%s", textsafe.OneLine(c.FilePath), c.Source)
 		if c.AgentID != "" {
 			fmt.Fprintf(os.Stdout, ", %s", textsafe.OneLine(c.AgentID))
 		}
@@ -33,6 +37,16 @@ func PrintChanges(changes []store.Change, empty string, withReason bool) {
 		fmt.Fprintf(os.Stdout, ", %s): %s\n", ShortCommitHash(c.CommitHash), textsafe.OneLine(c.Summary))
 		if withReason && c.Reason != "" {
 			fmt.Fprintf(os.Stdout, "    why: %s\n", textsafe.OneLine(c.Reason))
+		}
+		if o := c.LatestOutcome; o != nil {
+			fmt.Fprintf(os.Stdout, "    outcome: %s", textsafe.OneLine(o.OutcomeState))
+			if o.Source != "agent" {
+				fmt.Fprint(os.Stdout, " (auto-detected)")
+			}
+			if o.Summary != "" {
+				fmt.Fprintf(os.Stdout, " — %s", textsafe.OneLine(o.Summary))
+			}
+			fmt.Fprintln(os.Stdout)
 		}
 	}
 }

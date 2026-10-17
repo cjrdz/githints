@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,7 +58,51 @@ type Change struct {
 	PrevHMAC           string
 	ClockTamperWarning bool
 	CreatedAt          string
+
+	// Kind is KindChange for a recorded edit and KindOutcome for a later
+	// statement about one. An outcome row names its target by id; the target's
+	// diff_hash at that time rides along so a mismatch is detectable. These
+	// four fields are signed (see integrity.hmacPayload) and omitted from the
+	// payload for ordinary changes, so rows written before they existed keep
+	// verifying.
+	Kind           string
+	TargetID       int64
+	TargetDiffHash string
+	OutcomeState   string
+
+	// LatestOutcome is display-only: the newest outcome row recorded for this
+	// change, attached by the readers that list changes. It is never stored
+	// or signed.
+	LatestOutcome *Change
 }
+
+// Row kinds.
+const (
+	KindChange  = "change"
+	KindOutcome = "outcome"
+)
+
+// Outcome states, in the order they are documented to agents.
+const (
+	OutcomeWorked   = "worked"
+	OutcomePartial  = "partial"
+	OutcomeFailed   = "failed"
+	OutcomeReverted = "reverted"
+	OutcomeUnknown  = "unknown"
+)
+
+// ValidOutcome reports whether s is a state an outcome row may carry.
+func ValidOutcome(s string) bool {
+	switch s {
+	case OutcomeWorked, OutcomePartial, OutcomeFailed, OutcomeReverted, OutcomeUnknown:
+		return true
+	}
+	return false
+}
+
+// changeColumns is the one column list every reader selects, in the order
+// scanChanges reads it. Queries alias the table as c.
+const changeColumns = `c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at, c.kind, c.target_id, c.target_diff_hash, c.outcome`
 
 const schema = `
 CREATE TABLE IF NOT EXISTS changes (
@@ -93,7 +138,12 @@ CREATE TABLE IF NOT EXISTS githints_meta (
 );
 `
 
-// migrations runs additive ALTER statements that are safe to re-apply.
+// migrations runs additive ALTER statements that are safe to re-apply. They
+// run on every Open, and the hook and the MCP server open the same file at the
+// same time, so nothing here may take something away from other connections
+// even for a moment. (The legacy source rebuild used to live here and ran on
+// every open; a writer that landed between its DROP and RENAME saw a table
+// with no source column. It is now migrateLegacySource.)
 // Each is guarded so it only adds the column if it is missing, which keeps
 // existing stores upgradeable without a separate migration framework.
 // The branch index lives here (not in schema) so it is only created once
@@ -111,10 +161,11 @@ CREATE INDEX IF NOT EXISTS idx_changes_recorded ON changes(recorded_at);
 ALTER TABLE changes ADD COLUMN diff_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE changes ADD COLUMN clock_tamper_warning INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS githints_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-ALTER TABLE changes ADD COLUMN source_new TEXT NOT NULL DEFAULT 'fallback';
-UPDATE changes SET source_new = CASE WHEN source = 'hook' THEN 'fallback' ELSE source END;
-ALTER TABLE changes DROP COLUMN source;
-ALTER TABLE changes RENAME COLUMN source_new TO source;
+ALTER TABLE changes ADD COLUMN kind TEXT NOT NULL DEFAULT 'change';
+ALTER TABLE changes ADD COLUMN target_id INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE changes ADD COLUMN target_diff_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE changes ADD COLUMN outcome TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_changes_target ON changes(target_id);
 `
 
 // pragma sets the connection-level options that make SQLite safe for the
@@ -149,7 +200,14 @@ func Open(path string) (*Store, error) {
 	// trusted_schema=OFF on every pooled connection (a DSN pragma, not an
 	// Exec, which would reach only one): functions with side effects cannot
 	// be invoked from triggers or views stored in the schema itself.
-	db, err := sql.Open("sqlite", path+"?_pragma=trusted_schema(0)")
+	//
+	// busy_timeout and synchronous are DSN pragmas for the same reason: the
+	// Exec below reaches one pooled connection, and a connection without a
+	// timeout fails at once with "database is locked" instead of waiting.
+	// _txlock=immediate makes every transaction take the write lock when it
+	// begins, so a read-then-write sequence (WithTx) cannot be overtaken
+	// between the read and the write.
+	db, err := sql.Open("sqlite", path+"?_pragma=trusted_schema(0)&_pragma=busy_timeout(5000)&_pragma=synchronous(1)&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -221,7 +279,51 @@ func applyMigrations(db *sql.DB) error {
 			}
 		}
 	}
+	if err := migrateLegacySource(db); err != nil {
+		return fmt.Errorf("migrate legacy source column: %w", err)
+	}
 	return nil
+}
+
+// legacySourceCheck matches the constraint early stores put on the source
+// column, which allowed only 'agent' and 'hook'.
+var legacySourceCheck = regexp.MustCompile(`(?i)CHECK\s*\(\s*source\s+IN`)
+
+// migrateLegacySource upgrades a store whose source column still carries the
+// old CHECK constraint and may hold 'hook' rows, which are now 'fallback'.
+// SQLite cannot drop a constraint in place, so the column is rebuilt. That
+// happens only while the constraint is present, and inside one transaction:
+// DDL is transactional in SQLite, so no other connection ever sees the table
+// without its source column. On a current store this is a read and a no-op.
+func migrateLegacySource(db *sql.DB) error {
+	var ddl string
+	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'changes'`).Scan(&ddl)
+	if err != nil {
+		return err
+	}
+	if legacySourceCheck.MatchString(ddl) {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		for _, stmt := range []string{
+			`ALTER TABLE changes ADD COLUMN source_new TEXT NOT NULL DEFAULT 'fallback'`,
+			`UPDATE changes SET source_new = CASE WHEN source = 'hook' THEN 'fallback' ELSE source END`,
+			`ALTER TABLE changes DROP COLUMN source`,
+			`ALTER TABLE changes RENAME COLUMN source_new TO source`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				_ = tx.Rollback() // the statement's error is the one worth reporting
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	// A store without the constraint can still hold 'hook' rows.
+	_, err = db.Exec(`UPDATE changes SET source = 'fallback' WHERE source = 'hook'`)
+	return err
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -297,15 +399,23 @@ func (s *Store) Insert(c Change) (int64, error) {
 	}
 
 	res, err := s.db.Exec(
-		`INSERT INTO changes (file_path, commit_hash, branch, source, summary, reason, diff_stat, diff_hash, agent_id, recorded_at, hmac, prev_hmac, clock_tamper_warning)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO changes (file_path, commit_hash, branch, source, summary, reason, diff_stat, diff_hash, agent_id, recorded_at, hmac, prev_hmac, clock_tamper_warning, kind, target_id, target_diff_hash, outcome)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.FilePath, c.CommitHash, c.Branch, c.Source, c.Summary, c.Reason, c.DiffStat, c.DiffHash,
 		c.AgentID, c.RecordedAt, c.HMAC, c.PrevHMAC, boolToInt(c.ClockTamperWarning),
+		kindOrDefault(c.Kind), c.TargetID, c.TargetDiffHash, c.OutcomeState,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert change: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+func kindOrDefault(k string) string {
+	if k == "" {
+		return KindChange
+	}
+	return k
 }
 
 func boolToInt(b bool) int {
@@ -317,16 +427,17 @@ func boolToInt(b bool) int {
 
 // FileHistory returns the most recent changes for one file, newest first.
 // Ordering is by recorded_at (Go-managed, monotonically checked) then id.
-const noDuplicateFallback = `NOT (c.source = 'fallback' AND EXISTS (
+const noDuplicateFallback = `c.kind = 'change' AND NOT (c.source = 'fallback' AND EXISTS (
 	SELECT 1 FROM changes AS c2
 	WHERE c2.file_path = c.file_path
 	  AND c2.commit_hash = c.commit_hash
 	  AND c2.source = 'agent'
+	  AND c2.kind = 'change'
 ))`
 
 func (s *Store) FileHistory(filePath string, limit int) ([]Change, error) {
-	return s.query(
-		`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+	return s.queryWithOutcomes(
+		`SELECT `+changeColumns+`
 		 FROM changes AS c
 		 WHERE c.file_path = ? AND `+noDuplicateFallback+`
 		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
@@ -336,8 +447,8 @@ func (s *Store) FileHistory(filePath string, limit int) ([]Change, error) {
 
 // RecentChanges returns the most recent changes across the whole repo.
 func (s *Store) RecentChanges(limit int) ([]Change, error) {
-	return s.query(
-		`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+	return s.queryWithOutcomes(
+		`SELECT `+changeColumns+`
 		 FROM changes AS c
 		 WHERE `+noDuplicateFallback+`
 		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
@@ -347,8 +458,8 @@ func (s *Store) RecentChanges(limit int) ([]Change, error) {
 
 // Search runs an FTS5 query over summary + reason text.
 func (s *Store) Search(query string, limit int) ([]Change, error) {
-	return s.query(
-		`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+	return s.queryWithOutcomes(
+		`SELECT `+changeColumns+`
 		 FROM changes_fts f
 		 JOIN changes c ON c.id = f.rowid
 		 WHERE changes_fts MATCH ? AND `+noDuplicateFallback+`
@@ -361,16 +472,16 @@ func (s *Store) Search(query string, limit int) ([]Change, error) {
 // (inclusive), optionally filtered to one file. Newest first.
 func (s *Store) ChangesInRange(since, until int64, filePath string, limit int) ([]Change, error) {
 	if filePath != "" {
-		return s.query(
-			`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+		return s.queryWithOutcomes(
+			`SELECT `+changeColumns+`
 		     FROM changes AS c
 		     WHERE c.file_path = ? AND c.recorded_at >= ? AND c.recorded_at <= ? AND `+noDuplicateFallback+`
 		     ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
 			filePath, since, until, limit,
 		)
 	}
-	return s.query(
-		`SELECT c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at
+	return s.queryWithOutcomes(
+		`SELECT `+changeColumns+`
 		 FROM changes AS c
 		 WHERE c.recorded_at >= ? AND c.recorded_at <= ? AND `+noDuplicateFallback+`
 		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
@@ -381,8 +492,8 @@ func (s *Store) ChangesInRange(since, until int64, filePath string, limit int) (
 // ChangesForCommit returns all rows associated with one commit hash.
 func (s *Store) ChangesForCommit(commitHash string) ([]Change, error) {
 	return s.query(
-		`SELECT id, file_path, COALESCE(commit_hash,''), COALESCE(branch,''), source, summary, COALESCE(reason,''), COALESCE(diff_stat,''), COALESCE(diff_hash,''), COALESCE(agent_id,''), recorded_at, COALESCE(hmac,''), COALESCE(prev_hmac,''), clock_tamper_warning, created_at
-		 FROM changes WHERE commit_hash = ? ORDER BY id ASC`,
+		`SELECT `+changeColumns+`
+		 FROM changes AS c WHERE c.commit_hash = ? ORDER BY c.id ASC`,
 		commitHash,
 	)
 }
@@ -391,8 +502,8 @@ func (s *Store) ChangesForCommit(commitHash string) ([]Change, error) {
 // Used for HMAC verification and Merkle-root computation.
 func (s *Store) AllChanges() ([]Change, error) {
 	return s.query(
-		`SELECT id, file_path, COALESCE(commit_hash,''), COALESCE(branch,''), source, summary, COALESCE(reason,''), COALESCE(diff_stat,''), COALESCE(diff_hash,''), COALESCE(agent_id,''), recorded_at, COALESCE(hmac,''), COALESCE(prev_hmac,''), clock_tamper_warning, created_at
-		 FROM changes ORDER BY id ASC`,
+		`SELECT ` + changeColumns + `
+		 FROM changes AS c ORDER BY c.id ASC`,
 	)
 }
 
@@ -403,11 +514,181 @@ func (s *Store) HasPendingAgentRecord(filePath string) (bool, error) {
 	var n int
 	err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM changes
-		 WHERE file_path = ? AND source = 'agent'
+		 WHERE file_path = ? AND source = 'agent' AND kind = 'change'
 		   AND (commit_hash = '' OR commit_hash IS NULL)`,
 		filePath,
 	).Scan(&n)
 	return n > 0, err
+}
+
+// queryWithOutcomes is query plus the newest outcome for each row returned.
+func (s *Store) queryWithOutcomes(q string, args ...any) ([]Change, error) {
+	changes, err := s.query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	return changes, s.attachOutcomes(changes)
+}
+
+// attachOutcomes sets LatestOutcome on every change that has an outcome row.
+// Outcome rows are append-only, so the newest (highest id) wins; an agent that
+// finds out a change actually failed records a new outcome rather than editing
+// the old one.
+func (s *Store) attachOutcomes(changes []Change) error {
+	if len(changes) == 0 {
+		return nil
+	}
+	idx := make(map[int64][]int, len(changes))
+	args := make([]any, 0, len(changes))
+	marks := make([]string, 0, len(changes))
+	for i, c := range changes {
+		if _, seen := idx[c.ID]; !seen {
+			args = append(args, c.ID)
+			marks = append(marks, "?")
+		}
+		idx[c.ID] = append(idx[c.ID], i)
+	}
+	outs, err := s.query(
+		`SELECT `+changeColumns+`
+		 FROM changes AS c
+		 WHERE c.kind = 'outcome' AND c.target_id IN (`+strings.Join(marks, ",")+`)
+		 ORDER BY c.id ASC`,
+		args...,
+	)
+	if err != nil {
+		return err
+	}
+	for _, o := range outs {
+		for _, i := range idx[o.TargetID] {
+			o := o
+			changes[i].LatestOutcome = &o
+		}
+	}
+	return nil
+}
+
+// FailedAttempts returns the changes whose newest outcome is failed, partial or
+// reverted, most recently judged first, each with that outcome attached. A
+// change later marked worked drops out: only the latest word counts.
+func (s *Store) FailedAttempts(limit int) ([]Change, error) {
+	latest, err := s.query(
+		`SELECT `+changeColumns+`
+		 FROM changes AS c
+		 WHERE c.kind = 'outcome'
+		   AND c.outcome IN ('failed', 'partial', 'reverted')
+		   AND c.id = (SELECT MAX(o.id) FROM changes AS o WHERE o.kind = 'outcome' AND o.target_id = c.target_id)
+		 ORDER BY c.id DESC LIMIT ?`,
+		limit,
+	)
+	if err != nil || len(latest) == 0 {
+		return nil, err
+	}
+	out := make([]Change, 0, len(latest))
+	for i := range latest {
+		target, ok, err := s.GetChange(latest[i].TargetID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || target.Kind != KindChange {
+			continue
+		}
+		target.LatestOutcome = &latest[i]
+		out = append(out, target)
+	}
+	return out, nil
+}
+
+// PendingChanges returns the newest changes no commit has claimed yet.
+func (s *Store) PendingChanges(limit int) ([]Change, error) {
+	return s.query(
+		`SELECT `+changeColumns+`
+		 FROM changes AS c
+		 WHERE c.kind = 'change' AND (c.commit_hash = '' OR c.commit_hash IS NULL)
+		 ORDER BY c.id DESC LIMIT ?`,
+		limit,
+	)
+}
+
+// RecentCommitHashes returns the commits that most recently got recorded
+// changes, newest first.
+func (s *Store) RecentCommitHashes(limit int) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT c.commit_hash FROM changes AS c
+		 WHERE c.kind = 'change' AND c.commit_hash != ''
+		 GROUP BY c.commit_hash ORDER BY MAX(c.id) DESC LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("recent commits: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, fmt.Errorf("scan commit: %w", err)
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// CoChange is a file that keeps showing up in the same commits as another.
+type CoChange struct {
+	FilePath string
+	Commits  int
+}
+
+// CoChangingFiles returns the files recorded in the most commits that also
+// changed filePath, most often first. It reads only recorded commits, so it
+// reflects what the hook saw, not the whole of git history.
+func (s *Store) CoChangingFiles(filePath string, limit int) ([]CoChange, error) {
+	rows, err := s.db.Query(
+		`SELECT c2.file_path, COUNT(DISTINCT c2.commit_hash) AS n
+		 FROM changes AS c1
+		 JOIN changes AS c2 ON c2.commit_hash = c1.commit_hash AND c2.file_path != c1.file_path
+		 WHERE c1.file_path = ? AND c1.kind = 'change' AND c2.kind = 'change' AND c1.commit_hash != ''
+		 GROUP BY c2.file_path
+		 ORDER BY n DESC, c2.file_path ASC LIMIT ?`,
+		filePath, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("co-changing files: %w", err)
+	}
+	defer rows.Close()
+	var out []CoChange
+	for rows.Next() {
+		var c CoChange
+		if err := rows.Scan(&c.FilePath, &c.Commits); err != nil {
+			return nil, fmt.Errorf("scan co-change: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// OutcomesFor returns every outcome row recorded for one change, oldest first.
+func (s *Store) OutcomesFor(targetID int64) ([]Change, error) {
+	return s.query(
+		`SELECT `+changeColumns+`
+		 FROM changes AS c
+		 WHERE c.kind = 'outcome' AND c.target_id = ?
+		 ORDER BY c.id ASC`,
+		targetID,
+	)
+}
+
+// GetChange returns one row by id, whatever its kind. ok is false when no
+// such row exists.
+func (s *Store) GetChange(id int64) (c Change, ok bool, err error) {
+	rows, err := s.query(`SELECT `+changeColumns+` FROM changes AS c WHERE c.id = ?`, id)
+	if err != nil {
+		return Change{}, false, err
+	}
+	if len(rows) == 0 {
+		return Change{}, false, nil
+	}
+	return rows[0], true, nil
 }
 
 func (s *Store) query(q string, args ...any) ([]Change, error) {
@@ -428,6 +709,7 @@ func scanChanges(rows *sql.Rows) ([]Change, error) {
 			&c.ID, &c.FilePath, &c.CommitHash, &c.Branch, &c.Source,
 			&c.Summary, &c.Reason, &c.DiffStat, &c.DiffHash, &c.AgentID,
 			&c.RecordedAt, &c.HMAC, &c.PrevHMAC, &warning, &c.CreatedAt,
+			&c.Kind, &c.TargetID, &c.TargetDiffHash, &c.OutcomeState,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
@@ -435,6 +717,56 @@ func scanChanges(rows *sql.Rows) ([]Change, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// InsertSigned links c into the HMAC chain and inserts it as one atomic step.
+// sign receives c with PrevHMAC already set to the newest row's hmac and
+// returns the row's hmac; nil leaves the row unsigned and unlinked.
+//
+// Reading the predecessor and inserting must not be separate statements: two
+// writers (the MCP server, the post-commit hook, the CLI) could both read the
+// same predecessor and sign against it, forking the chain. The transaction
+// takes the write lock up front (see the _txlock DSN parameter in Open), so
+// the second writer waits for the first to commit and then sees its row.
+// sign runs with that lock held and must not shell out.
+//
+// stamped says the caller chose c.RecordedAt itself (it is "now", not a value
+// someone supplied). Such a time was taken before the lock was acquired, so a
+// writer that waited can land behind a row stamped a moment later; VerifyChain
+// would read that as a backwards clock. It is raised to the previous row's
+// time, inside the transaction and before signing. A supplied time is kept
+// as given: lowering or raising it would hide exactly what that check is for.
+func (s *Store) InsertSigned(c Change, sign func(Change) (string, error), stamped bool) (Change, error) {
+	err := s.WithTx(func(tx *sql.Tx) error {
+		if stamped {
+			last, err := LastRecordedAtTx(tx)
+			if err != nil {
+				return err
+			}
+			if c.RecordedAt < last {
+				c.RecordedAt = last
+			}
+		}
+		if sign != nil {
+			prev, err := LastHMACTx(tx)
+			if err != nil {
+				return err
+			}
+			c.PrevHMAC = prev
+			if c.HMAC, err = sign(c); err != nil {
+				return err
+			}
+		}
+		id, err := InsertTx(tx, c)
+		if err != nil {
+			return err
+		}
+		c.ID = id
+		// InsertTx records the row's own timestamp; keep the mark monotonic
+		// like Insert does so an older recorded_at cannot lower it.
+		return metaSet(tx, "last_recorded_at", strconv.FormatInt(s.advanceClock(c.RecordedAt), 10))
+	})
+	return c, err
 }
 
 // WithTx runs fn inside a SQLite transaction. It is the building block for
@@ -464,10 +796,11 @@ func (s *Store) WithTx(fn func(*sql.Tx) error) error {
 // normal agent recordings and InsertTx only inside the post-commit hook.
 func InsertTx(tx *sql.Tx, c Change) (int64, error) {
 	res, err := tx.Exec(
-		`INSERT INTO changes (file_path, commit_hash, branch, source, summary, reason, diff_stat, diff_hash, agent_id, recorded_at, hmac, prev_hmac, clock_tamper_warning)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO changes (file_path, commit_hash, branch, source, summary, reason, diff_stat, diff_hash, agent_id, recorded_at, hmac, prev_hmac, clock_tamper_warning, kind, target_id, target_diff_hash, outcome)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.FilePath, c.CommitHash, c.Branch, c.Source, c.Summary, c.Reason, c.DiffStat, c.DiffHash,
 		c.AgentID, c.RecordedAt, c.HMAC, c.PrevHMAC, boolToInt(c.ClockTamperWarning),
+		kindOrDefault(c.Kind), c.TargetID, c.TargetDiffHash, c.OutcomeState,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert change: %w", err)
@@ -480,8 +813,8 @@ func InsertTx(tx *sql.Tx, c Change) (int64, error) {
 
 func AgentRecordsForCommitTx(tx *sql.Tx, filePath, commitHash string) ([]Change, error) {
 	rows, err := tx.Query(
-		`SELECT id, file_path, COALESCE(commit_hash,''), COALESCE(branch,''), source, summary, COALESCE(reason,''), COALESCE(diff_stat,''), COALESCE(diff_hash,''), COALESCE(agent_id,''), recorded_at, COALESCE(hmac,''), COALESCE(prev_hmac,''), clock_tamper_warning, created_at
-		 FROM changes WHERE file_path = ? AND commit_hash = ? AND source = 'agent'`,
+		`SELECT `+changeColumns+`
+		 FROM changes AS c WHERE c.file_path = ? AND c.commit_hash = ? AND c.source = 'agent' AND c.kind = 'change'`,
 		filePath, commitHash,
 	)
 	if err != nil {
@@ -494,7 +827,7 @@ func AgentRecordsForCommitTx(tx *sql.Tx, filePath, commitHash string) ([]Change,
 func ClaimPendingTx(tx *sql.Tx, filePath, commitHash string) (int64, error) {
 	res, err := tx.Exec(
 		`UPDATE changes SET commit_hash = ?
-		 WHERE file_path = ? AND source = 'agent' AND (commit_hash = '' OR commit_hash IS NULL)`,
+		 WHERE file_path = ? AND source = 'agent' AND kind = 'change' AND (commit_hash = '' OR commit_hash IS NULL)`,
 		commitHash, filePath,
 	)
 	if err != nil {
@@ -516,6 +849,20 @@ func (s *Store) LastHMAC() (string, error) {
 		return "", fmt.Errorf("last hmac: %w", err)
 	}
 	return hmac, nil
+}
+
+// LastRecordedAtTx returns the recorded_at of the newest row by id, or 0 if
+// the table is empty.
+func LastRecordedAtTx(tx *sql.Tx) (int64, error) {
+	var at int64
+	err := tx.QueryRow(`SELECT recorded_at FROM changes ORDER BY id DESC LIMIT 1`).Scan(&at)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("last recorded_at: %w", err)
+	}
+	return at, nil
 }
 
 func LastHMACTx(tx *sql.Tx) (string, error) {
@@ -569,7 +916,7 @@ func (s *Store) MetaSet(key, value string) error {
 func (s *Store) UncommittedCount() (int, error) {
 	var n int
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM changes WHERE commit_hash = '' OR commit_hash IS NULL`,
+		`SELECT COUNT(*) FROM changes WHERE kind = 'change' AND (commit_hash = '' OR commit_hash IS NULL)`,
 	).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("uncommitted count: %w", err)
@@ -579,7 +926,7 @@ func (s *Store) UncommittedCount() (int, error) {
 
 func (s *Store) Count() (int, error) {
 	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM changes`).Scan(&n); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM changes WHERE kind = 'change'`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count changes: %w", err)
 	}
 	return n, nil

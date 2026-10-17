@@ -48,6 +48,13 @@ are vulnerabilities:
   cannot make it read, write or delete outside the tree. Repository files it
   reads (`config.json`, `go.mod`, `tsconfig.json`, `package.json`) are
   size-capped and must be regular files.
+- **A link is never written through.** Every write into `.githints/` refuses a
+  symlink or junction at the target or any parent, and a note may not be a link or
+  a hard link, so a committed `CHANGES.md -> store.db` cannot destroy the change
+  log.
+- **Exports leak nothing of the machine.** `githints export` is built from queries,
+  never by copying `.githints/`, so a pack contains no salt, key, repository id or
+  path of the machine that made it, and it never writes over or into other files.
 - **State from a clone is refused.** A `store.db`, `index.db` or salt that git
   tracks is rejected; a tracked `repo-id` is ignored.
 - **Recorded text cannot become markup, terminal control or code.** Summaries,
@@ -106,6 +113,23 @@ the address actually dialed — and the request path is fixed at `/api/generate`
 so this cannot reach off-box. It can choose *which* local port receives diff
 content, which is enough to fingerprint local services. githints prints a warning
 on stderr when a repo-supplied config enables egress.
+
+**Notes are not integrity-checked.** Nothing signs a note in `.githints/notes/`:
+whoever can write that directory can write a note. githints scans notes for
+credentials, refuses links, bounds them, never renders them as markup and labels
+every listing as unsigned data, but a persuasive note is still text the next model
+reads. The files are markdown, so a previewer or an editor with plugins can fetch
+images or run embedded content from a note you did not write: open untrusted notes
+as text. An export pack carries them verbatim for the same reason, and says so.
+
+**An export pack is a snapshot, not evidence.** It is not signed; its manifest
+hashes only detect accidents. `githints verify` in the repository, and the log
+root in the manifest compared with the newest anchor note, are the checks.
+
+**Mixed versions on one store are not supported.** A version that predates
+outcomes does not know their signed fields, reports those rows as tampered, and an
+old post-commit hook can claim them and write an anchor the new version flags
+permanently. Upgrade every copy together; see the upgrade notes in the [changelog](CHANGELOG.md).
 
 **Prompt injection between agents is not solved.** Summaries are written by one
 agent and read back by another. Recalled text is flattened to one line per field

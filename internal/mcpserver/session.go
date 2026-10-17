@@ -40,6 +40,7 @@ var sessionSuggestions = []struct {
 	{"get_changes_in_range", "timeline forensics for one window, e.g. what happened to auth.go last week"},
 	{"record_change", "record what you changed and why, right after each file edit"},
 	{"record_batch", "record several files at once when they changed in the same conceptual step"},
+	{"record_outcome", "record whether an earlier change worked, partly worked, failed or was reverted"},
 }
 
 // maxSessionSuggestions caps how many suggestions are returned, so the
@@ -119,6 +120,16 @@ func (t *SessionTracker) SetIndexDB(db *index.Store) {
 		t.indexMeta.symbolCount = meta.SymbolCount
 		t.indexLoaded = true
 	}
+}
+
+// IndexDB returns the attached structural index, or nil.
+func (t *SessionTracker) IndexDB() *index.Store {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.indexDB
 }
 
 // MarkToolCalled records that a tool ran during this session. A nil receiver

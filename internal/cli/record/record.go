@@ -45,13 +45,57 @@ func Record(args []string) error {
 		return fmt.Errorf("integrity key: %w", err)
 	}
 
-	return recorder.Record(st, root, key, recorder.Input{
+	c, err := recorder.RecordChange(st, root, key, recorder.Input{
 		FilePath: *file,
 		Summary:  *summary,
 		Reason:   *reason,
 		AgentID:  *agentID,
 		Source:   "agent",
 	})
+	if err != nil {
+		return err
+	}
+	// The id is what `githints outcome -id` takes later.
+	fmt.Printf("recorded change #%d for %s\n", c.ID, textsafe.OneLine(*file))
+	return nil
+}
+
+// Outcome records how an earlier change turned out. Mirrors record_outcome.
+func Outcome(args []string) error {
+	fs := flag.NewFlagSet("outcome", flag.ExitOnError)
+	id := fs.Int64("id", 0, "id of the change, as shown by history/recent (required)")
+	state := fs.String("state", "", "worked, partial, failed, reverted or unknown (required)")
+	note := fs.String("note", "", "what happened; required unless the state is worked or unknown")
+	agentID := fs.String("agent-id", "", "agent/session fingerprint (optional)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *id < 1 || *state == "" {
+		return fmt.Errorf("-id and -state are required")
+	}
+
+	root, st, err := core.OpenInitialized()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	key, err := integrity.KeyFromRepo(root)
+	if err != nil {
+		return fmt.Errorf("integrity key: %w", err)
+	}
+
+	o, err := recorder.RecordOutcome(st, root, key, recorder.OutcomeInput{
+		ChangeID: *id,
+		State:    *state,
+		Note:     *note,
+		AgentID:  *agentID,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("recorded outcome %s for change #%d (%s)\n", o.OutcomeState, o.TargetID, textsafe.OneLine(o.FilePath))
+	return nil
 }
 
 // Status prints a quick health/dashboard view of the githints store.

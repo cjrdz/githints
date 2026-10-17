@@ -54,8 +54,10 @@ func writeUnder(root, rel string, data []byte) error {
 var reservedNames = []string{"CHANGES", "INDEX"}
 
 // reservedDirs hold githints-managed files that a hint must never land in.
-// "index" holds the structural index notes; ".obsidian" the vault settings.
-var reservedDirs = []string{"index", ".obsidian"}
+// "index" holds the structural index notes; ".obsidian" the vault settings;
+// "notes" the notes agents and people write. A hint landing in notes/ would
+// sit among them, where the notes reader would take it for one.
+var reservedDirs = []string{"index", ".obsidian", "notes"}
 
 // checkReserved refuses a source path whose hint would collide with a file
 // githints writes for another purpose. The match is case-insensitive because
@@ -93,6 +95,12 @@ func RenderFile(st *store.Store, root, srcPath string, limit int) error {
 	return writeUnder(root, srcPath+".md", renderFileContent(changes, srcPath))
 }
 
+// FileMarkdown renders one file's history as the per-file hint markdown, for
+// callers (the export pack) that write it somewhere other than .githints/.
+func FileMarkdown(changes []store.Change, srcPath string) []byte {
+	return renderFileContent(changes, srcPath)
+}
+
 func renderFileContent(changes []store.Change, srcPath string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", escape(srcPath))
@@ -123,6 +131,22 @@ func renderFileContent(changes []store.Change, srcPath string) []byte {
 		fmt.Fprintf(&b, "%s\n", escape(c.Summary))
 		if c.Reason != "" {
 			fmt.Fprintf(&b, "\n_why: %s_\n", escape(c.Reason))
+		}
+		if o := c.LatestOutcome; o != nil {
+			// Only drawn when an outcome exists, so hints rendered before
+			// outcomes existed still match what a re-render produces.
+			fmt.Fprintf(&b, "\n**outcome: %s**", escape(o.OutcomeState))
+			if o.Source != "agent" {
+				b.WriteString(" (auto-detected)")
+			}
+			if o.Summary != "" {
+				fmt.Fprintf(&b, " — %s", escape(o.Summary))
+			}
+			fmt.Fprintf(&b, " _(%s", formatRecordedAt(o.RecordedAt, o.CreatedAt))
+			if o.AgentID != "" {
+				fmt.Fprintf(&b, ", %s", escape(o.AgentID))
+			}
+			b.WriteString(")_\n")
 		}
 		b.WriteString("\n")
 	}

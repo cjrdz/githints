@@ -120,14 +120,32 @@ func CurrentBranch() (string, error) {
 // index vs HEAD). Used by the pre-commit hook to know what an agent is
 // about to commit.
 func StagedFiles() ([]string, error) {
-	out, err := run("diff", "--cached", "--name-only")
+	return pathList("diff", "--cached", "--name-only", "-z")
+}
+
+// pathList runs a git command that prints NUL-separated paths (-z) and returns
+// them exactly as they are.
+//
+// Without -z git quotes any path with a non-ASCII or unusual character
+// ("\303\251.txt" for "é.txt", with the quotes), and that quoted text is not a
+// path: it matches no recorded row and no entry in any tree. Rows for such a
+// file were never claimed by their commit, and a revert check comparing two
+// lookups of the quoted text saw "absent" on both sides and called it restored.
+// The output is not trimmed either: a path may begin or end with a space.
+func pathList(args ...string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	out, err := runLimited(ctx, nil, MaxOutputBytes, args...)
 	if err != nil {
 		return nil, err
 	}
-	if out == "" {
-		return nil, nil
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
 	}
-	return strings.Split(out, "\n"), nil
+	return paths, nil
 }
 
 // FileDiff returns the unified diff for one file. If hash is empty it
@@ -219,24 +237,36 @@ func WorktreeDiffHash(file string) (string, error) {
 // ChangedFiles lists files touched by the given commit (vs its parent).
 // Falls back to the diff against an empty tree for the very first commit.
 func ChangedFiles(hash string) ([]string, error) {
+	return changedFiles(hash, false)
+}
+
+// ChangedFilesNoRenames is ChangedFiles with rename detection off, so a rename
+// lists both the old path (as deleted) and the new one (as added) instead of only
+// the new. Revert detection needs that: reverting a rename shows up under the old
+// name by default, while the row it undoes was recorded under the new one.
+func ChangedFilesNoRenames(hash string) ([]string, error) {
+	return changedFiles(hash, true)
+}
+
+func changedFiles(hash string, noRenames bool) ([]string, error) {
 	// hash lands in argv before the "--" separator, so an unvalidated value
 	// starting with "-" would be parsed as an option. FileDiff and DiffHash
 	// already guard this; all four must.
 	if !IsValidCommitish(hash) {
 		return nil, fmt.Errorf("invalid commit hash %q", hash)
 	}
-	out, err := run("diff", "--name-only", hash+"^", hash)
+	diff := []string{"diff", "--name-only", "-z"}
+	tree := []string{"diff-tree", "-r", "--root", "--no-commit-id", "--name-only", "-z"}
+	if noRenames {
+		diff = append(diff, "--no-renames")
+		tree = append(tree, "--no-renames")
+	}
+	paths, err := pathList(append(diff, hash+"^", hash)...)
 	if err != nil {
 		// likely the first commit in the repo: diff against the empty tree
-		out, err = run("show", "--name-only", "--pretty=format:", hash)
-		if err != nil {
-			return nil, err
-		}
+		return pathList(append(tree, hash)...)
 	}
-	if out == "" {
-		return nil, nil
-	}
-	return strings.Split(out, "\n"), nil
+	return paths, nil
 }
 
 // DiffStat returns a compact "+N -M" string for one file in one commit. An
@@ -423,4 +453,96 @@ func DeleteRef(ref string) error {
 func RefExists(ref string) bool {
 	_, err := run("show-ref", "--verify", "--quiet", ref)
 	return err == nil
+}
+
+// requireHash is IsValidCommitish for callers where "" (the working tree) is
+// not an answer: the value lands in argv, so it must be hex and non-empty.
+func requireHash(hash string) error {
+	if hash == "" || !IsValidCommitish(hash) {
+		return fmt.Errorf("invalid commit hash %q", hash)
+	}
+	return nil
+}
+
+// CommitMessage returns the raw message of one commit. It is untrusted text:
+// whoever made the commit wrote it, which may be a clone's author. Callers
+// look for one fixed line shape in it and never record or display the text.
+func CommitMessage(hash string) (string, error) {
+	if err := requireHash(hash); err != nil {
+		return "", err
+	}
+	return run("show", "-s", "--no-notes", "--format=%B", hash)
+}
+
+// maxRevertRefs bounds how many reverted commits one message can name.
+const maxRevertRefs = 20
+
+// revertedRe is the line `git revert` writes. Only a full 40- or 64-hex hash
+// is accepted: git never abbreviates it, and an abbreviation could name a
+// different commit once the repository grows.
+var revertedRe = regexp.MustCompile(`(?m)^This reverts commit ([0-9a-f]{40}|[0-9a-f]{64})\b`)
+
+// RevertedCommits returns the commits a message says it reverts, in order and
+// without repeats, at most maxRevertRefs of them. A message is a claim, not
+// proof: callers must check the tree before believing it.
+func RevertedCommits(message string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range revertedRe.FindAllStringSubmatch(message, -1) {
+		if seen[m[1]] {
+			continue
+		}
+		seen[m[1]] = true
+		out = append(out, m[1])
+		if len(out) == maxRevertRefs {
+			break
+		}
+	}
+	return out
+}
+
+// ResolveCommit returns the full hash of the commit that hash names, and false
+// if there is no such commit (a shallow clone, or a message naming nothing).
+func ResolveCommit(hash string) (string, bool) {
+	if requireHash(hash) != nil {
+		return "", false
+	}
+	out, err := run("rev-parse", "--verify", "--quiet", hash+"^{commit}")
+	if err != nil || out == "" {
+		return "", false
+	}
+	return out, true
+}
+
+// ParentCommit returns the first parent of a commit, and false for a root
+// commit.
+func ParentCommit(hash string) (string, bool) {
+	if requireHash(hash) != nil {
+		return "", false
+	}
+	out, err := run("rev-parse", "--verify", "--quiet", hash+"^1")
+	if err != nil || out == "" {
+		return "", false
+	}
+	return out, true
+}
+
+// PathAt identifies what path is in the tree of one commit: "<mode> <type>
+// <object>" as `git ls-tree` prints it, or "" when the path does not exist
+// there. Two commits hold identical content at a path exactly when the values
+// are equal. An error means git failed, which is not the same as absent.
+func PathAt(hash, path string) (string, error) {
+	if err := requireHash(hash); err != nil {
+		return "", err
+	}
+	out, err := run("ls-tree", hash, "--", path)
+	if err != nil {
+		return "", err
+	}
+	if out == "" {
+		return "", nil
+	}
+	// "<mode> <type> <object>\t<path>": the path is not part of the identity.
+	ident, _, _ := strings.Cut(strings.SplitN(out, "\n", 2)[0], "\t")
+	return ident, nil
 }

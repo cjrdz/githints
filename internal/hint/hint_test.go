@@ -174,7 +174,7 @@ func TestRenderFileSkipsReservedNames(t *testing.T) {
 	st, root, cleanup := setup(t)
 	defer cleanup()
 
-	for _, f := range []string{"CHANGES", "changes", "INDEX", "index/x.go", "Index/y.go", ".obsidian/graph.json"} {
+	for _, f := range []string{"CHANGES", "changes", "INDEX", "index/x.go", "Index/y.go", ".obsidian/graph.json", "notes/plan.go", "Notes/x.md"} {
 		if _, err := st.Insert(store.Change{FilePath: f, Source: "agent", Summary: "clobber"}); err != nil {
 			t.Fatalf("Insert %s: %v", f, err)
 		}
@@ -518,5 +518,36 @@ func TestEscapeKeepsSummaryOnOneLine(t *testing.T) {
 	}
 	if got := codeSpan("a`b\nc\x1bd"); got != "abcd" {
 		t.Errorf("codeSpan = %q", got)
+	}
+}
+
+// A hint or CHANGES.md that is a link must not be written through: in shared
+// mode these files are committed, so a clone can ship `CHANGES.md -> store.db`.
+func TestRenderRefusesToWriteThroughALinkedHint(t *testing.T) {
+	st, root, cleanup := setup(t)
+	defer cleanup()
+	victim := filepath.Join(root, dirName, "store.db")
+	if err := os.MkdirAll(filepath.Dir(victim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(victim, []byte("ORIGINAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"CHANGES.md", "a.go.md"} {
+		if err := os.Symlink("store.db", filepath.Join(root, dirName, name)); err != nil {
+			t.Skipf("cannot create symlinks here: %v", err)
+		}
+	}
+	if _, err := st.Insert(store.Change{FilePath: "a.go", Source: "agent", Summary: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RenderFile(st, root, "a.go", 10); err == nil {
+		t.Error("RenderFile wrote through a linked hint")
+	}
+	if err := RenderChangelog(st, root, 10); err == nil {
+		t.Error("RenderChangelog wrote through a linked CHANGES.md")
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "ORIGINAL" {
+		t.Errorf("the store was overwritten: %q", b)
 	}
 }
