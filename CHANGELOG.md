@@ -8,6 +8,8 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+## [0.2.3] - 2026-10-16
+
 ### Upgrade notes
 
 - **Upgrade every copy of githints that touches a repository, together.** Existing
@@ -60,6 +62,8 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   versions still verify.
 - `record_change` and `githints record` print the new change's id.
 - `githints verify` counts changes and outcomes separately.
+- Dependencies: `modernc.org/libc` 1.77.1 to 1.78.0 (indirect), and
+  `goreleaser/goreleaser-action` 7.2.3 to 7.3.0 in the release workflow.
 
 ### Fixed
 
