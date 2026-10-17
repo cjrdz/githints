@@ -47,12 +47,20 @@ govulncheck ./...
 CI runs it on Linux, macOS and Windows. Tests that need a file symlink skip on
 Windows without Developer Mode; directory links fall back to a junction.
 
-Fuzz targets (`FuzzBlankerLineCount`, `FuzzExportersEscape`) run as ordinary
-tests over their seed corpus; to fuzz for real:
+Fuzz targets (`FuzzBlankerLineCount`, `FuzzExportersEscape`, `FuzzParse` for note
+files, `FuzzNeutralize` for CSV cells) run as ordinary tests over their seed
+corpus; to fuzz for real:
 
 ```sh
 go test -run=^$ -fuzz=FuzzExportersEscape -fuzztime=60s ./internal/index/graphexport/
+go test -run=^$ -fuzz=FuzzParse -fuzztime=60s ./internal/notes/
 ```
+
+Anything that guards by *location* (a destination, a link, a junction) needs a
+Windows run, not just a Linux one: since Go 1.23 `filepath.EvalSymlinks` does not
+resolve a Windows junction, which a Linux test cannot show. Windows Application
+Control can refuse to launch freshly built test binaries on some machines; CI's
+Windows job is the reference.
 
 ## Project layout
 
@@ -63,7 +71,10 @@ subpackage per command area (`initialize`, `hooks`, `record`, `verify`, `read`,
 `graph`, `indexcmd`, `salt`, `doctor`, `mcpcfg`, `setup`, `teardown`, `serve`)
 plus shared helpers in `internal/cli/core` and managed-artifact primitives in
 `internal/managed`. `internal/` holds the store, recorder, renderers, integrity,
-git access, file and text safety, the structural index and the MCP server.
+git access, file and text safety, the structural index and the MCP server, and
+the newer `internal/brief` (session digest), `internal/notes` (markdown notes) and
+`internal/export` (export pack). `githints note` and `githints export` are the
+`notecmd` and `exportcmd` subpackages.
 
 ## Conventions
 
@@ -102,7 +113,17 @@ docs: reorganize the usage guide
 ### Schema changes
 
 Use additive migrations in `internal/store/store.go` rather than rewriting the
-base schema; existing stores upgrade when they open. The index database is a
+base schema; existing stores upgrade when they open. Migrations run on every
+open, concurrently from the hook and the MCP server, so one must never take
+something away from other connections even briefly, and a destructive step has
+to be guarded (see `migrateLegacySource`).
+
+The signed payload (`hmacPayload` in `internal/integrity`) is an on-disk format:
+adding a field without `omitempty` changes the bytes of every existing row and
+breaks every stored HMAC and anchored root at once. New fields must be
+`omitempty`, and `TestHMACPayloadBytesAreFrozen`, `TestComputeHMACChainIsFrozen`
+and `TestAnchorRootsAreFrozen` fail if old rows would stop verifying. A change
+that old binaries cannot read also needs a line in the changelog's upgrade notes. The index database is a
 cache and can change freely (it is rebuilt), but bump
 `index.ResolverVersion` when a change makes stored import keys disagree with
 newly computed ones.
@@ -117,7 +138,11 @@ newly computed ones.
 3. Clamp limits with `clampLimit` and cap sizes in Go.
 4. Reuse `recorder.Record` / `BatchRecord` for writes.
 5. Add a CLI twin if it is a read tool, and a test.
-6. Mention it in the server `instructions` string and in `docs/usage.md`.
+6. Mention it in the server `instructions` string, in `docs/usage.md`, in the
+   tool table of `AGENTS.md` and in the managed block (`internal/managed/markers.go`).
+7. Every tool schema is paid for in every session's `tools/list`. Fold a new
+   behavior into an existing tool where it fits (the brief rides on
+   `get_session_context`; `search_notes` also reads one note) before adding one.
 
 ### Adding a language or framework
 
@@ -150,8 +175,9 @@ for this repository (they name this machine's paths); `.gitignore` covers them.
 
 ## Cutting a release
 
-Work lands on `dev`, then `dev` merges to `main`. A release is an annotated tag
-on `main`:
+Work lands on `dev`, then `dev` merges to `main`. Before tagging, move the
+`Unreleased` section of [CHANGELOG.md](CHANGELOG.md) under the new version with its
+date. A release is an annotated tag on `main`:
 
 ```sh
 git checkout main && git pull
@@ -161,7 +187,10 @@ git push origin v0.2.1
 
 - **The tag body becomes the release notes.** `.goreleaser.yml` puts
   `{{ .TagBody }}` at the top; put upgrade notes there (for example, "run
-  `githints index` once"). Below it is a changelog grouped by commit type.
+  `githints index` once"), and paste the new version's section of `CHANGELOG.md`
+  so there is one source of truth. Below it is a changelog grouped by commit
+  type, which lists commit subjects only: a large change committed as one `feat:`
+  is one line there, so the tag body is where the story belongs.
 - **The release cannot publish unless CI passes on that commit.** `release.yml`
   runs `ci.yml` as a reusable workflow and the publish job needs it.
 - Releases build exactly the committed module graph (no `go mod tidy` at release

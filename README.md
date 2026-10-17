@@ -54,6 +54,18 @@ client setup are in the [usage guide](docs/usage.md).
 - **Keeps the record honest.** Rows are HMAC-chained, timestamps are checked for
   clock tampering, and each commit anchors a Merkle root in git notes that
   `githints verify` checks, so edited, deleted or re-signed history is detected.
+- **Remembers how it turned out.** `record_outcome` marks a change worked, partial,
+  failed or reverted, and a `git revert` is noticed automatically, so the next
+  agent does not repeat an attempt that failed.
+- **Starts each session informed.** `get_session_context` and `githints brief`
+  end with one token-budgeted digest: failed attempts, uncommitted work, recent
+  commits, what imports the files changed lately, and files that change together.
+- **Keeps notes.** Markdown notes in `.githints/notes/` hold what a change log
+  cannot (why an approach was chosen, a plan), with search, wikilinks and an
+  offline viewer. They are private and not integrity-checked.
+- **Exports for people and notebooks.** `githints export` writes JSONL, CSV, a
+  full changelog, per-file hints, notes and a manifest with hashes, plus an
+  optional DuckDB script, without ever copying the integrity salt.
 - **Indexes the code.** A regenerable index of symbols, imports and framework
   roles (routes, models, components...) across Go, TypeScript/JavaScript, Vue,
   Svelte, Astro, Python, Rust, Java, C#, PHP, SQL and Prisma, with imports
@@ -69,6 +81,7 @@ client setup are in the [usage guide](docs/usage.md).
 | [Usage guide](docs/usage.md) | Installing, setting up clients, daily workflow, the index and graph, configuration, what to commit, troubleshooting |
 | [Architecture](docs/architecture.md) | Data model, write paths, integrity and security design, package layout |
 | [Extending the index](docs/extensibility.md) | Adding a language or a framework detector |
+| [Changelog](CHANGELOG.md) | What changed in each release, and what to do when upgrading |
 | [Roadmap](docs/roadmap.md) | What is planned and what was decided against |
 | [Contributing](CONTRIBUTING.md) | Building, testing, conventions, releases |
 | [Security policy](SECURITY.md) | Reporting vulnerabilities, threat model |
@@ -86,6 +99,10 @@ githints uninstall -force       # full removal: hooks, configs, .githints/, salt
 githints record -file=F -summary=S [-reason=R]   # record a change by hand
 githints history -file=F        # why a file looks the way it does
 githints recent | search -query=Q | diff -file=F | changes -since=T -until=T
+githints outcome -id=N -state=failed -note=...   # how change #N turned out
+githints brief                  # the session-start digest
+githints note record|search|get|list             # markdown notes in .githints/notes/
+githints export -o DIR [-duckdb]                 # log, hints and notes as files
 
 githints verify                 # check the HMAC chain, rendered markdown and Merkle anchors
 githints index                  # rebuild the structural index

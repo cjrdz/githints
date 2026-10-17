@@ -159,6 +159,12 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
 
 ### Conventions specific to this codebase
 
+- **Keep `CHANGELOG.md` current.** A user-visible change (a command, an MCP tool, a
+  format, a behavior, a fix, a security fix) gets a line under `Unreleased`, and
+  anything an upgrade needs from the user goes under "Upgrade notes". Release notes
+  are built from commit subjects, so a large change committed as one `feat:` is a
+  single line there; the changelog and the tag body carry the detail.
+
 - Tests use the standard library `testing` only — no testify, no fixtures,
   despite testify appearing in `go.sum` as a transitive dependency.
 - Return errors; don't panic. `integrity.ComputeHMAC` and `MerkleRoot` return
