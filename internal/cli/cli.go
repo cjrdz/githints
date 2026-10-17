@@ -10,10 +10,12 @@ import (
 
 	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/cli/doctor"
+	"github.com/cjrdz/githints/internal/cli/exportcmd"
 	"github.com/cjrdz/githints/internal/cli/hooks"
 	"github.com/cjrdz/githints/internal/cli/indexcmd"
 	"github.com/cjrdz/githints/internal/cli/initialize"
 	"github.com/cjrdz/githints/internal/cli/mcpcfg"
+	"github.com/cjrdz/githints/internal/cli/notecmd"
 	"github.com/cjrdz/githints/internal/cli/read"
 	"github.com/cjrdz/githints/internal/cli/record"
 	"github.com/cjrdz/githints/internal/cli/salt"
@@ -68,12 +70,16 @@ var commands = map[string]func(args []string) error{
 	"hook-run":       noArgs(hooks.HookRun),
 	"hook-precommit": noArgs(hooks.PreCommit),
 	"record":         record.Record,
+	"outcome":        record.Outcome,
+	"note":           notecmd.Run,
+	"export":         func(args []string) error { return exportcmd.Run(args, versionString()) },
 	"remove":         teardown.Remove,
 	"uninstall":      teardown.Uninstall,
 	"verify":         noArgs(verify.Run),
 	"changes":        read.Changes,
 	"history":        read.History,
 	"recent":         read.Recent,
+	"brief":          read.Brief,
 	"search":         read.Search,
 	"diff":           read.Diff,
 	"rotate-salt":    salt.RotateSalt,
@@ -115,10 +121,17 @@ Usage:
   githints serve [-root=PATH]     run the MCP stdio server (root also via $GITHINTS_ROOT)
   githints record -file=... -summary=... [-reason=...] [-agent-id=...]
                                   manually record a change (useful for testing)
+  githints outcome -id=N -state=S [-note=...] [-agent-id=...]
+                                  how change #N turned out: worked, partial, failed, reverted, unknown
+  githints note list|search|get|record|delete|render
+                                  markdown notes under .githints/notes/ (githints note help)
+  githints export -o DIR [-duckdb] [-no-notes]
+                                  write the log, hints and notes as files for people and notebooks
   githints verify                 check HMAC chain + markdown consistency
   githints history -file=F [-limit=N]
                                   why a file looks the way it does (get_file_history)
   githints recent [-limit=N]      latest changes across the repo (get_recent_changes)
+  githints brief [-budget=N]      session-start digest: failed attempts, uncommitted work, blast radius
   githints search -query=Q [-limit=N]
                                   full-text search of summaries and reasons (search_changes)
   githints diff -file=F [-hash=H] redacted diff of the working tree or one commit (get_diff)

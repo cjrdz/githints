@@ -39,7 +39,7 @@ Each row is one recorded change.
 | `file_path` | Repo-relative path to the changed file. |
 | `commit_hash` | Empty for pending agent rows; filled by the post-commit hook. |
 | `branch` | Branch name captured at record time. |
-| `source` | `"agent"`, `"llm"`, or `"fallback"`. Legacy `"hook"` rows are migrated to `"fallback"`. |
+| `source` | `"agent"`, `"llm"` (rows from earlier versions; the hook no longer writes it), or `"fallback"`. Legacy `"hook"` rows are migrated to `"fallback"`. |
 | `summary` | Short human description of what changed. |
 | `reason` | Optional explanation of why it changed. |
 | `diff_stat` | e.g. `+5 -2`, captured for agent rows from the working tree. |
@@ -49,13 +49,37 @@ Each row is one recorded change.
 | `hmac` / `prev_hmac` | Hex HMAC-SHA256 chaining the row to the previous one. |
 | `clock_tamper_warning` | Set when `recorded_at` jumps backward unexpectedly. |
 | `created_at` | SQLite timestamp, for human reference only. |
+| `kind` | `"change"` (default) or `"outcome"`. An outcome row is a later statement about a change, in the same table so it shares the chain. |
+| `target_id` / `target_diff_hash` | For an outcome: the id of the change it is about and that change's `diff_hash` when the outcome was recorded. `0` / empty for changes. |
+| `outcome` | For an outcome: `worked`, `partial`, `failed`, `reverted` or `unknown`. Empty for changes. |
 
-Indexes exist on `file_path`, `commit_hash`, `branch`, and `recorded_at`.
+Indexes exist on `file_path`, `commit_hash`, `branch`, `recorded_at` and
+`target_id`.
+
+Every reader that means "changes" (history, recent, search, range, the hook's
+claim and the counts) filters `kind = 'change'`; `AllChanges` and
+`ChangesForCommit`, which feed verification and anchors, see every row. An
+outcome is never claimed by a commit, so its `commit_hash` stays empty and it is
+covered by the whole-log Merkle root rather than a per-commit one.
+
+The four outcome fields are part of the signed payload but are `omitempty`, and
+`kind` is dropped when it is `"change"`, so a row written before they existed
+marshals to the same bytes and keeps its HMAC and its anchored roots. Outcomes
+are append-only; the newest outcome per change is what readers attach.
 
 ### `changes_fts`
 
 A virtual FTS5 table over `summary` and `reason`. It is kept in sync by an
 `AFTER INSERT` trigger, so `search_changes` is always current.
+
+### Notes tables (in `index.db`)
+
+Notes are markdown files in `.githints/notes/`; the files are the source of
+truth. `index.db` holds a search index over them (`notes`, `note_tags`,
+`note_refs` and an FTS5 table `notes_fts`), created with `IF NOT EXISTS` and kept
+outside `schemaVersion`, so a structural-index reset or `Clear` never drops them
+and they can be rebuilt from the directory at any time. They are **not** part of
+the integrity-verified change log. See [Notes](#notes).
 
 ### `githints_meta`
 
@@ -92,19 +116,33 @@ Agent rows are inserted with `commit_hash = ''` and are shown as
 
 After a commit, `githints hook-run` (the `post-commit` hook):
 
-1. Loads `.githints/config.json` and creates the Ollama client only if enabled.
+1. Loads `.githints/config.json`.
 2. Resolves HEAD and the list of files changed by that commit.
 3. For each file (skipping `.githints/`):
    - Claims any pending agent rows for that file/hash.
    - Loads the agent rows already recorded for that file/hash.
    - If the agent already described the file for this commit, no fallback is
      written.
-   - Otherwise, asks the local Ollama model (when enabled) for a one-line
-     caption of the scrubbed and truncated diff. On any error, timeout, or
-     circuit-breaker-open state, it writes a generic fallback row instead.
-4. Re-renders markdown for any touched file.
-5. Writes a Merkle anchor for this commit as a `refs/notes/githints` git
+   - Otherwise, writes a generic fallback row. The hook never calls Ollama.
+4. Looks for reverts (see [Revert detection](#revert-detection)).
+5. Re-renders markdown for any touched file.
+6. Writes a Merkle anchor for this commit as a `refs/notes/githints` git
    note (see [Merkle anchors](#merkle-anchors)).
+
+### Revert detection
+
+`recordReverts` (`internal/cli/hooks/revert.go`) reads the new commit's message
+for `This reverts commit <40 or 64 hex>` lines (`gitutil.RevertedCommits`; at
+most 20, full hashes only). The message is untrusted, so it only says where to
+look. For each recorded change of a named commit it compares
+`git ls-tree <this commit> -- <file>` with `git ls-tree <reverted commit>^1 --
+<file>`, and records a `reverted` outcome only if this commit touched the file
+and the two are identical (both absent counts). The outcome has `source =
+fallback`, which readers show as auto-detected, and `commit_hash` set to the
+reverting commit so that commit's per-commit anchor covers it. The note is fixed
+text naming the commit; no message text is stored. A repeat run finds the same
+note already present and writes nothing. Work is bounded (200 rows per commit),
+and any failure is printed and skipped: detection never fails the hook.
 
 ### Pre-commit gate
 
@@ -152,7 +190,8 @@ the repository. A source path whose hint would overwrite githints' own output
 
 The optional `internal/llm` package provides a stdlib-only Ollama client for
 `/api/generate`. It is created only when `ollama.enabled` is true; otherwise
-`NewClient` returns `nil` and no HTTP client is allocated.
+`NewClient` returns `nil` and no HTTP client is allocated. The post-commit hook
+does not use it.
 
 Before any content leaves the process, `ScrubDiff` redacts lines from files
 matching common secret patterns (`.env`, `*.pem`, `id_rsa*`, etc.) and lines
@@ -163,7 +202,7 @@ The client enforces a strict per-request timeout and an in-memory circuit
 breaker: after three consecutive failures or timeouts it stops calling Ollama
 for the rest of the process lifetime. Model output is sanitized (one line, no
 control characters, no shell metacharacters, bounded length) before it is
-returned. On any failure the caller falls back to the existing generic text.
+returned. On any failure the caller returns the unsummarized result.
 
 The MCP server exposes the integration through optional `summarize` flags on
 `get_diff` and `get_recent_changes`.
@@ -181,6 +220,13 @@ A repository is attacker-controlled input: a clone can ship symlinks, a
   databases, `config.json`, `go.mod`, `tsconfig.json`, `package.json` and the
   graph page. `init` refuses to rewrite `AGENTS.md`, `CLAUDE.md` or `.gitignore`
   if it is a link.
+- **A link is never written through.** `os.Root` follows a symlink that stays
+  inside the root, so `safefs.WriteFileIn` `Lstat`s the target and every directory
+  on the way and refuses a link or junction. Without it a link planted in
+  `.githints/` (shared mode commits that directory, so a clone can ship one) turned
+  a routine rewrite of `CHANGES.md`, a hint, `graph.html` or `notes.html` into an
+  overwrite of whatever it pointed at, for example `CHANGES.md -> store.db`. Every
+  write into `.githints/` goes through this one function.
 - **State that arrived in a clone is refused.** A `store.db`, `index.db` or
   legacy `.salt` that git tracks did not come from this machine. A tracked
   `repo-id` is ignored. SQLite opens with `trusted_schema=OFF` on every
@@ -194,6 +240,85 @@ A repository is attacker-controlled input: a clone can ship symlinks, a
   with `IsValidCommitish` before it reaches argv.
 - **Repository config is bounded.** `config.json` limits have ceilings, and a
   repository that enables Ollama is announced on stderr.
+
+## Notes
+
+`internal/notes` owns the format and every rule about what a note may hold;
+`internal/index/notes.go` only stores what it is given.
+
+- **Sync, not a hook.** Every reader (`Get`, `Search`, the brief) first runs
+  `Sync`: one directory listing and one `Lstat` per note, re-reading only files
+  whose size or mtime changed. Hand edits therefore show up with no other step,
+  and a file that fails a check is *removed* from the index rather than left with
+  its older text.
+- **Reading.** All access is through an `os.Root` on `.githints/`
+  (`safefs.OpenExisting` for readers, `safefs.Open` for the writer). The reader
+  `Lstat`s each file and refuses anything but a regular file, because
+  `safefs.ReadFileIn` follows a link that stays inside the root: without this,
+  `notes/x.md -> ../store.db` would be indexed as a note. The `notes/` directory
+  is checked the same way, and a file with more than one hard link is refused
+  (`safefs.ReadSingleLinkFileIn`, link count from the open file: `Nlink` on Unix,
+  `GetFileInformationByHandle` on Windows). Names are `[a-z0-9][a-z0-9-]{0,63}`,
+  an alphabet with no dot or separator in it, and not a Windows device name.
+- **The index is a cache, not an authority.** `Recheck` re-applies the note rules to
+  a row before `Get` or the export uses it; a row that fails is deleted and the
+  file re-read, since `Sync` trusts a row whose size and mtime still match.
+- **Writing.** `Record` builds the document, writes it as a file, parses it back
+  and only then touches the disk; without `Replace` the file is created with
+  `O_EXCL`, so an existing note is never overwritten, even in a race.
+- **Parsing.** Front matter is a hand-written subset of YAML (flat keys, one-line
+  lists, nothing else): no anchors, aliases, tags or multi-line values, so there
+  is no parser to attack. Unknown keys are ignored, a multi-line value under a
+  known key is refused, and a front matter over 8 KiB or 64 lines is refused.
+  `FuzzParse` checks that nothing panics, the caps hold, and an accepted note
+  survives being written and read again.
+- **Checks, in order.** Control, zero-width and bidi characters are stripped, then
+  the caps are enforced, then `internal/secrets` scans the title, the raw tags
+  (before lowercasing hides an upper-case key), the paths and the body.
+- **Search.** A query is words: each is quoted and made a prefix and all are
+  required, so FTS5 operators and column filters are just text and cannot be a
+  syntax error. Length, word count and word length are capped.
+- **Output.** Listings and notes carry a notice that they are unsigned data, and
+  every stored field is flattened, stripped and clipped.
+- **Viewer.** `notes.html` follows the graph viewer: `default-src 'none'`, the one
+  script and style pinned by hash, data in a non-executed JSON block, `textContent`
+  only, no markdown rendering. Bodies past a 4 MiB page budget are left out.
+- **Reserved.** A source file under `notes/` would render its hint into
+  `.githints/notes/`, so `notes` is a reserved directory for hints, like `index`.
+
+## Export pack
+
+`internal/export` writes `githints export`. It is a set of explicit queries
+(`AllChanges`, `FilesWithHistory`, `FileHistory`, the notes index), never a walk
+of `.githints/`: that directory holds the salt, `repo-id` and the databases, and
+"copy what is there" is how a key ends up in an attachment.
+
+- **Destination.** `prepareDir` accepts a new directory or an empty plain one and
+  refuses anything else, including a symlink and anything under `.githints/`.
+  "Under" is decided by file identity (`os.SameFile` on the path and each existing
+  ancestor) as well as by resolved path: since Go 1.23 `filepath.EvalSymlinks` no
+  longer resolves a Windows junction, so `-o junction\pack` with the junction
+  pointing at `.githints` passed a path-only check. This was found by running the
+  tool on Windows, and `TestExportRefusesADestinationThroughAJunctionIntoState`
+  covers it there. All
+  writes go through an `os.Root` on it with `O_EXCL`, so a file can neither
+  replace another nor leave the pack.
+- **Formats.** JSONL is exact. CSV prefixes cells that start a formula
+  (`neutralize`; a fuzz test checks no output cell starts one after any leading
+  whitespace). The changelog and hints go through `textsafe` like every other
+  rendering. The DuckDB script holds no log text: columns are declared from the
+  same `columns` list the other formats use, and files are read by fixed name.
+- **Hostile rows.** A hint path comes from a row, and the store is a file. A path
+  that is not repo-relative is skipped and listed in `skipped`, and `os.Root`
+  would refuse it anyway.
+- **Manifest.** Counts, every file's sha256 and size, the v2 whole-log Merkle root
+  (`integrity.BuildAnchor`), and the verify status from `ExistingKey` (which never
+  creates a salt), `VerifyChain` and `VerifyAnchors`. Anything it cannot check is
+  `unavailable`, in fixed text, because an error message can name a path. It is
+  written last.
+- **Notes.** Only notes the index accepted are exported, as `Doc.Marshal` of the
+  parsed note, so one that failed a check (a credential, a link) is not in the pack.
+- **Cap.** At most `MaxRows` (1,000,000) rows.
 
 ## Structural index
 
@@ -288,6 +413,16 @@ signed, or clearing it in the database would erase the tamper evidence while the
 chain still verified clean. That is why the clock check runs in
 `store.CheckClockTamper` before the row is signed, rather than inside `Insert`.
 
+Reading the previous HMAC, signing and inserting happen in one transaction
+(`store.InsertSigned`, and `BatchRecord`'s own). Every transaction begins with
+the write lock (`_txlock=immediate`), so the MCP server, the hook and the CLI
+cannot sign against the same predecessor and fork the chain. A `recorded_at` the
+recorder stamped itself is raised to the previous row's time under that lock; one
+supplied by the caller is kept as given. `TestHMACPayloadBytesAreFrozen`,
+`TestComputeHMACChainIsFrozen` and `TestAnchorRootsAreFrozen` pin the signed
+bytes and the anchor roots: a failure there means a change would invalidate
+existing databases.
+
 `githints verify` walks the chain and reports broken or missing links, a
 non-empty `prev_hmac` on the first row, and any backward `recorded_at` jumps.
 
@@ -348,9 +483,13 @@ Tools:
 
 - `get_session_context` — session orientation: when the session started, how
   much history exists, which tools have been used this session, and suggested
-  next steps. Intended as the first call of a session.
+  next steps, then the brief (see [The session brief](usage.md#the-session-brief)).
+  Intended as the first call of a session.
 - `record_change` — record one file change.
 - `record_batch` — record several file changes in one call.
+- `record_outcome` — record how an earlier change turned out, by its `#id`.
+- `record_note` — write a markdown note (not integrity-checked).
+- `search_notes` — find notes by words, file or tag, or read one by `name`.
 - `get_file_history` — history for one file.
 - `get_recent_changes` — recent repo-wide changes; optional `summarize` flag.
 - `search_changes` — FTS search over summaries and reasons.
@@ -440,6 +579,9 @@ internal/
   clitest/             # shared test helpers for the CLI packages
   config/              # .githints/config.json loader, env overrides, bounds
   store/               # change-log SQLite schema, migrations, queries
+  brief/               # session-start digest built from the store and the index
+  notes/               # markdown notes: format, parsing, checks, sync, search, viewer
+  export/              # export pack: JSONL, CSV, changelog, hints, notes, manifest, DuckDB script
   recorder/            # write path: validation, sanitizing, secret scan, insert, render
   hint/                # change-log markdown rendering and verification
   integrity/           # salt, repo id, key derivation, HMAC chain, Merkle anchors

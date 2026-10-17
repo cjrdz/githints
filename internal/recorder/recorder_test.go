@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cjrdz/githints/internal/integrity"
@@ -769,5 +770,115 @@ func TestRecordRejectsLongAgentIDAndControlPaths(t *testing.T) {
 		if err := ValidateFilePath(p); err == nil {
 			t.Errorf("ValidateFilePath(%q) accepted", p)
 		}
+	}
+}
+
+// Several processes write to one store: the MCP server, the post-commit hook,
+// and the CLI. Reading the last HMAC and inserting used to be two separate
+// statements, so two writers could sign against the same predecessor and fork
+// the chain; VerifyChain then reported a break nobody caused. Separate store
+// handles on one file stand in for separate processes.
+func TestConcurrentRecordsKeepOneChain(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".githints", "store.db")
+	const writers, each = 4, 15
+
+	stores := make([]*store.Store, writers)
+	for i := range stores {
+		st, err := store.Open(path)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		defer st.Close()
+		stores[i] = st
+	}
+
+	errs := make(chan error, writers*each)
+	var wg sync.WaitGroup
+	for w, st := range stores {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < each; n++ {
+				_, err := record(st, dir, testKey, Input{
+					FilePath: fmt.Sprintf("w%d/f%d.go", w, n),
+					Summary:  "concurrent write",
+					Source:   "agent",
+				}, false)
+				if err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("record: %v", err)
+	}
+
+	rows, err := stores[0].AllChanges()
+	if err != nil {
+		t.Fatalf("AllChanges: %v", err)
+	}
+	if len(rows) != writers*each {
+		t.Fatalf("got %d rows, want %d", len(rows), writers*each)
+	}
+	if problems := integrity.VerifyChain(testKey, rows); len(problems) > 0 {
+		t.Fatalf("chain forked under concurrent writers: %d problems, first: %+v", len(problems), problems[0])
+	}
+}
+
+// BatchRecord shares the chain with Record, so mixed writers must still
+// produce one chain with non-decreasing times.
+func TestConcurrentBatchAndRecordKeepOneChain(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".githints", "store.db")
+	const writers, rounds = 4, 8
+
+	stores := make([]*store.Store, writers)
+	for i := range stores {
+		st, err := store.Open(path)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		defer st.Close()
+		stores[i] = st
+	}
+
+	errs := make(chan error, writers*rounds)
+	var wg sync.WaitGroup
+	for w, st := range stores {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := 0; n < rounds; n++ {
+				in := func(k int) Input {
+					return Input{FilePath: fmt.Sprintf("w%d/r%d/f%d.go", w, n, k), Summary: "mixed write", Source: "agent"}
+				}
+				var err error
+				if w%2 == 0 {
+					err = BatchRecord(st, dir, testKey, []Input{in(0), in(1), in(2)})
+				} else {
+					_, err = record(st, dir, testKey, in(0), false)
+				}
+				if err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("write: %v", err)
+	}
+
+	rows, err := stores[0].AllChanges()
+	if err != nil {
+		t.Fatalf("AllChanges: %v", err)
+	}
+	if problems := integrity.VerifyChain(testKey, rows); len(problems) > 0 {
+		t.Fatalf("chain broken under mixed writers: %d problems, first: %+v", len(problems), problems[0])
 	}
 }

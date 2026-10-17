@@ -42,7 +42,15 @@ func Open(path string) (*Store, error) {
 	// trusted_schema=OFF on every pooled connection (a DSN pragma, not an
 	// Exec, which would reach only one): functions with side effects cannot
 	// be invoked from triggers or views stored in the schema itself.
-	db, err := sql.Open("sqlite", path+"?_pragma=trusted_schema(0)")
+	//
+	// busy_timeout rides the DSN for the same reason: the Exec below reaches
+	// one pooled connection, and notes are written by the CLI and the MCP
+	// server while the hook scans. _txlock=immediate makes every transaction
+	// take the write lock when it begins and wait for it under busy_timeout. A
+	// deferred one reads first and then asks to write, and SQLite fails that at
+	// once with SQLITE_BUSY whenever another writer got in between, timeout or
+	// not.
+	db, err := sql.Open("sqlite", path+"?_pragma=trusted_schema(0)&_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open index db: %w", err)
 	}
@@ -69,6 +77,10 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("set index db busy timeout: %w", err)
 	}
 	if err := applySchema(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := applyNotesSchema(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

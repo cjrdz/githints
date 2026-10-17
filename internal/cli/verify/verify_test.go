@@ -59,3 +59,49 @@ func TestVerifyDetectsRowsDeletedAfterAnchoring(t *testing.T) {
 		t.Fatal("verify passed after the newest anchored row was deleted")
 	}
 }
+
+// Outcomes ride the same chain and the same anchors as changes: a clean log
+// with one verifies, and rewriting what became of a change does not.
+func TestVerifyCoversOutcomes(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := clitest.ChdirTempRepo(t)
+	if err := initialize.Init(nil); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := record.Record([]string{"-file=a.go", "-summary=add a.go"}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	clitest.RunGit(t, dir, "add", "a.go")
+	clitest.RunGit(t, dir, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "first")
+	if err := hooks.HookRun(); err != nil {
+		t.Fatalf("HookRun: %v", err)
+	}
+	if err := record.Outcome([]string{"-id=1", "-state=failed", "-note=does not build on windows"}); err != nil {
+		t.Fatalf("Outcome: %v", err)
+	}
+	if err := Run(); err != nil {
+		t.Fatalf("verify with an outcome in the log: %v", err)
+	}
+
+	tamper := func(stmt string) {
+		t.Helper()
+		st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if err := st.WithTx(func(tx *sql.Tx) error {
+			_, err := tx.Exec(stmt)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tamper("UPDATE changes SET outcome = 'worked' WHERE kind = 'outcome'")
+	if err := Run(); err == nil {
+		t.Fatal("verify passed after an outcome was rewritten from failed to worked")
+	}
+}

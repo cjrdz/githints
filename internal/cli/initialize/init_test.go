@@ -74,7 +74,7 @@ func TestInitGitignoreShared(t *testing.T) {
 			t.Errorf("shared mode should not ignore .githints/ wholesale")
 		}
 	}
-	for _, want := range []string{".githints/store.db*", ".githints/index.db*", ".githints/.salt", ".githints/config.json"} {
+	for _, want := range []string{".githints/store.db*", ".githints/index.db*", ".githints/.salt", ".githints/config.json", ".githints/notes/", ".githints/notes.html"} {
 		found := false
 		for _, line := range lines {
 			if strings.TrimSpace(line) == want {

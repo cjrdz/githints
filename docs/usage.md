@@ -222,6 +222,7 @@ handling.
 | Project MCP configs (`.mcp.json`, `.vscode/mcp.json`, ...) | **Only if portable**: when they name `githints` (on `PATH`) and do not pin an absolute root. Entries that pin the root, or point at an absolute binary path, are specific to your machine. `githints setup` tells you which ones those are. |
 | `*.githints-backup` | **No.** Backups of global client configs, kept next to them. |
 | `.githints/graph.html` | **No** (it is inside `.githints/`). Export elsewhere with `-o` if you want to publish a graph. |
+| `.githints/notes/`, `.githints/notes.html` | **No**, in either mode. Notes are private by decision: they can hold whatever an agent was told. Back them up yourself if they matter. |
 | `refs/notes/githints` | **Push it** (`git push origin refs/notes/githints`) if you want the Merkle anchors to exist anywhere but your machine. Git does not push notes by default. |
 
 ## Daily workflow
@@ -234,11 +235,16 @@ handling.
    and writes a fallback entry for any changed file nobody described, so nothing
    is silently lost.
 
+Later, when you know how it turned out, record that too:
+`record_outcome(change_id, outcome, note)` or
+`githints outcome -id=N -state=failed -note="..."`. See
+[Outcomes](#outcomes).
+
 Reading it back, from MCP or the CLI:
 
 | Question | MCP tool | CLI |
 | --- | --- | --- |
-| Where do I start? | `get_session_context()` | `githints status` |
+| Where do I start? | `get_session_context()` | `githints brief` |
 | Why is this file like this? | `get_file_history(file)` | `githints history -file=F` |
 | What happened recently? | `get_recent_changes(limit)` | `githints recent` |
 | Where did we change X? | `search_changes(query)` | `githints search -query=Q` |
@@ -250,6 +256,208 @@ Diffs are redacted: hunks of credential-carrying files (`.env*`, `*.pem`,
 back as `[REDACTED SECRET LINE]`. They are truncated at about 128 KiB with an
 explicit marker. `search` takes an FTS5 `MATCH` expression, so `NEAR`, prefix
 `*` and column filters work.
+
+### Exporting
+
+`githints export -o DIR` writes the log as plain files for people and notebooks:
+
+| File | What it is |
+| --- | --- |
+| `changes.jsonl` | Every row, one JSON object per line, exact. Includes outcome rows (`kind: "outcome"`) and each row's `hmac`. |
+| `changes.csv` | The same columns. Any cell that would run as a spreadsheet formula (it starts with `=`, `+`, `-` or `@`, after any leading whitespace) gets a leading `'`, so a summary cannot execute in Excel or Sheets; use the JSONL when you need the text exactly. |
+| `CHANGES-full.md` | Every change, newest first, grouped by commit, with its reason and its newest outcome. `CHANGES.md` stops at 100 rows. |
+| `hints/<file>.md` | The per-file history for every file, regenerated from the store. |
+| `notes/` | The notes githints accepted, in canonical form (`-no-notes` leaves them out). |
+| `manifest.json` | Counts, the sha256 and size of every other file, the whole-log Merkle root, and what `githints verify` said at export time (chain, clock tamper, anchors). Written last: a directory without one did not finish. |
+| `githints.duckdb.sql` | With `-duckdb`: a script that loads the pack into DuckDB. |
+
+```sh
+githints export -o ~/exports/myrepo-2026-10 -duckdb
+cd ~/exports/myrepo-2026-10 && duckdb githints.duckdb < githints.duckdb.sql
+```
+
+The script defines `log` (every row, typed), `changes`, `outcomes`,
+`failed_attempts` (changes whose newest outcome is failed, partial or reverted),
+`changes_per_file` and, when notes were exported, `notes`. It reads the files
+beside it by fixed names and contains none of the log's text, so there is nothing
+in it for a summary to inject into. DuckDB is a place to explore the pack, not
+something githints runs or depends on.
+
+What it will not do:
+
+- **Overwrite.** `DIR` must not exist or must be an empty directory, and nothing
+  is ever written over an existing file. Export into a new directory each time.
+  `DIR` cannot be inside `.githints/`.
+- **Copy state.** The pack is built from queries on the store and the notes, never
+  by copying `.githints/`, which also holds the integrity salt, the repository id
+  and the databases. It contains no salt or key, and no path of the machine that
+  made it: when the salt is missing the manifest says the chain is `unavailable`
+  in fixed words, not with the path.
+- **Make notes safe to render.** `notes/` holds each note's markdown exactly as
+  written, so a previewer would fetch a hostile note's images and run its embedded
+  content. Open the pack's notes as text unless you trust their authors; the
+  manifest says so too.
+- **Prove anything.** A pack is not signed. Whoever holds a copy can change it, and
+  the manifest's hashes only detect accidents. `githints verify` in the repository
+  is the check, and `log.root` in the manifest is the value to compare with the
+  newest `githints-log-root` in `refs/notes/githints`.
+
+A pack written when `githints verify` would have failed is still written, with
+`verify` saying so and a warning on stderr: a log worth investigating is worth
+exporting.
+
+### Notes
+
+A change log says what changed. A note holds what it cannot: why an approach was
+chosen, the plan for a refactor, a bug that took an afternoon to understand.
+Notes are markdown files in `.githints/notes/`, so they are yours to read and
+write by hand, and an agent can leave one so the next session does not
+rediscover it.
+
+```sh
+githints note record -title="Why token rotation moved" -body=- -tags=auth \
+    -files=internal/auth/token.go < why.md
+githints note search -query=rotation          # words, as prefixes, all required
+githints note search -file=internal/auth/token.go
+githints note list | get NAME | delete NAME | render
+```
+
+The MCP tools are `record_note` and `search_notes` (`name` reads one in full).
+`get_session_context` and `githints brief` list the newest.
+
+A note is a file named with lowercase letters, digits and hyphens, then `.md`,
+with optional front matter:
+
+```markdown
+---
+title: Auth Refactor Plan
+tags: [auth, refactor]
+related_files: [internal/auth/token.go]
+related_changes: [142, 143]
+---
+
+Move token rotation out of the handler. See [[token-notes]] and
+[[internal/auth/token.go]].
+```
+
+The front matter is a small subset of YAML read by hand: flat `key: value` lines,
+lists on one line (`[a, b]`), nothing else. Other keys are ignored. A file with
+none takes its title from its first `# ` heading or its name. `[[name]]` links a
+note and `[[path/to/file.go]]` a file; searching by `-file` finds notes that
+name a file either way. Links are not followed anywhere: they relate notes to
+each other and to files in the index.
+
+What githints does about notes being untrusted text:
+
+- **Not integrity-checked.** Nothing signs a note. Whoever can write
+  `.githints/notes/` can write a note, and everything that shows one says so.
+- **Never instructions.** A note reaches the model like a summary does: flattened,
+  stripped of terminal escapes, labelled as data.
+- **Credentials are refused.** After control and zero-width characters are
+  stripped, a note that matches a known secret pattern is rejected when recorded
+  and left out of the index if a hand edit adds one, which also stops its old
+  text being served.
+- **Opened as text, not rendered.** A note is markdown, and a markdown previewer
+  (or an editor with plugins, such as Obsidian templates) can fetch images and run
+  embedded content. githints never renders note text as markup, but the files are
+  yours to open: do that with notes you trust, and treat a note that arrived from
+  a clone like any file from one.
+- **Plain files only.** Every read goes through `internal/safefs`, and a note
+  that is a symlink, or a `notes/` that is one, is refused (a link inside
+  `.githints/` would otherwise let `notes/x.md` read `store.db`). A note with more
+  than one hard link is refused too: a second name for a state file such as the
+  legacy `.salt` is an ordinary file as far as `Lstat` can tell, so the link count
+  is read from the open file (on Windows, from the file handle). Git clones cannot
+  carry hard links, so this guards the local directory.
+- **The index is not believed.** The search index is a cache in a file anyone who
+  can write it can edit. A note is checked again against every rule before it is
+  shown in full or exported; a row that fails is dropped and the file read again.
+- **Bounded.** Body 32 KiB, 20 tags, 50 related files and changes, 100 links, at
+  most 500 notes; a hand-edited file over 128 KiB is skipped. `githints note list`
+  says which files were left out and why.
+
+`githints note render` writes `.githints/notes.html`: one offline page to browse,
+search and filter notes by tag. It cannot reach the network (a
+`default-src 'none'` policy pins its single script and style by hash) and it
+shows note text as plain text, not rendered markdown, because rendering would
+mean building markup from text another agent wrote. It is refreshed whenever a
+note is recorded or deleted and when `note list` notices a hand edit.
+
+Notes are searched through tables in `index.db`, which is rebuilt from the files
+at any time and kept even when `index.enabled` is false (the file then holds only
+notes). A structural-index reset does not touch them.
+
+### The session brief
+
+`githints brief` prints, and `get_session_context` ends with, one digest in place
+of the usual round of lookups. Sections are ranked, and a lower one is dropped
+before a higher one is cut:
+
+1. **Attempts that failed, partly worked or were reverted** (outcomes), newest
+   first. A change later marked `worked` is not listed.
+2. **Uncommitted** records, newest first, with the total.
+3. **Recent commits** and the files they touched.
+4. **Blast radius**: which files import the packages changed most recently, from
+   the structural index (with its age, since it can be stale). Test files are
+   skipped; they are not imported. Absent when there is no index.
+5. **Files that change together**: other files recorded in at least two of the
+   same commits as a recently changed file.
+6. **Notes**: the newest few, flagged as not integrity-checked.
+
+The size is capped by a token budget (`-budget=N`, 200 to 8000, default 1500),
+estimated as bytes / 4 and enforced in Go, so the digest never exceeds it:
+sections are listed whole-line by whole-line, and one is shown only if its
+heading and first item fit. Every stored string is flattened to one line,
+stripped of terminal escapes and clipped, and the digest says it is data rather
+than instructions. It reads the store without re-verifying the chain, so run
+`githints verify` when integrity matters.
+
+### Outcomes
+
+A change says what was done; an outcome says how it went. `history`, `recent` and
+the per-file hints list every change with a `#id` and, underneath, its newest
+outcome:
+
+```text
+[2026-10-16T14:02:11Z] #41 internal/auth/token.go (agent, a1b2c3d4): Added a retry loop to Refresh
+    outcome: failed — deadlocks when the token endpoint is slow; the lock is held across the retry
+```
+
+The states are `worked`, `partial`, `failed`, `reverted` and `unknown`. A note is
+required for `partial`, `failed` and `reverted`: "failed" without a reason is the
+mistake outcomes exist to stop someone repeating. An outcome is appended, never
+edited, so recording a second one supersedes the first in the listing while both
+stay in the log. It is signed into the same HMAC chain as every change, and
+`githints verify` also checks that it points at an earlier change whose diff is
+still the one it was recorded against.
+
+**Reverts are noticed automatically.** When the post-commit hook sees a commit
+whose message says `This reverts commit <hash>` (what `git revert` writes), it
+marks the recorded changes of that commit `reverted`, with a note naming the
+reverting commit and the label `(auto-detected)` so it is not mistaken for
+something an agent asserted. A commit message is only a claim, so the hook checks
+the tree before believing it: a change is marked only if the reverting commit
+touched its file *and* the file now holds exactly what it held before the
+reverted commit. A forged message, a conflicted revert, and the files a partial
+revert left alone are not marked. The marker is stored under the reverting
+commit, so that commit's Merkle anchor covers it, and running the hook twice
+records it once.
+
+A revert of a rename is detected: for this check the old and the new path both
+count as touched, because git's default rename detection shows only the old one
+while the change being undone was recorded under the new.
+
+What it cannot see: `git reset` and force-pushes leave no revert commit, and
+amend, rebase and cherry-pick are not followed. If a revert is itself reverted
+the original change still reads `reverted`; record a `worked` outcome to correct
+it.
+
+Outcome rows are not changes: they do not appear in search, `CHANGES.md`, the
+status counts, or the rows a commit claims.
+
+Older githints binaries do not know the outcome fields. Opening a store that has
+outcomes with one makes `verify` report those rows as not recomputing, and lists
+them as ordinary changes. Upgrade every machine that shares a store.
 
 ### Limits
 
@@ -282,7 +490,9 @@ githints verify
 checks three things and exits 3 if any fails:
 
 - **The HMAC chain.** Every row is signed with a key derived from the salt and
-  your git `user.email`, and linked to the previous row.
+  your git `user.email`, and linked to the previous row. Outcome rows are checked
+  too: each must point at an earlier change whose diff is still the one it was
+  recorded against.
 - **The rendered markdown** matches the store.
 - **The Merkle anchors.** After each commit the hook writes a note to
   `refs/notes/githints` with a Merkle root of that commit's rows and of the whole
@@ -495,11 +705,15 @@ config turns Ollama on.
 
 ### Optional local Ollama summarization
 
-Off by default. When enabled, the post-commit hook asks a local Ollama model for
-a one-line caption of each fallback diff (scrubbed of secrets and truncated to
-`max_diff_bytes` first), and `get_diff` / `get_recent_changes` accept
-`summarize=true`. If Ollama is unreachable, slow or returns something unusable,
-githints falls back to the generic text immediately; a commit never waits on it.
+Off by default. When enabled, `get_diff` and `get_recent_changes` accept
+`summarize=true`, which asks a local Ollama model for a one-line caption of the
+diff (scrubbed of secrets and truncated to `max_diff_bytes` first). If Ollama is
+unreachable, slow or returns something unusable, githints returns the plain
+result immediately.
+
+The post-commit hook never calls Ollama: a commit does not wait on a model, and
+no diff leaves the process on the commit path. Hook-written fallback rows carry
+the generic text. Rows recorded as `llm` by earlier versions still verify.
 
 The endpoint must resolve to a loopback address, checked when the config loads
 and again on the exact address dialed. `GITHINTS_OLLAMA_ALLOW_NON_LOOPBACK=1`
@@ -525,6 +739,8 @@ can be committed:
 .githints/.salt.new
 .githints/repo-id
 .githints/config.json
+.githints/notes/
+.githints/notes.html
 # <<< githints (managed)
 ```
 
@@ -561,6 +777,19 @@ changes import resolution, the hook and `doctor` both say when a full
 `githints index` is needed. MCP clients pick up the new binary when they next
 start the server.
 
+**Upgrade every copy of githints that touches a repository, together.** Old
+change logs, hints and anchors verify unchanged with a new binary, and nothing
+needs migrating. The reverse is not true once outcomes exist: a version that
+predates them does not know the new fields, so it reports outcome rows as
+`hmac does not recompute`, lists them as ordinary changes, and, if its
+post-commit hook runs, claims them for a commit and writes an anchor that the new
+version then reports as a problem for good. That happens when a long-running MCP
+server, an editor extension, or a hook that names an old binary path is left
+behind. Restart MCP servers after upgrading, and run `githints init` so each hook
+names the new binary; `githints doctor` shows which binary a hook runs. To go back
+to an older version on a store that has outcomes, export first
+(`githints export -o DIR`).
+
 ## CLI reference
 
 Every command takes `-h`. Exit status: 0 ok, 1 error, 2 usage error, 3 `verify`
@@ -577,7 +806,11 @@ found problems.
 | `status` | Store health, hooks, salt, pending records |
 | `serve [-root=PATH]` | Run the MCP stdio server |
 | `record -file=F -summary=S [-reason=R] [-agent-id=A]` | Record a change by hand |
+| `export -o DIR [-duckdb] [-no-notes]` | Write the log, hints and notes as JSONL, CSV and markdown, with a manifest; see [Exporting](#exporting) |
+| `note list\|search\|get\|record\|delete\|render` | Markdown notes under `.githints/notes/`; `githints note help` |
+| `outcome -id=N -state=S [-note=T] [-agent-id=A]` | Record how change #N turned out (worked, partial, failed, reverted, unknown) |
 | `history -file=F [-limit=N]` | A file's recorded history |
+| `brief [-budget=N]` | Session-start digest: failed attempts, uncommitted work, recent commits, blast radius, co-changing files |
 | `recent [-limit=N]` | Latest changes across the repository |
 | `search -query=Q [-limit=N]` | Full-text search of summaries and reasons |
 | `diff -file=F [-hash=H]` | Redacted diff of the working tree, or of one commit |

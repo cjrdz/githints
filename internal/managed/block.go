@@ -124,6 +124,8 @@ func EnsureGitignore(root string, share bool) error {
 			".githints/.salt.new", // left behind if a legacy-location rotation fails
 			".githints/repo-id",   // keys this machine's salt; a shared one could steer it
 			".githints/config.json",
+			".githints/notes/",     // private by decision: notes can hold anything an agent was told
+			".githints/notes.html", // the viewer is rebuilt from them
 		}
 	}
 	return EnsureBlock(filepath.Join(root, ".gitignore"), GitignoreStart, GitignoreEnd, body)

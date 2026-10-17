@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	"github.com/cjrdz/githints/internal/index"
 	"github.com/cjrdz/githints/internal/store"
 )
 
@@ -33,9 +34,9 @@ func seedChange(t *testing.T, st *store.Store) {
 	}
 }
 
-func contextText(t *testing.T, session *SessionTracker) string {
+func contextText(t *testing.T, st *store.Store, session *SessionTracker) string {
 	t.Helper()
-	resp, err := handleGetSessionContext(session)(context.Background(), mcp.CallToolRequest{})
+	resp, err := handleGetSessionContext(t.TempDir(), st, session, func() *index.Store { return nil })(context.Background(), mcp.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -54,7 +55,7 @@ func TestSessionContextOnFreshSession(t *testing.T) {
 	seedChange(t, st)
 
 	session := NewSessionTracker(st)
-	text := contextText(t, session)
+	text := contextText(t, st, session)
 
 	for _, want := range []string{
 		"session started:",
@@ -76,7 +77,7 @@ func TestSessionContextReflectsCalledTools(t *testing.T) {
 	session := NewSessionTracker(st)
 	session.MarkToolCalled("get_recent_changes")
 
-	text := contextText(t, session)
+	text := contextText(t, st, session)
 	if !strings.Contains(text, "githints tools used this session: get_recent_changes") {
 		t.Errorf("context does not report the called tool:\n%s", text)
 	}
@@ -99,15 +100,16 @@ func TestSessionContextWhenEveryToolUsed(t *testing.T) {
 		session.MarkToolCalled(s.tool)
 	}
 
-	text := contextText(t, session)
+	text := contextText(t, st, session)
 	if !strings.Contains(text, "used every githints tool this session") {
 		t.Errorf("expected the all-used message:\n%s", text)
 	}
 }
 
 func TestSessionContextOnEmptyStore(t *testing.T) {
-	session := NewSessionTracker(sessionTestStore(t))
-	text := contextText(t, session)
+	st := sessionTestStore(t)
+	session := NewSessionTracker(st)
+	text := contextText(t, st, session)
 
 	if !strings.Contains(text, "recorded changes in store: 0") {
 		t.Errorf("expected zero count:\n%s", text)
@@ -177,5 +179,35 @@ func TestAddToolWrapperMarksCalls(t *testing.T) {
 	called := session.CalledTools()
 	if len(called) != 1 || called[0] != "some_tool" {
 		t.Errorf("called = %v, want [some_tool]", called)
+	}
+}
+
+// The first call of a session returns the brief after the session state, so
+// one call replaces the usual round of lookups.
+func TestSessionContextIncludesTheBrief(t *testing.T) {
+	st := sessionTestStore(t)
+	id, err := st.Insert(store.Change{FilePath: "a.go", Source: "agent", Summary: "added retry loop", DiffHash: "d", RecordedAt: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Insert(store.Change{
+		FilePath: "a.go", Source: "agent", Summary: "deadlocks under load", RecordedAt: 11,
+		Kind: store.KindOutcome, TargetID: id, TargetDiffHash: "d", OutcomeState: store.OutcomeFailed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	text := contextText(t, st, NewSessionTracker(st))
+	for _, want := range []string{
+		"session started:",
+		"Attempts that failed",
+		"#1 a.go: added retry loop → failed: deadlocks under load",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("session context is missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "session started:") > strings.Index(text, "Attempts that failed") {
+		t.Errorf("the brief should follow the session state:\n%s", text)
 	}
 }

@@ -3,7 +3,6 @@
 package hooks
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -19,7 +18,6 @@ import (
 	"github.com/cjrdz/githints/internal/index"
 	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/integrity"
-	"github.com/cjrdz/githints/internal/llm"
 	"github.com/cjrdz/githints/internal/recorder"
 	"github.com/cjrdz/githints/internal/store"
 )
@@ -31,32 +29,6 @@ func hookSummaryFor(verifiable bool) string {
 		return "Change detected by git hook (no AI summary recorded for this commit)."
 	}
 	return "Change detected by git hook; agent coverage could not be verified (binary, first commit, or missing diff stat)."
-}
-
-// hookFallbackSummary returns the generic fallback text and provenance for a
-// hook row. It is used when Ollama is disabled, the circuit breaker is open,
-// or any LLM call fails.
-func hookFallbackSummary(verifiable bool) (string, string) {
-	return hookSummaryFor(verifiable), "fallback"
-}
-
-// summarizeViaOllama asks the local Ollama model to caption a diff. On any
-// error it returns the generic fallback and logs a one-line warning. The model
-// output is treated as untrusted text: if the shared recorder rejects it (e.g.
-// it somehow contains a secret pattern), this function falls back as well.
-func summarizeViaOllama(ctx context.Context, client *llm.Client, hash, file string, verifiable bool) (summary, source string) {
-	diff, err := gitutil.FileDiff(hash, file)
-	if err != nil || strings.TrimSpace(diff) == "" {
-		return hookFallbackSummary(verifiable)
-	}
-
-	llmSummary, err := client.SummarizeDiff(ctx, file, diff)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "githints: ollama: %v\n", err)
-		return hookFallbackSummary(verifiable)
-	}
-
-	return llmSummary, "llm"
 }
 
 // HookRun is invoked by .git/hooks/post-commit. It records a low-detail
@@ -74,14 +46,6 @@ func HookRun() error {
 	cfg, err := config.Load(root)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
-	}
-
-	var client *llm.Client
-	if cfg.Ollama.Enabled {
-		client, err = llm.NewClient(cfg)
-		if err != nil {
-			return fmt.Errorf("ollama client: %w", err)
-		}
 	}
 
 	hash, err := gitutil.LastCommitHash()
@@ -102,11 +66,17 @@ func HookRun() error {
 		return fmt.Errorf("integrity key: %w", err)
 	}
 
-	ctx := context.Background()
 	rendered := false
 	for _, f := range files {
 		if f == "" || strings.HasPrefix(f, ".githints/") {
 			continue // never track changes to githints' own output
+		}
+		// Paths now arrive exactly as git has them, so one with a control
+		// character in it can: the recorder refuses those, and that must cost
+		// that file, not the rest of the commit's records and its anchor.
+		if err := recorder.ValidateFilePath(f); err != nil {
+			fmt.Fprintf(os.Stderr, "githints: not recording %q: %v\n", f, err)
+			continue
 		}
 
 		// Run the DB operations for this file atomically so the view of
@@ -140,37 +110,28 @@ func HookRun() error {
 
 		diffStat := gitutil.DiffStat(hash, f)
 		_, _, verifiable := gitutil.ParseDiffStat(diffStat)
-		summary, source := hookFallbackSummary(verifiable)
-		if client != nil {
-			summary, source = summarizeViaOllama(ctx, client, hash, f, verifiable)
-		}
 
+		// The hook never calls an LLM: a commit must not wait on a model, and
+		// the diff would leave the process on the commit path. Summaries come
+		// from the agent (record_change) or, on demand, from the MCP
+		// summarize flags.
 		err = recorder.Record(st, root, key, recorder.Input{
 			FilePath:   f,
-			Summary:    summary,
-			Source:     source,
+			Summary:    hookSummaryFor(verifiable),
+			Source:     "fallback",
 			DiffStat:   diffStat,
 			CommitHash: hash,
 		})
 		if err != nil {
-			// If the LLM produced a summary that the shared recorder rejected
-			// (e.g. it matched a secret pattern), fall back to the generic text.
-			if source == "llm" {
-				fmt.Fprintf(os.Stderr, "githints: ollama summary rejected: %v; using fallback\n", err)
-				fallbackSummary, _ := hookFallbackSummary(verifiable)
-				err = recorder.Record(st, root, key, recorder.Input{
-					FilePath:   f,
-					Summary:    fallbackSummary,
-					Source:     "fallback",
-					DiffStat:   diffStat,
-					CommitHash: hash,
-				})
-			}
-			if err != nil {
-				return fmt.Errorf("record %s: %w", f, err)
-			}
+			return fmt.Errorf("record %s: %w", f, err)
 		}
 		rendered = true
+	}
+
+	// Detection is a convenience on top of the record, never a reason to lose
+	// the rest of the hook's work: a failure here is reported and skipped.
+	if err := recordReverts(st, root, key, hash); err != nil {
+		fmt.Fprintf(os.Stderr, "githints: revert detection: %v\n", err)
 	}
 
 	if rendered {
