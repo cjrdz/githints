@@ -1,0 +1,11 @@
+{
+  "facets": [
+    "component astro src/components/Card.astro Card",
+    "route astro src/pages/api/feed.json.ts /api/feed.json GET",
+    "route astro src/pages/blog/[slug].astro /blog/[slug]",
+    "route astro src/pages/index.astro /"
+  ],
+  "edges": [
+    "src/pages/index.astro -> src/components/Card.astro"
+  ]
+}

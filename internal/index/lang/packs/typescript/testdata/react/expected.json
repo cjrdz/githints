@@ -1,0 +1,13 @@
+{
+  "facets": [
+    "component react src/App.tsx App",
+    "component react src/components/Button.jsx Button",
+    "component react src/components/Modal.tsx Modal",
+    "component react src/legacy/Old.js OldWidget"
+  ],
+  "edges": [
+    "src/App.tsx -> src/components/Button.jsx",
+    "src/App.tsx -> src/components/Modal.tsx",
+    "src/App.tsx -> src/utils/format.ts"
+  ]
+}

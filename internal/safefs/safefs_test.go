@@ -2,8 +2,10 @@ package safefs
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -151,5 +153,107 @@ func TestReadSingleLinkFileRefusesAHardLink(t *testing.T) {
 	// The plain reader is unchanged: only callers that ask for the check get it.
 	if b, err := ReadFileIn(r, "alias.md", 100); err != nil || string(b) != "SECRET" {
 		t.Errorf("ReadFileIn changed behavior: %q, %v", b, err)
+	}
+}
+
+// TestWriterRefusesLinksLikeWriteFile: the pass writer keeps WriteFileIn's
+// guarantee, including for a link whose target already holds the bytes
+// being written, which the unchanged-file check must not short-circuit.
+func TestWriterRefusesLinksLikeWriteFile(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "store.db")
+	if err := os.WriteFile(victim, []byte("overwritten"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("store.db", filepath.Join(dir, "CHANGES.md")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	os.Symlink("nowhere-at-all", filepath.Join(dir, "dangling.md"))
+	os.Symlink("real", filepath.Join(dir, "linked-dir"))
+	os.Symlink("..", filepath.Join(dir, "up"))
+
+	w, err := NewWriter(dir, 0o755, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	for name, rel := range map[string]string{
+		"link to a file with the same bytes": "CHANGES.md",
+		"dangling link":                      "dangling.md",
+		"link as a parent":                   "linked-dir/x.md",
+		"link to a parent":                   "up/x.md",
+		"nested link":                        "linked-dir/deeper/x.md",
+	} {
+		if err := w.WriteFile(rel, []byte("overwritten")); err == nil {
+			t.Errorf("%s: wrote through the link", name)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "real")); len(entries) != 0 {
+		t.Errorf("a file landed in the directory a link points at: %v", entries)
+	}
+	if w.Written() != 0 || w.Unchanged() != 0 {
+		t.Errorf("counted refused writes: written %d, unchanged %d", w.Written(), w.Unchanged())
+	}
+}
+
+func TestWriterSkipsUnchangedFiles(t *testing.T) {
+	dir := t.TempDir()
+	w, err := NewWriter(dir, 0o755, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	for _, step := range []struct{ rel, data string }{
+		{"index/a.md", "one"},
+		{"index/deep/b.md", "two"},
+		{"index/a.md", "one"}, // unchanged
+		{"index/a.md", "uno"}, // same size, new content
+		{"index/a.md", "longer"},
+	} {
+		if err := w.WriteFile(step.rel, []byte(step.data)); err != nil {
+			t.Fatalf("%s: %v", step.rel, err)
+		}
+	}
+	if w.Written() != 4 || w.Unchanged() != 1 {
+		t.Errorf("written %d, unchanged %d; want 4 and 1", w.Written(), w.Unchanged())
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "index", "a.md")); string(b) != "longer" {
+		t.Errorf("a.md = %q", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "index", "deep", "b.md")); string(b) != "two" {
+		t.Errorf("b.md = %q", b)
+	}
+}
+
+// TestWriterIsSafeForConcurrentUse: many goroutines writing into the same new
+// directories (run under -race), with every file written exactly once and
+// identical rewrites counted as unchanged.
+func TestWriterIsSafeForConcurrentUse(t *testing.T) {
+	dir := t.TempDir()
+	w, err := NewWriter(dir, 0o755, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	const n = 200
+	var wg sync.WaitGroup
+	for round := 0; round < 2; round++ {
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				rel := fmt.Sprintf("index/d%d/e%d/f%d.md", i%7, i%3, i)
+				if err := w.WriteFile(rel, []byte(rel)); err != nil {
+					t.Error(err)
+				}
+			}(i)
+		}
+		wg.Wait()
+	}
+	if w.Written() != n || w.Unchanged() != n {
+		t.Errorf("written %d, unchanged %d; want %d each", w.Written(), w.Unchanged(), n)
 	}
 }

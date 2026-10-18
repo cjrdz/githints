@@ -1,0 +1,19 @@
+{
+  // Electron: the main process's IPC handlers, named by their channel, are what
+  // the renderer invokes.
+  "framework": "electron",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "electron"
+  ],
+  "rules": [
+    {
+      "facet": "command",
+      "requires": "ipcMain.",
+      "keep_strings": true,
+      "pattern": "\\bipcMain\\.(?P<detail>handle|handleOnce|on|once)\\(\\s*['\"`](?P<name>[^'\"`]+)['\"`]"
+    }
+  ]
+}

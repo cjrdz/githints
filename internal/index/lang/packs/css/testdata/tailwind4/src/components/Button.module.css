@@ -1,0 +1,13 @@
+.primary {
+  background: var(--color-brand);
+}
+
+.primary:hover,
+.primary:focus-visible {
+  background: var(--color-brand-dark);
+}
+
+@keyframes pulse-ring {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}

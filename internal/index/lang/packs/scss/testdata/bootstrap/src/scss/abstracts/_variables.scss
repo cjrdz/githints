@@ -1,0 +1,16 @@
+// The project's own variables: in a file that does not import Bootstrap,
+// they are not Bootstrap overrides.
+$sidebar-width: 16rem;
+$brand-gradient: linear-gradient(#000, #333);
+
+@mixin respond($breakpoint) {
+  @media (min-width: $breakpoint) { @content; }
+}
+
+@function rem($px) {
+  @return math.div($px, 16px) * 1rem;
+}
+
+%visually-hidden {
+  position: absolute;
+}

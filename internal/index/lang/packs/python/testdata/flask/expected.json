@@ -1,0 +1,13 @@
+{
+  "facets": [
+    "model sqlalchemy app/models.py Post",
+    "model sqlalchemy app/models.py posts",
+    "route flask app/views.py /posts",
+    "route flask app/views.py /posts/<int:post_id>/like POST"
+  ],
+  "edges": [
+    "app/__init__.py -> app/views.py",
+    "app/models.py -> app/__init__.py",
+    "app/views.py -> app/models.py"
+  ]
+}

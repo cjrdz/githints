@@ -1,0 +1,7 @@
+{
+  "facets": [
+    "command tauri src-tauri/src/commands.rs greet",
+    "command tauri src-tauri/src/commands.rs save_note"
+  ],
+  "edges": []
+}

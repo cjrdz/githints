@@ -1,0 +1,30 @@
+{
+  // SwiftUI. Views are structs conforming to View; state holders are
+  // ObservableObject classes or @Observable classes (reported as services).
+  "framework": "swiftui",
+  "languages": [
+    "swift"
+  ],
+  "when_imports": [
+    "SwiftUI",
+    "Observation"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "requires": "View",
+      "pattern": "\\bstruct\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*:\\s*(?:[\\w.]+\\s*,\\s*)*(?:View)\\b"
+    },
+    {
+      "facet": "service",
+      "requires": "ObservableObject",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*:\\s*(?:[\\w.]+\\s*,\\s*)*(?:ObservableObject)\\b"
+    },
+    {
+      "facet": "service",
+      "requires": "@Observable",
+      "lookahead": 2,
+      "pattern": "@Observable\\b\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|package|final)\\s+)*class\\s+(?P<name>\\w+)"
+    }
+  ]
+}

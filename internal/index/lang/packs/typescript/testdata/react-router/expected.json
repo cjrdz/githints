@@ -1,0 +1,13 @@
+{
+  "facets": [
+    "component react src/spa.tsx Spa",
+    "route react-router app/routes.ts /",
+    "route react-router app/routes.ts /projects",
+    "route react-router app/routes.ts /projects/:pid",
+    "route react-router app/routes.ts about",
+    "route react-router app/routes.ts settings",
+    "route react-router src/spa.tsx /",
+    "route react-router src/spa.tsx /invoices/:invoiceId"
+  ],
+  "edges": []
+}

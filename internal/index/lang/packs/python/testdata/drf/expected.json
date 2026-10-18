@@ -1,0 +1,17 @@
+{
+  "facets": [
+    "command django shop/management/commands/import_catalog.py import_catalog",
+    "controller drf shop/views.py HealthView",
+    "controller drf shop/views.py ProductViewSet",
+    "job celery shop/tasks.py reindex",
+    "model django shop/models.py Product",
+    "route drf shop/urls.py products",
+    "schema drf shop/serializers.py ProductSerializer"
+  ],
+  "edges": [
+    "shop/serializers.py -> shop/models.py",
+    "shop/urls.py -> shop/views.py",
+    "shop/views.py -> shop/models.py",
+    "shop/views.py -> shop/serializers.py"
+  ]
+}

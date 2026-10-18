@@ -16,6 +16,16 @@ func TestEmbeddedSpecsAreValid(t *testing.T) {
 	if len(parsers) == 0 {
 		t.Fatal("no embedded specs loaded; the go:embed pattern may have stopped matching")
 	}
+	// A scan validates nothing and compiles on first use, so this is where a
+	// broken embedded spec is caught.
+	for _, p := range parsers {
+		if err := p.spec.Validate(); err != nil {
+			t.Errorf("embedded spec %s is invalid: %v", p.Language(), err)
+		}
+		if err := p.ready(); err != nil {
+			t.Errorf("embedded spec %s does not compile: %v", p.Language(), err)
+		}
+	}
 }
 
 // TestEmbeddedSpecsAreRegistered proves the whole point of the mechanism: a

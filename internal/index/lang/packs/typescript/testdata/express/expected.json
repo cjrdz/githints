@@ -1,0 +1,19 @@
+{
+  "facets": [
+    "middleware express src/app.js cors",
+    "middleware express src/app.js express.json",
+    "migration knex migrations/20240101120000_create_users.js 20240101120000_create_users",
+    "model mongoose src/models/User.js User",
+    "route express src/app.js /health GET",
+    "route express src/routes/admin.ts /admin/stats GET",
+    "route express src/routes/users.js / GET",
+    "route express src/routes/users.js /:id POST",
+    "route express src/routes/users.js /:id/avatar",
+    "schema zod src/schemas/user.js UserSchema"
+  ],
+  "edges": [
+    "src/app.js -> src/routes/users.js",
+    "src/routes/users.js -> src/models/User.js",
+    "src/routes/users.js -> src/schemas/user.js"
+  ]
+}

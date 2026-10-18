@@ -1,0 +1,39 @@
+{
+  // Vapor. A path is written as separate segments (app.get("users", ":id") is
+  // /users/:id), a route with none is the root of its group, and
+  // routes.grouped("api", "v1") assigned to a variable prefixes its routes,
+  // joining the group it came from.
+  "framework": "vapor",
+  "languages": [
+    "swift"
+  ],
+  "when_imports": [
+    "Vapor"
+  ],
+  "prefixes": [
+    {
+      "requires": ".grouped(",
+      "keep_strings": true,
+      "name_style": "segments",
+      "pattern": "(?P<var>\\w+)\\s*=\\s*(?P<parent>\\w+)\\.grouped\\(\\s*(?P<prefix>\\\"[^\\\"]*\\\"(?:\\s*,\\s*\\\"[^\\\"]*\\\")*)"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".get(",
+        ".post(",
+        ".put(",
+        ".patch(",
+        ".delete(",
+        ".on(",
+        ".get {",
+        ".post {"
+      ],
+      "keep_strings": true,
+      "name_style": "segments",
+      "pattern": "\\b(?P<var>\\w+)\\.(?P<detail>get|post|put|patch|delete)\\s*(?:\\(\\s*(?P<name>\\\"[^\\\"]*\\\"(?:\\s*,\\s*\\\"[^\\\"]*\\\")*)?[^)]*\\)|\\s*\\{)"
+    }
+  ]
+}

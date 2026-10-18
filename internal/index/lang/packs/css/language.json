@@ -1,0 +1,42 @@
+{
+  // CSS, and PostCSS sources. A stylesheet's symbols are what a person looks
+  // one up by: class and id selectors (.btn, #app), custom properties
+  // (--brand), @property and @keyframes names. A selector is indexed by its
+  // first class or id, at the line the rule starts on. Minified files are
+  // build output, not source.
+  //
+  // Stylesheets are graph nodes only when an import links them: a script's
+  // import "./app.css", or another stylesheet's @import.
+  "language": "css",
+  "extensions": [".css", ".pcss", ".postcss"],
+  "exclude_filenames": ["*.min.css"],
+  "depth_style": "brace",
+  "graph": "linked",
+
+  // CSS has block comments only; // is not a comment.
+  "comments": { "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "import_path": "stylesheet",
+
+  "symbols": [
+    { "kind": "var", "requires": "--", "pattern": "^\\s*(?P<name>--[A-Za-z_][\\w-]*)\\s*:" },
+    { "kind": "var", "requires": "@property", "pattern": "^\\s*@property\\s+(?P<name>--[A-Za-z_][\\w-]*)" },
+    { "kind": "const", "requires": "keyframes", "pattern": "^\\s*@(?:-webkit-|-moz-)?keyframes\\s+(?P<name>[A-Za-z_][\\w-]*)" },
+    {
+      // .btn-primary:hover, .btn-primary:focus { and a selector list split
+      // over lines (.a,\n.b {), whose first line ends with a comma.
+      "kind": "type",
+      "requires": ".",
+      "pattern": "^\\s*(?P<name>\\.[A-Za-z_-][\\w-]*)[^{};]*(?:\\{.*|,)\\s*$"
+    },
+    { "kind": "type", "requires": "#", "pattern": "^\\s*(?P<name>#[A-Za-z_-][\\w-]*)[^{};]*(?:\\{.*|,)\\s*$" }
+  ],
+
+  "imports": [
+    { "requires": "@import", "pattern": "^\\s*@import\\s+(?:url\\(\\s*)?[\"']?(?P<path>[^\"'()\\s;]+)" }
+  ]
+}

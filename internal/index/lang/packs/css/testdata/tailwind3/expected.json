@@ -1,0 +1,7 @@
+{
+  "facets": [
+    "style tailwind src/input.css .btn-primary component class",
+    "style tailwind tailwind.config.js tailwind.config config"
+  ],
+  "edges": []
+}

@@ -1,0 +1,61 @@
+{
+  // Android. Screens are Activities and Fragments; Jetpack Compose UI is
+  // @Composable functions; ViewModels hold screen state (reported as services);
+  // Room @Entity classes are models and @Dao interfaces services; WorkManager
+  // workers are jobs; Navigation Compose destinations (composable("route")) are
+  // routes.
+  "framework": "android",
+  "languages": [
+    "kotlin"
+  ],
+  "when_imports": [
+    "android",
+    "androidx"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "requires": "Activity",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*:\\s*(?:[\\w.<>]+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*,\\s*)*(?:\\w*Activity)\\b"
+    },
+    {
+      "facet": "component",
+      "requires": "Fragment",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*:\\s*(?:[\\w.<>]+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*,\\s*)*(?:\\w*Fragment)\\b"
+    },
+    {
+      "facet": "component",
+      "requires": "@Composable",
+      "lookahead": 3,
+      "pattern": "@Composable\\b\\s*(?:@[\\w.]+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|private|internal|protected|override|open|suspend|inline)\\s+)*fun\\s+(?:<[^>]+>\\s*)?(?P<name>[A-Z]\\w*)\\s*\\("
+    },
+    {
+      "facet": "service",
+      "requires": "ViewModel",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*:\\s*(?:[\\w.<>]+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*,\\s*)*(?:\\w*ViewModel)\\b"
+    },
+    {
+      "facet": "model",
+      "requires": "@Entity",
+      "lookahead": 4,
+      "pattern": "@Entity\\b(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*(?:@[\\w.]+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|private|internal|open|abstract|final|data|sealed)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "service",
+      "requires": "@Dao",
+      "lookahead": 3,
+      "pattern": "@Dao\\b\\s*(?:@[\\w.]+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|internal|abstract)\\s+)*(?:interface|class)\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "job",
+      "requires": "Worker",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*:\\s*(?:[\\w.<>]+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*,\\s*)*(?:(?:Coroutine|Rx|Listenable)?Worker)\\b"
+    },
+    {
+      "facet": "route",
+      "requires": "composable",
+      "keep_strings": true,
+      "pattern": "(?:^|[^.\\w])composable\\(\\s*(?:route\\s*=\\s*)?\"(?P<name>[^\"]*)\""
+    }
+  ]
+}

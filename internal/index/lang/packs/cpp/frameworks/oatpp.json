@@ -1,0 +1,21 @@
+{
+  // oat++: ENDPOINT("GET", "/users/{id}", getUser, ...) inside an
+  // ApiController subclass.
+  "framework": "oatpp",
+  "languages": ["cpp"],
+  "when_imports": ["oatpp"],
+  "when_dependencies": ["oatpp"],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "ENDPOINT",
+      "keep_strings": true,
+      "pattern": "\\bENDPOINT(?:_ASYNC)?\\(\\s*\"(?P<detail>[A-Za-z]+)\"\\s*,\\s*\"(?P<name>[^\"]*)\""
+    },
+    {
+      "facet": "controller",
+      "requires": "ApiController",
+      "pattern": "\\bclass\\s+(?P<name>[A-Za-z_]\\w*)\\s*(?:final\\s*)?:\\s*(?:public\\s+)?(?:oatpp::web::server::api::)?ApiController\\b"
+    }
+  ]
+}

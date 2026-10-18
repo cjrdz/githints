@@ -1,0 +1,31 @@
+{
+  // Flutter. Widgets are classes extending StatelessWidget or StatefulWidget
+  // (their State classes are not reported separately); ChangeNotifier, Cubit and
+  // Bloc classes hold state and are reported as services.
+  "framework": "flutter",
+  "languages": [
+    "dart"
+  ],
+  "when_imports": [
+    "package:flutter",
+    "package:flutter_bloc",
+    "package:bloc"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "requires": "Widget",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+(?:Stateless|Stateful|Consumer|ConsumerStateful|HookConsumer|Hook)Widget\\b"
+    },
+    {
+      "facet": "service",
+      "requires_any": [
+        "ChangeNotifier",
+        "Cubit<",
+        "Bloc<",
+        "Notifier<"
+      ],
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+(?:extends|with)\\s+(?:ChangeNotifier|Cubit<|Bloc<|\\w*Notifier<)"
+    }
+  ]
+}

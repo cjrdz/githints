@@ -1,0 +1,94 @@
+{
+  // C. Headers (.h) belong to the cpp language, whose rules are a superset of
+  // these: a .h file cannot say which of the two it is written in, and C++
+  // projects use .h at least as often as C ones do.
+  "language": "c",
+  "extensions": [".c"],
+  "depth_style": "brace",
+
+  // The preprocessor's # is code, not a comment.
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\", "continue_on_escape": true },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  // A header is named by its path; see ImportPathInclude for the search.
+  "import_path": "include",
+
+  // A declaration has no keyword in C: `int f(int x)` and `return f(x);`
+  // differ only by the word before the name. These words are never a type,
+  // so a match whose type is one of them is a statement (or a macro call),
+  // not a declaration.
+  "ignore_names": [
+    "if", "else", "for", "while", "do", "switch", "case", "return", "goto", "sizeof",
+    "typedef", "static", "extern", "inline", "defined", "_Static_assert", "static_assert",
+    "__attribute__", "_Generic", "_Alignof", "alignof"
+  ],
+
+  "symbols": [
+    {
+      "kind": "type",
+      "requires": "typedef",
+      "pattern": "^\\s*typedef\\s+[^;(]*\\(\\s*\\*\\s*(?P<name>[A-Za-z_]\\w*)\\s*\\)\\s*\\("
+    },
+    {
+      "kind": "type",
+      "requires": "typedef",
+      "pattern": "^\\s*typedef\\s+[\\w\\s*]+?\\b(?P<name>[A-Za-z_]\\w*)\\s*(?:\\[[^\\]]*\\])?\\s*;"
+    },
+    {
+      "kind": "type",
+      "requires": "struct",
+      "pattern": "^\\s*(?:typedef\\s+)?struct\\s+(?:__attribute__\\(\\(.*?\\)\\)\\s*)?(?P<name>[A-Za-z_]\\w*)\\s*(?:\\{.*)?$"
+    },
+    {
+      "kind": "type",
+      "requires": "union",
+      "pattern": "^\\s*(?:typedef\\s+)?union\\s+(?:__attribute__\\(\\(.*?\\)\\)\\s*)?(?P<name>[A-Za-z_]\\w*)\\s*(?:\\{.*)?$"
+    },
+    {
+      "kind": "type",
+      "requires": "enum",
+      "pattern": "^\\s*(?:typedef\\s+)?enum\\s+(?:__attribute__\\(\\(.*?\\)\\)\\s*)?(?P<name>[A-Za-z_]\\w*)\\s*(?:\\{.*)?$"
+    },
+    {
+      // The name a typedef'd anonymous struct gets on its closing line:
+      // typedef struct { ... } point_t;
+      "kind": "type",
+      "requires": "}",
+      "pattern": "^\\s*\\}\\s*(?P<name>[A-Za-z_]\\w*)\\s*;"
+    },
+    {
+      "kind": "func",
+      "requires": "define",
+      "pattern": "^\\s*#\\s*define\\s+(?P<name>[A-Za-z_]\\w*)\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      // An include guard (#define APP_H) defines nothing to look up, so a
+      // macro needs a value to be indexed.
+      "kind": "const",
+      "requires": "define",
+      "pattern": "^\\s*#\\s*define\\s+(?P<name>[A-Za-z_]\\w*)\\s+\\S"
+    },
+    {
+      // A definition (`{` here or below) or a prototype (`;`).
+      "kind": "func",
+      "requires": "(",
+      "pattern": "^\\s*(?:[A-Z][A-Z0-9_]+\\s+)*(?:(?:static|inline|extern|_Noreturn|__inline|__inline__|__attribute__\\(\\(.*?\\)\\))\\s+)*(?:(?:const|volatile|unsigned|signed|short|long|struct|union|enum)\\s+)*(?P<type>[A-Za-z_]\\w*)(?:\\s+|\\s*\\*[\\s*]*)(?:const\\s+)?(?:__\\w+\\s+)*(?P<name>[A-Za-z_]\\w*)\\s*\\((?P<sig>[^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*(?:__attribute__\\(\\(.*\\)\\)\\s*)?(?:;|\\{.*)?$"
+    },
+    {
+      // GNU style puts the return type on the line above, leaving the name
+      // at column 0. A name with no lower-case letter is a macro call
+      // (G_DEFINE_TYPE (...)), not a function.
+      "kind": "func",
+      "requires": "(",
+      "pattern": "^(?P<name>[A-Za-z0-9_]*[a-z]\\w*)\\s*\\((?P<sig>[^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*$"
+    }
+  ],
+
+  "imports": [
+    { "requires": "include", "relative": true, "pattern": "^\\s*#\\s*include\\s*\"(?P<path>[^\"]+)\"" },
+    { "requires": "include", "pattern": "^\\s*#\\s*include\\s*<(?P<path>[^>]+)>" }
+  ]
+}

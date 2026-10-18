@@ -1,0 +1,12 @@
+{
+  "facets": [
+    "component swiftui Sources/JournalApp/EntryList.swift EntryList",
+    "component swiftui Sources/JournalApp/EntryList.swift EntryRow",
+    "model swiftdata Sources/JournalKit/Entry.swift Entry",
+    "service swiftui Sources/JournalKit/EntryStore.swift EntryStore"
+  ],
+  "edges": [
+    "Sources/JournalApp/ -> Sources/JournalKit/",
+    "Tests/JournalKitTests/EntryTests.swift -> Sources/JournalKit/"
+  ]
+}

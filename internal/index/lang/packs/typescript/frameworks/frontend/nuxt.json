@@ -1,0 +1,39 @@
+{
+  // Nuxt routes are files: pages/ for pages (app/pages/ in Nuxt 4), server/api/
+  // and server/routes/ for server routes, where a .get or .post suffix names the
+  // method. Components and composables are auto-imported, so the import graph
+  // does not link a page to the components its template uses.
+  "framework": "nuxt",
+  "languages": [
+    "typescript",
+    "vue"
+  ],
+  "when_dependencies": [
+    "nuxt"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "name_style": "route",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:app/|src/)?pages(?P<name>(?:/[^/]+)*?/[^/]+?)\\.vue$"
+    },
+    {
+      "facet": "route",
+      "name_style": "route",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?server/(?P<name>api(?:/[^/]+)*?/[^/]+?)(?:\\.(?P<detail>get|post|put|patch|delete|head|options))?\\.(?:ts|js|mjs)$"
+    },
+    {
+      "facet": "route",
+      "name_style": "route",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?server/routes(?P<name>(?:/[^/]+)*?/[^/]+?)(?:\\.(?P<detail>get|post|put|patch|delete|head|options))?\\.(?:ts|js|mjs)$"
+    },
+    {
+      "facet": "middleware",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?server/middleware/(?P<name>[^/]+?)\\.(?:ts|js|mjs)$"
+    },
+    {
+      "facet": "middleware",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:app/|src/)?middleware/(?P<name>[^/]+?)(?:\\.global)?\\.(?:ts|js)$"
+    }
+  ]
+}

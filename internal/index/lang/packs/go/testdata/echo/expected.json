@@ -1,0 +1,8 @@
+{
+  "facets": [
+    "middleware echo server.go middleware.Logger",
+    "route echo server.go / GET",
+    "route echo server.go /admin/posts/:id DELETE"
+  ],
+  "edges": []
+}

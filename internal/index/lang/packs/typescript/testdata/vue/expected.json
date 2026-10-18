@@ -1,0 +1,18 @@
+{
+  "facets": [
+    "component vue src/App.vue App",
+    "component vue src/components/LegacyWidget.vue LegacyWidget",
+    "component vue src/components/UserCard.vue UserCard",
+    "component vue src/views/HomeView.vue HomeView",
+    "component vue src/views/UserView.vue UserView",
+    "route vue-router src/router/index.ts /",
+    "route vue-router src/router/index.ts /users/:id"
+  ],
+  "edges": [
+    "src/App.vue -> src/components/UserCard.vue",
+    "src/main.ts -> src/App.vue",
+    "src/main.ts -> src/router/index.ts",
+    "src/router/index.ts -> src/views/HomeView.vue",
+    "src/router/index.ts -> src/views/UserView.vue"
+  ]
+}

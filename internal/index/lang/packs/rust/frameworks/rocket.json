@@ -1,0 +1,26 @@
+{
+  // Rocket route attributes. Rocket code often reaches the crate through
+  // #[macro_use] extern crate rocket rather than a use, so the Cargo dependency
+  // is a gate too. The prefix given to .mount() is not followed.
+  "framework": "rocket",
+  "languages": [
+    "rust"
+  ],
+  "when_imports": [
+    "rocket"
+  ],
+  "when_dependencies": [
+    "rocket"
+  ],
+  "unless_imports": [
+    "actix_web"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "#[",
+      "keep_strings": true,
+      "pattern": "#\\[(?P<detail>get|post|put|patch|delete|head|options)\\(\\s*\"(?P<name>[^\"]*)\""
+    }
+  ]
+}

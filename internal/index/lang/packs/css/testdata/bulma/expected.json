@@ -1,0 +1,10 @@
+{
+  "facets": [
+    "style bulma src/theme.scss $family-primary variable",
+    "style bulma src/theme.scss $primary variable",
+    "style bulma src/theme.scss bulma/sass import",
+    "style bulma src/tokens.css --bulma-primary-h theme token",
+    "style bulma src/tokens.css --bulma-radius theme token"
+  ],
+  "edges": []
+}

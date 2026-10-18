@@ -1,0 +1,19 @@
+{
+  // Angular route tables. Paths are reported as written (no leading slash); a
+  // child route is reported with its own path.
+  "framework": "angular-router",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "@angular/router"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "path:",
+      "keep_strings": true,
+      "pattern": "\\bpath:\\s*['\"`](?P<name>[^'\"`]*)['\"`]"
+    }
+  ]
+}

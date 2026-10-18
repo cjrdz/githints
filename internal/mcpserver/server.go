@@ -77,6 +77,11 @@ const instructions = `githints records what changed in this repo and why, per fi
   call get_file_history(file) to see why it is shaped the way it is, and the
   index tools (list_symbols, find_symbol, get_dependents, get_dependency_graph) to see what depends
   on it.
+- To find code, ask the index before reading files: find_facets(facet="route")
+  lists HTTP routes (and model, component, controller, service, job, command,
+  infra, style...), find_symbol(name) finds a definition by name prefix, and
+  get_dependency_graph(file) maps a file's neighbourhood. One call costs far
+  fewer tokens than searching file contents.
 - Call get_recent_changes(limit=20) to catch up on work done by another agent, a
   teammate, or a manual commit.
 - Before re-deriving something that took effort (a design choice, a plan, a hard
@@ -347,7 +352,9 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 	addTool(
 		mcp.NewTool("find_symbol",
 			mcp.WithDescription("Find a symbol by exact or prefix name across the whole repo. "+
-				"Returns the file, line, and kind for each match."),
+				"Returns the file, line, and kind for each match: cheaper than searching file "+
+				"contents. A C++ member defined outside its class is named Class::member, so a "+
+				"class name also finds its members."),
 			mcp.WithString("name", mcp.Required(),
 				mcp.Description("Symbol name to search for (exact or prefix)")),
 			mcp.WithNumber("limit", mcp.Min(1), mcp.Max(500),
@@ -372,7 +379,8 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 				"where many files share one import path). Pass file to get its neighbourhood: what it "+
 				"imports and what imports it, out to depth hops. Use it to see how a change ripples "+
 				"beyond direct dependents, or to get a map of an unfamiliar area. format=mermaid "+
-				"returns a diagram you can show a person; json returns nodes and edges."),
+				"returns a diagram you can show a person; json returns nodes and edges, with \"test\": true "+
+				"on test code (a node of test files, or an import only test files make)."),
 			mcp.WithString("file",
 				mcp.Description("Repo-relative path to center on. Omit for the most connected part of the whole repo.")),
 			mcp.WithNumber("depth", mcp.Min(1), mcp.Max(maxGraphDepth),
@@ -389,11 +397,18 @@ func Run(root string, st *store.Store, cfg config.Config, version string) error 
 		mcp.NewTool("find_facets",
 			mcp.WithDescription("Find framework constructs by the role they play, across languages. "+
 				"Facets are normalized: Django, GORM, Prisma, SQLAlchemy and Eloquent models are all "+
-				"'model'; chi, Flask, FastAPI, Spring and Laravel routes are all 'route'. Use this to "+
+				"'model'; chi, Flask, FastAPI, Spring and Laravel routes are all 'route'; pydantic "+
+				"and SQLModel request bodies and zod schemas are 'schema'; a Tailwind theme token, a "+
+				"Bootstrap variable override or where a CSS framework is imported is 'style'. A "+
+				"route's detail is its HTTP "+
+				"method in upper case; file-based routes (Next.js, Nuxt, SvelteKit, Astro) are named by "+
+				"URL. Routes include a prefix declared in the same file (APIRouter(prefix=), "+
+				"@Controller('users'), basePath, Laravel's Route::prefix()->group()), not one added "+
+				"in another file. Use this to "+
 				"answer 'where are the HTTP routes' or 'what are the database models' without knowing "+
 				"which frameworks the repo uses. Omit all filters to see everything detected."),
 			mcp.WithString("facet",
-				mcp.Description("Role to find: route, model, component, migration, job or test. Omit for all.")),
+				mcp.Description("Role to find: "+strings.Join(lang.KnownFacets(), ", ")+". Omit for all.")),
 			mcp.WithString("framework",
 				mcp.Description("Restrict to one framework, e.g. django. Omit for all.")),
 			mcp.WithString("file",

@@ -1,0 +1,4 @@
+# Not a compose file: a services: key here is just configuration.
+services:
+  mailer:
+    host: smtp.example.com

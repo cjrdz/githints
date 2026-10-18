@@ -1,0 +1,58 @@
+{
+  // CodeIgniter 4. Routes are $routes-> calls in app/Config/Routes.php, and a
+  // $routes->group("admin", ...) applies to the routes inside its closure.
+  // Models extend CodeIgniter\Model, controllers BaseController, filters
+  // implement FilterInterface.
+  "framework": "codeigniter",
+  "languages": [
+    "php"
+  ],
+  "when_imports": [
+    "CodeIgniter"
+  ],
+  "when_dependencies": [
+    "codeigniter4/framework"
+  ],
+  "prefixes": [
+    {
+      "requires": "->group(",
+      "keep_strings": true,
+      "scope": "statement",
+      "pattern": "\\$routes->group\\(\\s*['\"](?P<prefix>[^'\"]*)['\"]"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "$routes->",
+      "keep_strings": true,
+      "pattern": "\\$routes->(?P<detail>get|post|put|patch|delete|options|head|match|add|cli)\\(\\s*(?:\\[[^\\]]*\\]\\s*,\\s*)?['\"](?P<name>[^'\"]*)['\"]"
+    },
+    {
+      "facet": "route",
+      "requires": "$routes->",
+      "keep_strings": true,
+      "pattern": "\\$routes->(?P<detail>resource|presenter)\\(\\s*['\"](?P<name>[^'\"]*)['\"]"
+    },
+    {
+      "facet": "model",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:Model)\\b"
+    },
+    {
+      "facet": "controller",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:BaseController|ResourceController|ResourcePresenter|Controller)\\b"
+    },
+    {
+      "facet": "migration",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:Migration)\\b"
+    },
+    {
+      "facet": "middleware",
+      "requires": "FilterInterface",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\b[^{;]*\\bimplements\\s+[^{;]*\\bFilterInterface\\b"
+    }
+  ]
+}

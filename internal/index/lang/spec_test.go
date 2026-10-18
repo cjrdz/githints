@@ -98,6 +98,7 @@ func TestLoadSpecRejects(t *testing.T) {
 		{"noLanguage", `{"extensions":[".x"],"symbols":[{"kind":"func","pattern":"(?P<name>a)"}]}`, "no language name"},
 		{"languageWithColon", `{"language":"c:sharp","extensions":[".x"],"symbols":[{"kind":"func","pattern":"(?P<name>a)"}]}`, "must not contain"},
 		{"languageWithComma", `{"language":"a,b","extensions":[".x"],"symbols":[{"kind":"func","pattern":"(?P<name>a)"}]}`, "must not contain"},
+		{"languageAuto", `{"language":"Auto","extensions":[".x"],"symbols":[{"kind":"func","pattern":"(?P<name>a)"}]}`, "reserved"},
 		{"badDepthStyle", base(`"depth_style":"tabs","symbols":[{"kind":"func","pattern":"(?P<name>a)"}]`), "unknown depth_style"},
 		{"noExtensions", `{"language":"x","symbols":[{"kind":"func","pattern":"(?P<name>a)"}]}`, "claims no extensions"},
 		{"extensionNoDot", `{"language":"x","extensions":["x"],"symbols":[{"kind":"func","pattern":"(?P<name>a)"}]}`, "must start with"},

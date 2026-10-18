@@ -10,8 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cjrdz/githints/internal/gitutil"
@@ -28,30 +30,30 @@ import (
 // a smaller one (partial-write guard) and refuses to write data that would exceed
 // maxBytes. Use force to override either guard.
 func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error {
-	registry := lang.NewRegistryForRoot(opts.Root)
 	// Strict on purpose. The user ran `githints index`, so an unsupported
 	// language is worth stopping for, and the error names the supported set.
-	// IncrementalScan is deliberately lenient; see the comment there.
-	parsers, err := registry.ResolveLanguages(opts.Languages)
+	// IncrementalScan is deliberately lenient; see openScan.
+	sess, err := openScan(opts, true)
 	if err != nil {
 		return err
 	}
-	set := lang.ParserSet(parsers)
-	extMap := lang.ExtensionMap(set)
-
-	// Let each enabled parser install whatever per-scan state it needs, such
-	// as the TypeScript path aliases. Adding a language with its own project
-	// configuration no longer means editing this function.
-	defer lang.BeginScans(parsers, opts.Root)()
+	defer sess.close()
+	registry, extMap := sess.registry, sess.files
 
 	meta := lang.IndexMeta{LanguageCounts: make(map[string]int)}
-
-	detectors, detectorErrs := lang.EmbeddedDetectors()
-	for _, err := range detectorErrs {
-		fmt.Fprintf(os.Stderr, "githints: framework detector ignored: %v\n", err)
-	}
+	// Files of a language the binary supports but index.languages leaves out.
+	// Without naming them, a repository in a language nobody enabled reported
+	// "indexed 0 files" and "unsupported files: N", and nothing said why.
+	disabled := make(map[string]int)
 
 	var candidates []candidate
+
+	// Every ignored directory and file, decided up front by one git process
+	// per pass (scanIgnores). One process per directory was two thirds of a
+	// full scan (524 ms of 790 on this repository), and one batch per depth
+	// level after that still four times what this costs.
+	ignores := scanIgnores(opts.Root)
+	ignoredDir := ignores.dirs
 
 	var allSymbols []lang.Symbol
 	var allImports []lang.Import
@@ -85,10 +87,16 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 			if rel == ".git" {
 				return filepath.SkipDir
 			}
-			if shouldIgnoreFile(opts.Root, rel) {
+			if ignoredDir[rel] {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+
+		// The walk sees every manifest the dependency gates will ask about;
+		// recording them here spares a listing of each directory later.
+		if d.Type().IsRegular() && lang.IsManifest(rel) {
+			sess.manifests.Seen(rel)
 		}
 
 		info, err := d.Info()
@@ -109,6 +117,13 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 		parser := lang.SelectParser(extMap, rel)
 		if parser == nil {
 			meta.UnsupportedCount++
+			if p := registry.ForPath(rel); p != nil {
+				// The binary could have parsed it; config left it out.
+				// Counted before the per-file ignore check, so an ignored
+				// file inside a tracked directory counts too: the message
+				// below says "about".
+				disabled[p.Language()]++
+			}
 			return nil
 		}
 
@@ -125,14 +140,18 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	if err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
+	sess.manifests.MarkWalked()
 
-	// One pair of git invocations for every candidate, rather than one pair
-	// each.
-	rels := make([]string, 0, len(candidates))
-	for _, c := range candidates {
-		rels = append(rels, c.rel)
+	// When the listing failed, one pair of git invocations for every
+	// candidate, rather than one pair each.
+	ignored := ignores.files
+	if ignored == nil {
+		rels := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			rels = append(rels, c.rel)
+		}
+		ignored = resolveIgnored(opts.Root, rels)
 	}
-	ignored := resolveIgnored(opts.Root, rels)
 
 	work := candidates[:0:0]
 	for _, c := range candidates {
@@ -145,7 +164,7 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 	// and together they are most of what a scan spends its time on. They run
 	// across a worker pool; everything that follows is merged back in walk
 	// order.
-	results := parseCandidates(work, opts, detectors)
+	results := sess.parse(work)
 
 	for i, c := range work {
 		r := results[i]
@@ -168,35 +187,125 @@ func FullScan(db *Store, opts lang.ScanOptions, force bool, maxBytes int) error 
 		allFacets = append(allFacets, r.facets...)
 	}
 
+	// Before the write guards: when a guard refuses an empty result, this is
+	// the likeliest explanation for it.
+	for _, name := range lang.SortedKeys(disabled) {
+		fmt.Fprintf(os.Stderr,
+			"githints: index: about %d %s file(s) not indexed: %q is not in index.languages (use \"auto\" for every supported language)\n",
+			disabled[name], name, name)
+	}
+
 	if err := guardWrite(db, allSymbols, allImports, allFacets, force, maxBytes); err != nil {
 		return err
 	}
 
-	if err := db.Clear(); err != nil {
-		return err
+	// The notes render from the rows in memory while SQLite stores the same
+	// rows: the two touch different files and neither waits on the other.
+	// Only INDEX.md, which reads counts and hub rankings back from the
+	// database, waits for both.
+	w, err := safefs.NewWriter(githintsDir(opts.Root), safefs.StateDirPerm, 0o644)
+	if err != nil {
+		return fmt.Errorf("open .githints: %w", err)
 	}
-	if err := db.InsertSymbols(allSymbols); err != nil {
-		return err
-	}
-	if err := db.InsertImports(allImports); err != nil {
-		return err
-	}
-	if err := db.InsertFacets(allFacets); err != nil {
-		return err
-	}
+	defer w.Close()
+	// The import keys are computed here too, and handed to the database
+	// write once its rows are in: file_keys is what lets the hook look a key
+	// up rather than recompute every file's.
+	var keys importKeys
+	var renderErr error
+	keysReady := make(chan struct{})
+	rendering := make(chan struct{})
+	go func() {
+		defer close(rendering)
+		notes, files := memoryNotes(allSymbols, allImports, allFacets)
+		keys = resolveImportPathsFor(files, opts.Root, registry)
+		close(keysReady)
+		renderErr = renderFileNotes(w, notes, files, opts.Root, keys)
+	}()
+
 	meta.LastIndexedAt = time.Now().Unix()
-	if err := db.SetMeta(meta); err != nil {
-		return err
+	dbErr := writeFullIndex(db, rebuildRows{
+		symbols:   allSymbols,
+		imports:   allImports,
+		facets:    allFacets,
+		meta:      meta,
+		languages: lang.ParserNames(sess.parsers),
+		keys: func() map[string]string {
+			<-keysReady
+			return keys.ofFile
+		},
+	})
+	<-rendering
+	// A failed database write leaves notes rendered from rows the database
+	// did not keep. They are a derived cache, `index verify` reports the
+	// drift, and the next scan rewrites both.
+	if dbErr != nil {
+		return dbErr
 	}
-	if err := db.SetResolverVersion(); err != nil {
+	if renderErr != nil {
+		return renderErr
+	}
+	if err := renderIndexRollup(w, db, opts.Root, keys); err != nil {
+		return fmt.Errorf("render index rollup: %w", err)
+	}
+	return nil
+}
+
+// incrementalKeys returns the import keys the hook renders with.
+//
+// Normally the changed files' keys are stored and every other key is looked
+// up in file_keys. Recomputing every indexed file's key on each commit cost
+// time in proportion to the repository, not the commit (60 ms of a 250 ms
+// hook on Qt's source). All keys are recomputed, and stored, when the stored
+// set is incomplete (an index from before file_keys, or one a failed write
+// left behind) or when the commit changed a file keys derive from, such as a
+// go.mod or Cargo.toml.
+func incrementalKeys(db *Store, root string, registry *lang.Registry, paths, withRows []string) keyLookup {
+	recompute := !db.keysComplete()
+	for _, p := range paths {
+		if registry.AffectsImportKeys(p) {
+			recompute = true
+			break
+		}
+	}
+	if recompute {
+		keys := resolveImportPaths(db, root, registry)
+		if err := db.replaceKeys(keys.ofFile); err != nil {
+			fmt.Fprintf(os.Stderr, "githints: index: store import keys: %v\n", err)
+		}
+		return keys
+	}
+	changed := make(map[string]string, len(withRows))
+	for _, f := range withRows {
+		if key, err := registry.ImportPath(root, f); err == nil {
+			changed[f] = key
+		}
+	}
+	if err := db.setKeys(changed); err != nil {
+		// The stored set is now behind: mark it so the next run recomputes,
+		// and render this one from a full computation.
+		fmt.Fprintf(os.Stderr, "githints: index: store import keys: %v\n", err)
+		if err := metaSetOn(db.db, metaKeysComplete, ""); err != nil {
+			// The database refused two writes in a row; `githints index
+			// verify` reports the stale keys and a full index repairs them.
+			fmt.Fprintf(os.Stderr, "githints: index: mark import keys stale: %v\n", err)
+		}
+		return resolveImportPaths(db, root, registry)
+	}
+	return storedKeys{db}
+}
+
+// writeFullIndex replaces the index's rows and metadata with a full scan's,
+// in one transaction, then returns freed pages to the filesystem.
+func writeFullIndex(db *Store, rows rebuildRows) error {
+	if err := db.rebuild(rows); err != nil {
 		return err
 	}
 	if err := db.ReclaimSpace(); err != nil {
 		// Vacuum is purely an optimization; log and continue.
 		fmt.Fprintf(os.Stderr, "githints: index vacuum: %v\n", err)
 	}
-
-	return RenderNotes(db, opts.Root, opts.Obsidian)
+	return nil
 }
 
 // Row size estimates. These are approximations of what SQLite will store,
@@ -338,6 +447,7 @@ func shouldIgnoreFile(root, rel string) bool {
 // excludesFile is non-empty, it is passed via -c core.excludesFile so the file
 // is treated as an additional global exclude file.
 func gitCheckIgnore(root, rel, excludesFile string) bool {
+	gitIgnoreCalls.Add(1)
 	var args []string
 	if excludesFile != "" {
 		args = append(args, "-c", "core.excludesFile="+excludesFile)
@@ -400,47 +510,54 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 			fmt.Fprintln(os.Stderr, "githints: the index was built by an older githints whose import resolution differs; run `githints index` once to rebuild it")
 		}
 	}
-	registry := lang.NewRegistryForRoot(opts.Root)
-	// Lenient on purpose: this runs from the post-commit hook, which only
-	// warns on a scan error, so a hard failure here means the commit succeeds
-	// while the index silently stops updating forever. FullScan and
-	// VerifyIndex stay strict because the user invoked those directly and an
-	// error is the answer they asked for.
-	parsers, unknown, err := registry.ResolveKnownLanguages(opts.Languages)
+	// Lenient on purpose: see openScan.
+	sess, err := openScan(opts, false)
 	if err != nil {
 		return err
 	}
-	if len(unknown) > 0 {
+	defer sess.close()
+	registry, extMap := sess.registry, sess.files
+	// A language enabled since the last full scan reaches the index only one
+	// committed file at a time. Say so, as for the resolver version above.
+	if why, err := db.LanguagesStaleness(lang.ParserNames(sess.parsers)); err == nil && why != "" {
 		fmt.Fprintf(os.Stderr,
-			"githints: index: ignoring unsupported language(s) %s; indexing the rest (supported: %s)\n",
-			strings.Join(unknown, ", "), strings.Join(registry.Languages(), ", "))
+			"githints: index: the index was %s; run `githints index` once so existing files of every enabled language are indexed\n", why)
 	}
-	detectors, detectorErrs := lang.EmbeddedDetectors()
-	for _, err := range detectorErrs {
-		fmt.Fprintf(os.Stderr, "githints: framework detector ignored: %v\n", err)
-	}
-	set := lang.ParserSet(parsers)
-	extMap := lang.ExtensionMap(set)
 
-	// Let each enabled parser install whatever per-scan state it needs, such
-	// as the TypeScript path aliases. Adding a language with its own project
-	// configuration no longer means editing this function.
-	defer lang.BeginScans(parsers, opts.Root)()
-
-	// Files whose rows were written and which therefore need a note.
-	var rendered []string
+	// Files whose rows were written and which therefore need a note, and
+	// those of them that hold any rows, which are the files with a stored key.
+	var rendered, withRows []string
 
 	budget, err := incrementalBudget(db, maxBytes)
 	if err != nil {
 		return err
 	}
 
-	repoRoot, err := os.OpenRoot(opts.Root)
-	if err != nil {
-		return fmt.Errorf("open repo root: %w", err)
-	}
-	defer repoRoot.Close()
+	repoRoot := sess.repo
 
+	// A manifest names the frameworks every file below it is detected with,
+	// and this scan re-detects only the files the commit touched.
+	for _, path := range paths {
+		if lang.IsManifest(path) {
+			fmt.Fprintf(os.Stderr,
+				"githints: index: %s changed; run `githints index` to re-detect frameworks in files this commit did not touch\n", path)
+			break
+		}
+	}
+
+	// One batched ignore check for the commit's paths instead of up to two
+	// git processes per path; only valid paths are asked about.
+	var askIgnore []string
+	for _, path := range paths {
+		if recorder.ValidateFilePath(path) == nil && path != ".githints" && !strings.HasPrefix(path, ".githints/") {
+			askIgnore = append(askIgnore, path)
+		}
+	}
+	ignoredPath := resolveIgnored(opts.Root, askIgnore)
+
+	// The files to parse, in commit order. Deleted and unsupported files are
+	// handled on the way.
+	var work []candidate
 	for _, path := range paths {
 		if err := recorder.ValidateFilePath(path); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index skipped (invalid path): %s: %v\n", path, err)
@@ -475,7 +592,7 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 		if shouldSkipFile(abs, info) {
 			continue
 		}
-		if shouldIgnoreFile(opts.Root, path) {
+		if ignoredPath[path] {
 			continue
 		}
 		if info.Size() > opts.MaxFileSize {
@@ -491,30 +608,30 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 			}
 			continue
 		}
+		work = append(work, candidate{rel: path, abs: abs, parser: parser})
+	}
 
-		src, err := safefs.ReadFileIn(repoRoot, path, opts.MaxFileSize)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "githints: index skipped (read error): %s: %v\n", path, err)
+	// Parse and detect the commit's files across the worker pool, as the
+	// full scan does; the results come back in commit order and are written
+	// one file at a time, so the budget stops at the same file as before.
+	results := sess.parse(work)
+	for i, c := range work {
+		path, r := c.rel, results[i]
+		if r.warn != "" {
+			// A file that cannot be read or parsed keeps its existing rows.
+			fmt.Fprintln(os.Stderr, r.warn)
 			continue
 		}
-
-		symbols, imports, err := parseWithTimeout(parser, path, src, opts.ParseTimeout)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "githints: index skipped (parse error): %s: %v\n", path, err)
-			continue
-		}
-
 		if err := db.DeleteFile(path); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index delete failed: %s: %v\n", path, err)
 			continue
 		}
-		facets := detectFacets(detectors, parser, path, src, imports)
 
 		// Stop before crossing the cap rather than after. The remaining files
 		// keep their existing rows, so the index stays consistent -- just no
 		// longer complete, which the error says plainly.
 		if budget >= 0 {
-			budget -= estimateRowBytes(symbols, imports, facets)
+			budget -= estimateRowBytes(r.symbols, r.imports, r.facets)
 			if budget < 0 {
 				return fmt.Errorf("index reached max_bytes (%d) while indexing %s; "+
 					"remaining files were not indexed. Raise index.max_bytes, "+
@@ -522,32 +639,34 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 			}
 		}
 
-		if err := db.InsertSymbols(symbols); err != nil {
+		if err := db.InsertSymbols(r.symbols); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index insert symbols failed: %s: %v\n", path, err)
 			continue
 		}
-		if err := db.InsertImports(imports); err != nil {
+		if err := db.InsertImports(r.imports); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index insert imports failed: %s: %v\n", path, err)
 			continue
 		}
-		if err := db.InsertFacets(facets); err != nil {
+		if err := db.InsertFacets(r.facets); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index insert facets failed: %s: %v\n", path, err)
 			continue
 		}
 		rendered = append(rendered, path)
+		if len(r.symbols)+len(r.imports)+len(r.facets) > 0 {
+			withRows = append(withRows, path)
+		}
 	}
 
-	// resolveImportPaths reads every indexed file and resolves each one's
-	// import path, so calling it per changed file made an incremental scan
-	// cost O(changed x indexed): the same twenty files took 51ms, 146ms and
-	// 1.08s as the index grew. It is computed once here instead.
-	//
-	// It has to come after the write loop, not before: the map must include
-	// the rows this scan just inserted, or a new file would render without
-	// its own links.
-	importToFile := resolveImportPaths(db, opts.Root, registry)
+	// After the write loop, so the keys include the files this scan just
+	// wrote, or a new file would render without its own links.
+	keys := incrementalKeys(db, opts.Root, registry, paths, withRows)
+	w, err := safefs.NewWriter(githintsDir(opts.Root), safefs.StateDirPerm, 0o644)
+	if err != nil {
+		return fmt.Errorf("open .githints: %w", err)
+	}
+	defer w.Close()
 	for _, path := range rendered {
-		if err := renderFileNote(db, opts.Root, path, opts.Obsidian, importToFile, registry); err != nil {
+		if err := renderFileNote(w, dbNotes{db}, opts.Root, path, keys); err != nil {
 			fmt.Fprintf(os.Stderr, "githints: index note render failed: %s: %v\n", path, err)
 		}
 	}
@@ -561,7 +680,7 @@ func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes 
 	if err := db.SetMeta(meta); err != nil {
 		return fmt.Errorf("set index meta: %w", err)
 	}
-	if err := renderIndexRollup(db, opts.Root, opts.Obsidian, registry); err != nil {
+	if err := renderIndexRollup(w, db, opts.Root, keys); err != nil {
 		return fmt.Errorf("render index rollup: %w", err)
 	}
 
@@ -581,7 +700,7 @@ type lineBlanker interface {
 //
 // A parser that cannot produce blanked views simply contributes no facets:
 // guessing from raw source would be worse than reporting nothing.
-func detectFacets(set *lang.DetectorSet, parser lang.LanguageParser, rel string, src []byte, imports []lang.Import) []lang.Detected {
+func detectFacets(set *lang.DetectorSet, parser lang.LanguageParser, rel string, src []byte, imports []lang.Import, manifests *lang.Manifests) []lang.Detected {
 	if set.Empty() {
 		return nil
 	}
@@ -590,12 +709,204 @@ func detectFacets(set *lang.DetectorSet, parser lang.LanguageParser, rel string,
 		return nil
 	}
 	return set.Detect(lang.DetectInput{
-		FilePath: rel,
-		Language: parser.Language(),
-		Imports:  imports,
-		Code:     bl.BlankLines(src),
-		Strings:  bl.BlankLinesKeepingStrings(src),
+		FilePath:         rel,
+		Language:         parser.Language(),
+		Imports:          imports,
+		LoadDependencies: func() []string { return manifests.DependenciesFor(rel) },
+		LoadViews: func() ([]string, []string) {
+			return bl.BlankLines(src), bl.BlankLinesKeepingStrings(src)
+		},
 	})
+}
+
+// scanSession is what every scan sets up the same way, whichever files it
+// covers: the registry, the enabled parsers and the file map choosing among
+// them, the framework detectors, each parser's per-scan state, the manifest
+// cache, and one os.Root on the repository that every read goes through.
+// FullScan and IncrementalScan differ in what they scan and how they write
+// it; the per-file step, parse, is the same code for both.
+type scanSession struct {
+	opts      lang.ScanOptions
+	registry  *lang.Registry
+	parsers   []lang.LanguageParser
+	files     *lang.FileMap
+	detectors *lang.DetectorSet
+	manifests *lang.Manifests
+	repo      *os.Root
+	endScans  func()
+}
+
+// scanGCPercent paces the garbage collector during a scan. A scan allocates
+// heavily for a short time, and at the default of 100 the collector's mark
+// work was about 12% of its CPU. Measured on this repository: 200 cut wall
+// time 13% and CPU 17% for about 10 MB more peak memory; 400 bought almost
+// nothing more for twice that memory. A GOGC the user set is left alone.
+const scanGCPercent = 200
+
+// scanMemoryLimit is a soft memory limit while a scan runs. With the
+// collector paced at 200 a large scan kept three times its live heap: a full
+// index of Qt's source peaked at 480 MB for a live heap of about 130 MB. Under
+// this limit it peaked at 270 MB in the same wall time, for about 5% more CPU;
+// a smaller repository never reaches it. The limit is soft (the runtime caps
+// the collector's CPU rather than stalling), and a GOMEMLIMIT the user set is
+// left alone, as is a lower limit already in force.
+const scanMemoryLimit = 256 << 20
+
+// scanGC sets scanGCPercent and scanMemoryLimit while any scan runs and
+// restores the previous settings when the last one ends. They are
+// process-wide, and the MCP server can run a scan while serving, so the
+// scans are counted rather than toggled.
+var scanGC struct {
+	mu        sync.Mutex
+	count     int
+	prev      int
+	setGC     bool
+	prevLimit int64
+	setLimit  bool
+}
+
+func beginScanGC() {
+	scanGC.mu.Lock()
+	defer scanGC.mu.Unlock()
+	if scanGC.count == 0 {
+		scanGC.setGC = os.Getenv("GOGC") == ""
+		if scanGC.setGC {
+			scanGC.prev = debug.SetGCPercent(scanGCPercent)
+		}
+		// SetMemoryLimit with a negative value only reads the limit.
+		current := debug.SetMemoryLimit(-1)
+		scanGC.setLimit = os.Getenv("GOMEMLIMIT") == "" && current > scanMemoryLimit
+		if scanGC.setLimit {
+			scanGC.prevLimit = debug.SetMemoryLimit(scanMemoryLimit)
+		}
+	}
+	scanGC.count++
+}
+
+func endScanGC() {
+	scanGC.mu.Lock()
+	defer scanGC.mu.Unlock()
+	if scanGC.count--; scanGC.count == 0 {
+		if scanGC.setGC {
+			debug.SetGCPercent(scanGC.prev)
+		}
+		if scanGC.setLimit {
+			debug.SetMemoryLimit(scanGC.prevLimit)
+		}
+	}
+}
+
+// openScan prepares a scan. strict decides what an unsupported language in
+// opts.Languages means: an error for work the user invoked directly (a full
+// scan), or a warning for the post-commit hook, which only warns on a scan
+// error -- a hard failure there would let the commit succeed while the index
+// silently stopped updating for good.
+func openScan(opts lang.ScanOptions, strict bool) (*scanSession, error) {
+	registry := lang.NewRegistryForRoot(opts.Root)
+	var parsers []lang.LanguageParser
+	if strict {
+		var err error
+		if parsers, err = registry.ResolveLanguages(opts.Languages); err != nil {
+			return nil, err
+		}
+	} else {
+		var unknown []string
+		var err error
+		if parsers, unknown, err = registry.ResolveKnownLanguages(opts.Languages); err != nil {
+			return nil, err
+		}
+		if len(unknown) > 0 {
+			fmt.Fprintf(os.Stderr,
+				"githints: index: ignoring unsupported language(s) %s; indexing the rest (supported: %s)\n",
+				strings.Join(unknown, ", "), strings.Join(registry.Languages(), ", "))
+		}
+	}
+	detectors, detectorErrs := lang.EmbeddedDetectors()
+	for _, err := range detectorErrs {
+		fmt.Fprintf(os.Stderr, "githints: framework detector ignored: %v\n", err)
+	}
+	repo, err := os.OpenRoot(opts.Root)
+	if err != nil {
+		return nil, fmt.Errorf("open repo root: %w", err)
+	}
+	beginScanGC()
+	return &scanSession{
+		opts:      opts,
+		registry:  registry,
+		parsers:   parsers,
+		files:     lang.ExtensionMap(lang.ParserSet(parsers)),
+		detectors: detectors,
+		manifests: lang.NewManifests(opts.Root),
+		repo:      repo,
+		// Each enabled parser installs whatever per-scan state it needs,
+		// such as the TypeScript path aliases.
+		endScans: lang.BeginScans(parsers, opts.Root),
+	}, nil
+}
+
+func (sess *scanSession) close() {
+	endScanGC()
+	sess.endScans()
+	_ = sess.manifests.Close() // a listing root; nothing to recover on error
+	_ = sess.repo.Close()      // read-only; nothing to recover on error
+}
+
+// gitIgnoreCalls counts the git processes ignore checks start. A scan's cost
+// is dominated by process starts, so TestScanCostModel pins how this grows:
+// with the depth of the tree, never with the number of directories or files.
+var gitIgnoreCalls atomic.Int64
+
+// maxIgnoreLevels bounds the breadth-first directory listing. A tree deeper
+// than this is listed no further for pruning; the per-file check still
+// applies to everything found below.
+const maxIgnoreLevels = 64
+
+// ignoredDirs lists the repository breadth first and asks git about each
+// depth level's directories in one batch (resolveIgnored: the same two
+// passes, .gitignore then .githintsignore, and the same per-path fallback).
+// An ignored directory is not listed further, so node_modules is never
+// read. Links are not followed, as WalkDir does not follow them.
+//
+// The result is the set of ignored directory paths, which the walk prunes
+// by lookup, keeping its order.
+func ignoredDirs(root string) map[string]bool {
+	ignored := map[string]bool{}
+	frontier := []string{"."}
+	for level := 0; level < maxIgnoreLevels && len(frontier) > 0; level++ {
+		var children []string
+		for _, dir := range frontier {
+			entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				rel := e.Name()
+				if dir != "." {
+					rel = dir + "/" + rel
+				}
+				if rel == ".git" || rel == ".githints" {
+					continue
+				}
+				children = append(children, rel)
+			}
+		}
+		if len(children) == 0 {
+			break
+		}
+		verdict := resolveIgnored(root, children)
+		frontier = frontier[:0]
+		for _, c := range children {
+			if verdict[c] {
+				ignored[c] = true
+			} else {
+				frontier = append(frontier, c)
+			}
+		}
+	}
+	return ignored
 }
 
 // ignoreSet is the resolved ignore status of a batch of paths.
@@ -617,28 +928,36 @@ func resolveIgnored(root string, rels []string) ignoreSet {
 		return ignoreSet{}
 	}
 
+	// The two passes run as two concurrent git processes, not one after the
+	// other: each is a blocked wait on a child process, which leaves its
+	// processor to the other goroutine, so the pair costs about one. The
+	// answer is the same as running them in order. .githintsignore only ever
+	// adds ignores (its pass applies the repository's rules plus its own), so
+	// a path the first pass ignores stays ignored, and for any other path the
+	// second pass is asked exactly what it was asked before.
+	hintsIgnore := filepath.Join(root, ".githintsignore")
+	var extra ignoreSet
+	var extraErr error
+	var wg sync.WaitGroup
+	if fileExists(hintsIgnore) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			extra, extraErr = batchCheckIgnore(root, rels, hintsIgnore)
+		}()
+	}
 	ignored, err := batchCheckIgnore(root, rels, "")
+	wg.Wait()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "githints: batched ignore check failed (%v); falling back to per-path\n", err)
 		return perPathIgnored(root, rels)
 	}
-
-	hintsIgnore := filepath.Join(root, ".githintsignore")
-	if fileExists(hintsIgnore) {
-		var remaining []string
-		for _, rel := range rels {
-			if !ignored[rel] {
-				remaining = append(remaining, rel)
-			}
-		}
-		extra, err := batchCheckIgnore(root, remaining, hintsIgnore)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "githints: batched .githintsignore check failed (%v); falling back to per-path\n", err)
-			return perPathIgnored(root, rels)
-		}
-		for rel := range extra {
-			ignored[rel] = true
-		}
+	if extraErr != nil {
+		fmt.Fprintf(os.Stderr, "githints: batched .githintsignore check failed (%v); falling back to per-path\n", extraErr)
+		return perPathIgnored(root, rels)
+	}
+	for rel := range extra {
+		ignored[rel] = true
 	}
 	return ignored
 }
@@ -660,6 +979,7 @@ func batchCheckIgnore(root string, rels []string, excludesFile string) (ignoreSe
 	if len(rels) == 0 {
 		return out, nil
 	}
+	gitIgnoreCalls.Add(1)
 
 	args := []string{}
 	if excludesFile != "" {
@@ -725,52 +1045,54 @@ type fileResult struct {
 // shared mode, so a scan that emitted symbols in completion order would
 // produce a different diff on every run. Each worker writes to its own slot
 // and nothing is appended concurrently.
-func parseCandidates(work []candidate, opts lang.ScanOptions, detectors *lang.DetectorSet) []fileResult {
+func (sess *scanSession) parse(work []candidate) []fileResult {
 	results := make([]fileResult, len(work))
-	if len(work) == 0 {
-		return results
-	}
-
-	workers := runtime.NumCPU()
-	if workers > maxParseWorkers {
-		workers = maxParseWorkers
-	}
-	if workers > len(work) {
-		workers = len(work)
-	}
-
-	jobs := make(chan int)
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				results[i] = parseOne(work[i], opts, detectors)
-			}
-		}()
-	}
-	for i := range work {
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
-
+	inParallel(len(work), min(runtime.NumCPU(), maxParseWorkers), func(i int) {
+		results[i] = sess.parseOne(work[i])
+	})
 	return results
 }
 
-// parseOne is the per-file work a pool worker does. It touches nothing shared:
-// parsers and detectors are immutable once built, and the per-scan state they
-// consult is installed before the pool starts and read under a lock.
-func parseOne(c candidate, opts lang.ScanOptions, detectors *lang.DetectorSet) fileResult {
-	// Read through an os.Root with the size cap re-applied: the walk saw this
-	// path as a regular file, but it can be swapped for a link before the read.
-	src, err := safefs.ReadFile(opts.Root, c.rel, opts.MaxFileSize)
+// inParallel runs fn(0) to fn(n-1) on at most workers goroutines. Each worker
+// claims the next index with one atomic add: feeding them through an
+// unbuffered channel cost a goroutine handoff per item, and measured on this
+// repository's 398 files the claim-by-counter pool parsed 12% faster on 12%
+// less CPU.
+func inParallel(n, workers int, fn func(i int)) {
+	if workers > n {
+		workers = n
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= n {
+					return
+				}
+				fn(i)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// parseOne is the per-file work a pool worker does. It touches nothing shared
+// but the session, whose parsers and detectors are immutable once built and
+// whose per-scan state (parser hooks, manifests) is read under a lock.
+func (sess *scanSession) parseOne(c candidate) fileResult {
+	// Read through the session's os.Root with the size cap re-applied: the
+	// walk or Lstat saw this path as a regular file, but it can be swapped
+	// for a link before the read.
+	src, err := safefs.ReadFileIn(sess.repo, c.rel, sess.opts.MaxFileSize)
 	if err != nil {
 		return fileResult{warn: fmt.Sprintf("githints: index skipped (read error): %s: %v", c.rel, err)}
 	}
 
-	symbols, imports, err := parseWithTimeout(c.parser, c.rel, src, opts.ParseTimeout)
+	symbols, imports, err := parseWithTimeout(c.parser, c.rel, src, sess.opts.ParseTimeout)
 	if err != nil {
 		return fileResult{warn: fmt.Sprintf("githints: index skipped (parse error): %s: %v", c.rel, err)}
 	}
@@ -778,6 +1100,6 @@ func parseOne(c candidate, opts lang.ScanOptions, detectors *lang.DetectorSet) f
 	return fileResult{
 		symbols: symbols,
 		imports: imports,
-		facets:  detectFacets(detectors, c.parser, c.rel, src, imports),
+		facets:  detectFacets(sess.detectors, c.parser, c.rel, src, imports, sess.manifests),
 	}
 }

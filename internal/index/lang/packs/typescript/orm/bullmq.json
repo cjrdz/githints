@@ -1,0 +1,18 @@
+{
+  // BullMQ workers, named by their queue.
+  "framework": "bullmq",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "bullmq"
+  ],
+  "rules": [
+    {
+      "facet": "job",
+      "requires": "Worker",
+      "keep_strings": true,
+      "pattern": "\\bnew\\s+Worker(?:<[^>]*>)?\\(\\s*['\"`](?P<name>[^'\"`]+)['\"`]"
+    }
+  ]
+}

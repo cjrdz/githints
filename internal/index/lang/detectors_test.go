@@ -135,7 +135,7 @@ func TestFastAPIDetector(t *testing.T) {
 	found := detectIn(t, "python", "main.py", src, "fastapi")
 	wantNames(t, named(found, "fastapi", FacetRoute), []string{"/users/{uid}", "/users/{uid}"})
 	for _, f := range found {
-		if f.Detail != "get" && f.Detail != "delete" {
+		if f.Detail != "GET" && f.Detail != "DELETE" {
 			t.Errorf("method not captured: %+v", f)
 		}
 	}
@@ -284,11 +284,15 @@ func TestSpringDetector(t *testing.T) {
 
 	found := detectIn(t, "java", "src/main/java/com/example/UserController.java", src,
 		"org.springframework.web.bind.annotation.GetMapping")
-	// Ordered by line: @RequestMapping on the class precedes @GetMapping on
-	// the method.
-	wantNames(t, named(found, "spring", FacetRoute), []string{"/api", "/users"})
+	// The class-level @RequestMapping is a prefix, not a route of its own:
+	// Spring serves /api/users. Until the Phase 5 pack it was reported as
+	// two routes, /api and /users, neither of which is the real path.
+	wantNames(t, named(found, "spring", FacetRoute), []string{"/api/users"})
+	wantNames(t, named(found, "spring", FacetController), []string{"UserController"})
 }
 
+// TestEloquentDetector: models are Eloquent's, routes Laravel's (they shared
+// one detector until the PHP pack split them).
 func TestEloquentDetector(t *testing.T) {
 	src := "" +
 		"<?php\n\n" +
@@ -301,7 +305,7 @@ func TestEloquentDetector(t *testing.T) {
 	found := detectIn(t, "php", "app/Models/User.php", src,
 		`Illuminate\Database\Eloquent\Model`, `Illuminate\Support\Facades\Route`)
 	wantNames(t, named(found, "eloquent", FacetModel), []string{"User"})
-	wantNames(t, named(found, "eloquent", FacetRoute), []string{"/users", "/users"})
+	wantNames(t, named(found, "laravel", FacetRoute), []string{"/users", "/users"})
 }
 
 func TestEntityFrameworkDetector(t *testing.T) {
@@ -339,10 +343,10 @@ func TestEveryDetectorHasAWorkingLanguage(t *testing.T) {
 	set, _ := EmbeddedDetectors()
 	r := NewRegistry()
 	for _, d := range set.detectors {
-		for language := range d.languages {
+		for _, language := range d.def.Languages {
 			p := r.ForLanguage(language)
 			if p == nil {
-				t.Errorf("detector %s targets %q, which is not a registered language", d.framework, language)
+				t.Errorf("detector %s targets %q, which is not a registered language", d.def.Framework, language)
 				continue
 			}
 			if _, ok := p.(interface {
@@ -350,7 +354,7 @@ func TestEveryDetectorHasAWorkingLanguage(t *testing.T) {
 				BlankLinesKeepingStrings([]byte) []string
 			}); !ok {
 				t.Errorf("detector %s targets %s, which exposes no blanked views, so it can never match",
-					d.framework, language)
+					d.def.Framework, language)
 			}
 		}
 	}

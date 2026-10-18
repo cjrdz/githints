@@ -1,0 +1,67 @@
+{
+  // PHP.
+  //
+  // A class is imported by its namespaced name, which the nearest
+  // composer.json's PSR-4 autoload map turns into a file: with
+  // "App\\": "app/", app/Models/User.php is App\Models\User.
+  //
+  // Heredoc and nowdoc are not modelled. Their bodies are treated as code,
+  // which can produce a spurious match from text that looks like a
+  // declaration; the alternative was mis-modelling them and blanking real code.
+  "language": "php",
+  "extensions": [".php"],
+  "depth_style": "brace",
+
+  // "#[" opens a PHP 8 attribute (#[Route("/x")], #[ORM\Entity]), which
+  // detectors need to see; "#" alone is a comment.
+  "comments": { "line": ["//", "#"], "not_line": ["#["], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "import_path": "psr4",
+
+  "symbols": [
+    {
+      "kind": "type",
+      "requires": "class",
+      "pattern": "^\\s*(?:(?:abstract|final|readonly)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "interface",
+      "pattern": "^\\s*interface\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "trait",
+      "pattern": "^\\s*trait\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "enum",
+      "pattern": "^\\s*enum\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "func",
+      "requires": "function",
+      "pattern": "^\\s*(?:(?:public|private|protected|static|abstract|final)\\s+)*function\\s+&?(?P<name>\\w+)\\s*\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      "kind": "const",
+      "requires": "const",
+      "pattern": "^\\s*(?:(?:public|private|protected|final)\\s+)*const\\s+(?P<name>\\w+)\\s*="
+    }
+  ],
+
+  "imports": [
+    // Top level only: `use HasFactory;` inside a class body is a trait.
+    // use App\Models\{User, Post};
+    { "requires": "use", "top_level": true,
+      "pattern": "^\\s*use\\s+(?:function\\s+|const\\s+)?(?P<path>\\\\?[\\w\\\\]+?)\\\\\\{(?P<members>[^}]*)\\}" },
+    // use App\Models\User; use App\Models\User as U; use A\B, C\D; (the first)
+    { "requires": "use", "top_level": true,
+      "pattern": "^\\s*use\\s+(?:function\\s+|const\\s+)?(?P<path>\\\\?[\\w\\\\]*\\w)\\s*(?:as\\s+\\w+\\s*)?[;,]" }
+  ]
+}

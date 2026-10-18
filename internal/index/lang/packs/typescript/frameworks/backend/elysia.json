@@ -1,0 +1,40 @@
+{
+  // Elysia, Bun's web framework. Routes are usually chained on the instance
+  // (new Elysia({ prefix: "/v1" }).get(...).post(...)), so they carry no
+  // variable; a prefix applies to the routes after it, until the next instance.
+  "framework": "elysia",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "elysia"
+  ],
+  "prefixes": [
+    {
+      "requires": "Elysia",
+      "keep_strings": true,
+      "pattern": "new\\s+Elysia\\(\\s*\\{[^}]*\\bprefix:\\s*['\\\"](?P<prefix>[^'\\\"]*)['\\\"]"
+    },
+    {
+      "requires": "Elysia",
+      "pattern": "new\\s+Elysia\\(\\s*\\)(?P<prefix>)"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".get(",
+        ".post(",
+        ".put(",
+        ".patch(",
+        ".delete(",
+        ".options(",
+        ".head(",
+        ".all("
+      ],
+      "keep_strings": true,
+      "pattern": "\\.(?P<detail>get|post|put|patch|delete|options|head|all)\\(\\s*['\\\"](?P<name>/[^'\\\"]*)['\\\"]"
+    }
+  ]
+}

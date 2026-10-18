@@ -1,0 +1,46 @@
+{
+  // Swift (iOS, macOS, Vapor).
+  //
+  // A file is named by its Swift Package Manager target (Sources/<Target>/),
+  // which `import Target` names. Files of one module never import each
+  // other, so the module is the node; an Xcode project without a
+  // Package.swift has symbols and imports but no inbound edges.
+  //
+  // String interpolation \(expr) is blanked with its string. A quote inside
+  // one ("\(d["k"])") ends the string early on that line; rare enough to
+  // accept.
+  "language": "swift",
+  "extensions": [".swift"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"\"\"", "close": "\"\"\"", "escape": "\\", "multiline": true },
+    { "open": "\"", "close": "\"", "escape": "\\" }
+  ],
+
+  "import_path": "spm",
+
+  // `class func` and `class var` declare type members, not classes.
+  "ignore_names": ["func", "var", "let"],
+
+  "symbols": [
+    { "kind": "type", "requires": "struct",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|package)\\s+)*struct\\s+(?P<name>\\w+)" },
+    { "kind": "type", "requires": "class",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|package|final)\\s+)*class\\s+(?P<name>\\w+)" },
+    { "kind": "type", "requires": "enum",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|package|indirect)\\s+)*enum\\s+(?P<name>\\w+)" },
+    { "kind": "type", "requires": "protocol",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|package)\\s+)*protocol\\s+(?P<name>\\w+)" },
+    { "kind": "type", "requires": "actor",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|package|final)\\s+)*actor\\s+(?P<name>\\w+)" },
+    { "kind": "func", "requires": "func",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|package|static|class|final|override|mutating|nonmutating|nonisolated|convenience|required)\\s+)*func\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*\\((?P<sig>[^)]*)\\)" }
+  ],
+
+  "imports": [
+    { "requires": "import",
+      "pattern": "^\\s*(?:@\\w+\\s+)*import\\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\\s+)?(?P<path>\\w+)" }
+  ]
+}

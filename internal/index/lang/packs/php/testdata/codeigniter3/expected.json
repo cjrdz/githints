@@ -1,0 +1,10 @@
+{
+  "facets": [
+    "controller codeigniter application/controllers/Welcome.php Welcome",
+    "model codeigniter application/models/Blog_model.php Blog_model",
+    "route codeigniter application/config/routes.php / welcome",
+    "route codeigniter application/config/routes.php blog/(:any) blog/view/$1",
+    "route codeigniter application/config/routes.php products/(:num) product/update/$1"
+  ],
+  "edges": []
+}

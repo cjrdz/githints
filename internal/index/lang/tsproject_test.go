@@ -197,3 +197,35 @@ func TestJavaMultiModuleImportPath(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkspaceWalkIsLazy: every scan begins a TS project, including a hook
+// run over one C++ file, and the workspace walk visits the whole repository.
+// It runs on the first package import resolved, and only then.
+func TestWorkspaceWalkIsLazy(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"packages/ui/package.json": `{"name":"@acme/ui","main":"src/index.ts"}`,
+		"packages/ui/src/index.ts": "export const x = 1\n",
+		"apps/web/main.ts":         "import { x } from '@acme/ui'\n",
+		"src/a.cpp":                "int a() { return 0; }\n",
+	})
+	reg := NewRegistry()
+	defer BeginScans(reg.AllParsers(), root)()
+	before := tsDiscoveries.Load()
+	if _, _, err := reg.ForPath("src/a.cpp").Parse("src/a.cpp", []byte("int a() { return 0; }\n")); err != nil {
+		t.Fatal(err)
+	}
+	if n := tsDiscoveries.Load() - before; n != 0 {
+		t.Fatalf("parsing a C++ file walked the workspace %d time(s)", n)
+	}
+	_, imports, err := reg.ForPath("apps/web/main.ts").Parse("apps/web/main.ts", []byte("import { x } from '@acme/ui'\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := tsDiscoveries.Load() - before; n != 1 {
+		t.Errorf("a workspace import walked the workspace %d time(s), want 1", n)
+	}
+	if got := importPaths(imports); len(got) != 1 || got[0] != "packages/ui/src" {
+		t.Errorf("@acme/ui resolved to %q", got)
+	}
+}

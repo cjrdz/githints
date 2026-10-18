@@ -1,0 +1,12 @@
+// The project's own mixins and variables: this file does not import
+// Bootstrap, so @gutter is not an override.
+.border-radius(@radius) {
+  border-radius: @radius;
+}
+
+@gutter: 30px;
+
+.panel-wide,
+.panel-tall {
+  padding: @gutter;
+}

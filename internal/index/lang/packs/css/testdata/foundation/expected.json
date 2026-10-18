@@ -1,0 +1,11 @@
+{
+  "facets": [
+    "style foundation scss/app.scss $global-font-size variable",
+    "style foundation scss/app.scss $primary-color variable",
+    "style foundation scss/app.scss foundation-button component",
+    "style foundation scss/app.scss foundation-global-styles component",
+    "style foundation scss/app.scss foundation-sites/scss/foundation import",
+    "style foundation scss/app.scss foundation-xy-grid-classes component"
+  ],
+  "edges": []
+}

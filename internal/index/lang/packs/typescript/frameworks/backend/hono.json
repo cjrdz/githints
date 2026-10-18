@@ -1,0 +1,47 @@
+{
+  // Hono. new Hono().basePath("/api") prefixes that app's routes, and
+  // app.route("/books", books) prefixes the routes of a books app declared in
+  // the same file. Prefixes do not chain: a sub-app's routes get the mount path,
+  // not the parent's basePath as well.
+  "framework": "hono",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "hono"
+  ],
+  "prefixes": [
+    {
+      "requires": "basePath",
+      "keep_strings": true,
+      "pattern": "(?P<var>[A-Za-z_$][\\w$]*)\\s*=\\s*new\\s+Hono(?:<[^>]*>)?\\(\\s*\\)\\s*\\.basePath\\(\\s*['\\\"](?P<prefix>[^'\\\"]*)['\\\"]"
+    },
+    {
+      "requires": ".route(",
+      "keep_strings": true,
+      "pattern": "\\.route\\(\\s*['\\\"](?P<prefix>/[^'\\\"]*)['\\\"]\\s*,\\s*(?P<var>[A-Za-z_$][\\w$]*)\\s*\\)"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".get(",
+        ".post(",
+        ".put(",
+        ".patch(",
+        ".delete(",
+        ".options(",
+        ".head(",
+        ".all("
+      ],
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>[A-Za-z_$][\\w$]*)\\.(?P<detail>get|post|put|patch|delete|options|head|all)\\(\\s*['\"`](?P<name>/[^'\"`]*|\\*)['\"`]"
+    },
+    {
+      "facet": "middleware",
+      "requires": ".use(",
+      "pattern": "\\.use\\(\\s*(?:['\"`][^'\"`]*['\"`]\\s*,\\s*)?(?P<name>[A-Za-z_$][\\w$.]*)\\("
+    }
+  ]
+}

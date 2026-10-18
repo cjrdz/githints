@@ -1,0 +1,21 @@
+{
+  "facets": [
+    "controller aspnetcore Controllers/ProductsController.cs ProductsController",
+    "job aspnetcore Services/OrderService.cs CleanupWorker",
+    "middleware aspnetcore Program.cs RequestTimingMiddleware",
+    "model entityframework Data/ShopContext.cs Product",
+    "route aspnetcore Controllers/ProductsController.cs /api/[controller] GET",
+    "route aspnetcore Controllers/ProductsController.cs /api/[controller] POST",
+    "route aspnetcore Controllers/ProductsController.cs /api/[controller]/{id:int} GET",
+    "route aspnetcore Program.cs /health GET",
+    "route aspnetcore Program.cs /orders POST",
+    "route aspnetcore Program.cs /orders/admin/{id} DELETE",
+    "service aspnetcore Program.cs OrderService"
+  ],
+  "edges": [
+    "Controllers/ProductsController.cs -> Data/ShopContext.cs",
+    "Program.cs -> Data/ShopContext.cs",
+    "Program.cs -> Services/OrderService.cs",
+    "Services/OrderService.cs -> Data/ShopContext.cs"
+  ]
+}

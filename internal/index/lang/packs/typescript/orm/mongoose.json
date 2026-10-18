@@ -1,0 +1,25 @@
+{
+  // Mongoose: model("User", schema), and @nestjs/mongoose's @Schema classes.
+  "framework": "mongoose",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "mongoose",
+    "@nestjs/mongoose"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "model",
+      "keep_strings": true,
+      "pattern": "\\bmodel(?:<[^>]*>)?\\(\\s*['\\\"](?P<name>\\w+)['\\\"]"
+    },
+    {
+      "facet": "model",
+      "requires": "@Schema",
+      "lookahead": 8,
+      "pattern": "@Schema\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    }
+  ]
+}

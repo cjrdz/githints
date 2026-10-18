@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cjrdz/githints/internal/safefs"
 )
@@ -50,12 +51,19 @@ type tsProject struct {
 	configs  map[string]*TSPathsConfig // dir -> nearest config that defines paths (nil: none)
 	packages map[string]workspacePackage
 	names    []string // package names, longest first
+
+	// discovered guards the workspace walk, which runs on the first package
+	// import the scan resolves. Every scan begins a TS project, including a
+	// hook run over one C++ file, and the walk visits the whole repository:
+	// 70 ms of a 250 ms hook on Qt's source.
+	discovered sync.Once
 }
 
+// tsDiscoveries counts workspace walks, for TestWorkspaceWalkIsLazy.
+var tsDiscoveries atomic.Int64
+
 func newTSProject(root string) *tsProject {
-	p := &tsProject{root: root, configs: map[string]*TSPathsConfig{}, packages: map[string]workspacePackage{}}
-	p.discoverPackages()
-	return p
+	return &tsProject{root: root, configs: map[string]*TSPathsConfig{}, packages: map[string]workspacePackage{}}
 }
 
 // configFor returns the paths configuration that applies to files in
@@ -344,6 +352,10 @@ func exportsMap(raw json.RawMessage) map[string]string {
 // build output with no source counterpart stays unresolved rather than
 // becoming an edge to nothing.
 func (p *tsProject) resolvePackage(spec string) (string, bool) {
+	p.discovered.Do(func() {
+		tsDiscoveries.Add(1)
+		p.discoverPackages()
+	})
 	for _, name := range p.names {
 		var sub string
 		switch {

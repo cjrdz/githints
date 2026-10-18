@@ -1,0 +1,16 @@
+{
+  // Foundation for Sites: the import, the components a project includes
+  // (@include foundation-button), and the $variables set in the file that
+  // imports it.
+  "framework": "foundation",
+  "languages": ["scss", "css", "typescript"],
+  "when_imports": ["foundation", "foundation-sites"],
+  "rules": [
+    { "facet": "style", "requires_any": ["import", "@use", "@forward"], "keep_strings": true, "detail": "import",
+      "pattern": "^\\s*(?:@(?:import|use|forward)|import)\\s+[\"']~?(?P<name>foundation[^\"']*)[\"']" },
+    { "facet": "style", "requires": "@include foundation-", "detail": "component",
+      "pattern": "^\\s*@include\\s+(?P<name>foundation-[\\w-]+)" },
+    { "facet": "style", "requires": "$", "detail": "variable",
+      "pattern": "^\\s*(?P<name>\\$[A-Za-z_][\\w-]*)\\s*:" }
+  ]
+}

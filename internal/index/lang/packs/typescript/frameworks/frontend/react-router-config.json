@@ -1,0 +1,34 @@
+{
+  // React Router 7 (framework mode) route config in app/routes.ts:
+  // route("about", ...), index(...), and prefix("projects", [...]) applying to
+  // the routes inside it.
+  "framework": "react-router",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "@react-router/dev"
+  ],
+  "prefixes": [
+    {
+      "requires": "prefix(",
+      "keep_strings": true,
+      "scope": "statement",
+      "pattern": "\\bprefix\\(\\s*['\"`](?P<prefix>[^'\"`]*)['\"`]"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "route(",
+      "keep_strings": true,
+      "pattern": "\\broute\\(\\s*['\"`](?P<name>[^'\"`]*)['\"`]"
+    },
+    {
+      "facet": "route",
+      "requires": "index(",
+      "keep_strings": true,
+      "pattern": "\\bindex\\(\\s*['\"`][^'\"`]*['\"`](?P<name>)"
+    }
+  ]
+}

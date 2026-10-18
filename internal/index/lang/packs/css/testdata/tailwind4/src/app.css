@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@import "./styles/fonts.css";
+@plugin "daisyui";
+@plugin "@tailwindcss/typography";
+
+/* @theme { --color-commented: red; } is a comment, not a token */
+
+@theme {
+  --color-brand: oklch(0.72 0.11 221);
+  --color-brand-dark: oklch(0.45 0.1 221);
+  --font-display: "Satoshi", sans-serif;
+  --breakpoint-3xl: 120rem;
+  --color-*: initial;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@utility content-auto {
+  content-visibility: auto;
+}
+
+@utility tab-* {
+  tab-size: --value(integer);
+}
+
+@layer components {
+  .btn {
+    @apply rounded-lg px-4 py-2;
+  }
+
+  .card {
+    @apply rounded-xl shadow;
+    .card-title {
+      font-weight: 600;
+    }
+  }
+}
+
+/* Not a theme token: outside @theme. */
+:root {
+  --header-height: 4rem;
+}
+
+.prose-wide {
+  max-width: 80ch;
+}

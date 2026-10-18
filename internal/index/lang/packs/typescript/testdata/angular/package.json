@@ -1,0 +1,1 @@
+{ "name": "ng", "dependencies": { "@angular/core": "^20", "@angular/router": "^20" } }

@@ -1,0 +1,20 @@
+{
+  // GitLab CI: every top-level key of .gitlab-ci.yml that is a job, which is
+  // every key but the reserved ones and hidden .templates.
+  "framework": "gitlab-ci",
+  "languages": [
+    "yaml"
+  ],
+  "path_globs": [
+    ".gitlab-ci.yml"
+  ],
+  "rules": [
+    {
+      "facet": "infra",
+      "requires": ":",
+      "name_exclude": "^(?:\\..*|stages|variables|default|include|workflow|image|services|before_script|after_script|cache|spec)$",
+      "pattern": "^(?P<name>[\\w.][\\w .-]*):\\s*$",
+      "detail": "ci job"
+    }
+  ]
+}

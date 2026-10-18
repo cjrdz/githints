@@ -1,0 +1,20 @@
+{
+  // Vue Router route records. A child route is reported with its own path; the
+  // parent's path is not joined on.
+  "framework": "vue-router",
+  "languages": [
+    "typescript",
+    "vue"
+  ],
+  "when_imports": [
+    "vue-router"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "path:",
+      "keep_strings": true,
+      "pattern": "\\bpath:\\s*['\"`](?P<name>[^'\"`]*)['\"`]"
+    }
+  ]
+}

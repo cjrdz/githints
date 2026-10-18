@@ -10,6 +10,7 @@
 package safefs
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // ErrTooLarge is returned by ReadFile when the file exceeds its cap.
@@ -259,5 +262,113 @@ func PrepareDatabase(path string) error {
 	if fi.Mode().Perm()&0o077 != 0 {
 		return os.Chmod(path, 0o600)
 	}
+	return nil
+}
+
+// Writer writes many files under one directory through a single os.Root, for
+// a pass that writes hundreds of them (the index notes). Each write keeps
+// WriteFileIn's guarantee, no link is written through, but checks each
+// directory on the way once per pass rather than once per file, and leaves a
+// file whose content is already what would be written untouched: no write,
+// no new modification time for an editor or a vault to react to.
+//
+// A directory checked earlier in the pass is not checked again, so a link
+// swapped in mid-pass by a process with write access to the directory is
+// not seen; such a process can already write the files directly.
+//
+// A Writer is safe for concurrent use: directory checks and creation are
+// serialized, file writes are not.
+//
+// Keeping each checked directory open as its own os.Root, so that a file's
+// operations resolve one name, made an isolated render benchmark 46% faster
+// but a real full index about 30 ms slower: opening and closing a root per
+// directory, under the lock, costs more than it saves. Measured, reverted.
+type Writer struct {
+	root     *os.Root
+	dirPerm  fs.FileMode
+	filePerm fs.FileMode
+	mu       sync.Mutex
+	verified map[string]bool // slash paths of directories checked this pass
+
+	written, unchanged atomic.Int64
+}
+
+// Written and Unchanged count the files written and the files left as they
+// were.
+func (w *Writer) Written() int   { return int(w.written.Load()) }
+func (w *Writer) Unchanged() int { return int(w.unchanged.Load()) }
+
+// NewWriter opens dir (creating it) for a pass of writes.
+func NewWriter(dir string, dirPerm, filePerm fs.FileMode) (*Writer, error) {
+	r, err := Open(dir, dirPerm)
+	if err != nil {
+		return nil, err
+	}
+	return &Writer{root: r, dirPerm: dirPerm, filePerm: filePerm, verified: map[string]bool{}}, nil
+}
+
+// Close releases the root.
+func (w *Writer) Close() error { return w.root.Close() }
+
+// WriteFile writes data to rel, creating parent directories, unless rel
+// already holds exactly data. It refuses a link at rel or on the way to it.
+func (w *Writer) WriteFile(rel string, data []byte) error {
+	rel = path.Clean(filepath.ToSlash(rel))
+	w.mu.Lock()
+	err := w.ensureDir(path.Dir(rel))
+	w.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	fi, err := w.root.Lstat(rel)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return err
+	case fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0:
+		return fmt.Errorf("%s is a link; refusing to write through it", rel)
+	case !fi.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file; refusing to write it", rel)
+	case fi.Size() == int64(len(data)):
+		// Same size: compare before rewriting. Reading costs less than a
+		// write, and an unchanged note keeps its modification time.
+		if old, err := readFileIn(w.root, rel, int64(len(data))+1, false); err == nil && bytes.Equal(old, data) {
+			w.unchanged.Add(1)
+			return nil
+		}
+	}
+	if err := w.root.WriteFile(rel, data, w.filePerm); err != nil {
+		return fmt.Errorf("write %s: %w", rel, err)
+	}
+	w.written.Add(1)
+	return nil
+}
+
+// ensureDir makes sure dir is a real directory, creating it and its parents
+// as needed, checking each one once per pass. Called with w.mu held.
+func (w *Writer) ensureDir(dir string) error {
+	if dir == "." || dir == "/" || dir == "" || w.verified[dir] {
+		return nil
+	}
+	if err := w.ensureDir(path.Dir(dir)); err != nil {
+		return err
+	}
+	fi, err := w.root.Lstat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		if err := w.root.Mkdir(dir, w.dirPerm); err != nil && !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("create %s: %w", dir, err)
+		}
+		// Created here, or by a racing writer: check what is there now.
+		if fi, err = w.root.Lstat(dir); err != nil {
+			return err
+		}
+	case err != nil:
+		return err
+	}
+	if fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 || !fi.IsDir() {
+		return fmt.Errorf("%s is a link or not a directory; refusing to write through it", dir)
+	}
+	w.verified[dir] = true
 	return nil
 }

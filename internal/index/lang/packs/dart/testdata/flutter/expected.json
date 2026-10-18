@@ -1,0 +1,17 @@
+{
+  "facets": [
+    "component flutter lib/main.dart ShopApp",
+    "component flutter lib/screens/product_screen.dart ProductScreen",
+    "model drift lib/data/db.dart Products",
+    "route go_router lib/router.dart /",
+    "route go_router lib/router.dart products/:id",
+    "service flutter lib/state/cart_cubit.dart CartCubit"
+  ],
+  "edges": [
+    "lib/main.dart -> lib/router.dart",
+    "lib/router.dart -> lib/screens/product_screen.dart",
+    "lib/screens/product_screen.dart -> lib/state/cart_cubit.dart",
+    "lib/state/cart_cubit.dart -> lib/data/db.dart",
+    "test/cart_test.dart -> lib/state/cart_cubit.dart"
+  ]
+}

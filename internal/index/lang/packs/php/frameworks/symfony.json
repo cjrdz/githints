@@ -1,0 +1,56 @@
+{
+  // Symfony routes are #[Route] attributes. On a class, the path prefixes every
+  // route after it; on a method, it is the route, with the first of its methods:
+  // as the detail. The two are told apart by the declaration that follows.
+  // Docblock @Route annotations are comments and are not read.
+  "framework": "symfony",
+  "languages": [
+    "php"
+  ],
+  "when_imports": [
+    "Symfony"
+  ],
+  "when_dependencies": [
+    "symfony/framework-bundle"
+  ],
+  "prefixes": [
+    {
+      "requires": "#[Route",
+      "keep_strings": true,
+      "lookahead": 4,
+      "pattern": "#\\[Route\\(\\s*(?:path:\\s*)?['\"](?P<prefix>[^'\"]*)['\"](?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]\\s*(?:#\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]\\s*)*(?:(?:final|abstract|readonly)\\s+)*class\\b"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "#[Route",
+      "keep_strings": true,
+      "lookahead": 4,
+      "pattern": "#\\[Route\\(\\s*(?:path:\\s*)?['\"](?P<name>[^'\"]*)['\"](?:[^\\[\\]]*?\\bmethods:\\s*\\[\\s*['\"](?P<detail>\\w+)['\"][^\\[\\]]*\\])?(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]\\s*(?:#\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]\\s*)*(?:(?:public|protected|private|static|final)\\s+)*function\\b"
+    },
+    {
+      "facet": "controller",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:AbstractController)\\b"
+    },
+    {
+      "facet": "schema",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:AbstractType)\\b"
+    },
+    {
+      "facet": "job",
+      "requires": "#[AsMessageHandler",
+      "lookahead": 4,
+      "pattern": "#\\[AsMessageHandler\\b(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]\\s*(?:#\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]\\s*)*(?:(?:final|abstract|readonly)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    // Console commands, named by #[AsCommand].
+    {
+      "facet": "command",
+      "requires": "#[AsCommand",
+      "keep_strings": true,
+      "pattern": "#\\[AsCommand\\(\\s*(?:name:\\s*)?['\\\"](?P<name>[^'\\\"]+)['\\\"]"
+    }
+  ]
+}

@@ -67,12 +67,13 @@ func Remove(s string) string {
 	}, s)
 }
 
-// mdReplacer escapes characters markdown (CommonMark, GFM, and Obsidian's
-// extensions) would interpret. Multi-character tokens come first so they win
-// over their single-character prefixes.
+// mdReplacer escapes characters markdown (CommonMark, GFM, and the common
+// editor extensions for highlights, comments and tags) would interpret.
+// Multi-character tokens come first so they win over their single-character
+// prefixes.
 var mdReplacer = strings.NewReplacer(
-	"==", "\\=\\=", // Obsidian highlight
-	"%%", "\\%\\%", // Obsidian comment
+	"==", "\\=\\=", // highlight
+	"%%", "\\%\\%", // comment
 	"$$", "\\$\\$", // math block
 	"&", "&amp;",
 	"<", "&lt;",
@@ -85,7 +86,7 @@ var mdReplacer = strings.NewReplacer(
 	"]", "\\]",
 	"(", "\\(",
 	")", "\\)",
-	"#", "\\#", // heading, or an Obsidian tag mid-line
+	"#", "\\#", // heading, or a tag mid-line
 	"|", "\\|", // table cell
 	"~", "\\~", // GFM strikethrough
 )

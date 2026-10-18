@@ -1,0 +1,17 @@
+{
+  "facets": [
+    "style bootstrap src/main.ts bootstrap/dist/js/bootstrap.bundle.min.js import",
+    "style bootstrap src/scss/custom.scss $border-radius variable",
+    "style bootstrap src/scss/custom.scss $enable-shadows variable",
+    "style bootstrap src/scss/custom.scss $primary variable",
+    "style bootstrap src/scss/custom.scss bootstrap/scss/bootstrap import",
+    "style bootstrap src/theme.css --bs-body-font-family theme token",
+    "style bootstrap src/theme.css --bs-primary theme token"
+  ],
+  "edges": [
+    "src/main.ts -> src/scss/custom.scss",
+    "src/scss/components/_card.scss -> src/scss/abstracts/_variables.scss",
+    "src/scss/custom.scss -> src/scss/abstracts/_variables.scss",
+    "src/scss/custom.scss -> src/scss/components/_card.scss"
+  ]
+}

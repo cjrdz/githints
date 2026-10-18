@@ -1,0 +1,35 @@
+{
+  // Axum: Router::new().route("/users", get(list).post(create)) is a route per
+  // method (up to three chained). A router nested from another function
+  // (.nest("/api", api())) keeps its own paths.
+  "framework": "axum",
+  "languages": [
+    "rust"
+  ],
+  "when_imports": [
+    "axum"
+  ],
+  "when_dependencies": [
+    "axum"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": ".route(",
+      "keep_strings": true,
+      "pattern": "\\.route\\(\\s*\"(?P<name>[^\"]*)\"\\s*,\\s*(?:\\w+::)*(?P<detail>get|post|put|patch|delete|head|options|any)(?:_service)?\\("
+    },
+    {
+      "facet": "route",
+      "requires": ".route(",
+      "keep_strings": true,
+      "pattern": "\\.route\\(\\s*\"(?P<name>[^\"]*)\"\\s*,\\s*(?:\\w+::)*\\w+\\((?:[^()]|\\([^()]*\\))*\\)\\s*\\.\\s*(?P<detail>get|post|put|patch|delete|head|options)\\("
+    },
+    {
+      "facet": "route",
+      "requires": ".route(",
+      "keep_strings": true,
+      "pattern": "\\.route\\(\\s*\"(?P<name>[^\"]*)\"\\s*,\\s*(?:\\w+::)*\\w+\\((?:[^()]|\\([^()]*\\))*\\)\\s*\\.\\s*\\w+\\((?:[^()]|\\([^()]*\\))*\\)\\s*\\.\\s*(?P<detail>get|post|put|patch|delete|head|options)\\("
+    }
+  ]
+}

@@ -177,14 +177,15 @@ regenerated at any time (`githints init` re-creates an empty changelog).
 Both renderers escape agent-supplied text through `internal/textsafe`, the one
 escaper shared with the index notes. Prose is flattened to a single line (so a
 newline cannot forge a heading or an entry), HTML-escaped, and has markdown
-metacharacters backslash-escaped, including Obsidian's `==`, `%%` and `#tag`.
+metacharacters backslash-escaped, including the `==` highlight, `%%` comment and `#tag` extensions.
 Values in a `` `code span` `` get a fence longer than any backtick run inside
 them instead, since backslashes would render literally there.
 
 Per-file hints are written through an `os.Root` opened on `.githints/` itself,
 so no link inside it can redirect a write anywhere else, not even elsewhere in
 the repository. A source path whose hint would overwrite githints' own output
-(`CHANGES`, `INDEX`, `index/`, `.obsidian/`) is skipped with a warning.
+(`CHANGES`, `INDEX`, `index/`, `notes/`, and `.obsidian/`, where releases
+before the graph viewer wrote vault settings) is skipped with a warning.
 
 ## Local Ollama integration
 
@@ -323,15 +324,22 @@ of `.githints/`: that directory holds the salt, `repo-id` and the databases, and
 ## Structural index
 
 `internal/index` keeps a second SQLite database, `.githints/index.db`, with
-`symbols`, `imports` and `facets` tables, renders one note per file under
-`.githints/index/` and a rollup at `.githints/INDEX.md`. It is a cache: it has no
-integrity chain and `githints index` rebuilds it from scratch.
+`symbols`, `imports`, `facets` and `file_keys` tables, renders one note per file
+under `.githints/index/` and a rollup at `.githints/INDEX.md`. It is a cache: it
+has no integrity chain and `githints index` rebuilds it from scratch, in one
+transaction, so a reader never sees it half-written.
 
-- **Scanning.** A full scan walks the tree (skipping gitignored and
-  `.githintsignore`d files, decided in two batched `git check-ignore` calls) and
+- **Scanning.** A full scan asks git once per pass for every ignored path
+  (`git ls-files -c -o -i --exclude-standard --directory`, then again with
+  `.githintsignore` as the excludes file), walks the tree skipping them, and
   parses on a worker pool, merging results in walk order. The post-commit hook
   runs an incremental scan over the files a commit touched, reading them through
-  an `os.Root` with `Lstat`, so a committed symlink is never followed.
+  an `os.Root` with `Lstat`, so a committed symlink is never followed. Its cost
+  follows the commit: language rules and detectors compile on first use, and
+  import keys are looked up in `file_keys` rather than recomputed for every
+  indexed file, except when the commit changed a file keys derive from (a
+  `go.mod`, `Cargo.toml`, `composer.json`, `pyproject.toml`...).
+  `githints index verify` recomputes them and reports any that went stale.
 - **Parsing.** Go uses `go/parser`; the TypeScript family a hand-written
   lexer-plus-patterns parser; other languages declarative specs over a shared
   blanking lexer. Framework detectors then record facets. See

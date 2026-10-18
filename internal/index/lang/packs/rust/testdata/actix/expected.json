@@ -1,0 +1,9 @@
+{
+  "facets": [
+    "route actix src/main.rs / GET",
+    "route actix src/main.rs /api/health",
+    "route actix src/main.rs /api/users GET",
+    "route actix src/main.rs /posts POST"
+  ],
+  "edges": []
+}

@@ -1,0 +1,33 @@
+{
+  // YAML: CI workflows, docker-compose files, Kubernetes manifests, and every
+  // other configuration file. A top-level key is a symbol. YAML files are
+  // graph nodes only when something links them: a GitHub workflow calling a
+  // reusable workflow in the repository (uses: ./.github/workflows/x.yml).
+  // Lock files are generated, not written, and are not indexed.
+  "language": "yaml",
+  "extensions": [".yml", ".yaml"],
+  "exclude_filenames": ["pnpm-lock.yaml", "*-lock.yaml", "*.lock.yaml", "*.lock.yml"],
+  "depth_style": "indent",
+  "graph": "linked",
+
+  // Block scalars (|, >) are read as code; their lines are deeper than
+  // their key, so they never look like keys of their own.
+  "comments": { "line": ["#"] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\" },
+    { "open": "'", "close": "'" }
+  ],
+
+  "import_path": "slash",
+
+  "symbols": [
+    { "kind": "var", "requires": ":", "pattern": "^(?P<name>[\\w.-]+):(?:\\s|$)" }
+  ],
+
+  "imports": [
+    // uses: ./.github/workflows/build.yml -- a reusable workflow in the repo.
+    { "requires": "uses:", "pattern": "^\\s*-?\\s*uses:\\s*['\"]?\\./(?P<path>[^@'\"\\s]+?)(?:\\.ya?ml)?['\"]?\\s*$" },
+    // uses: actions/checkout@v4 -- an action, named without its version.
+    { "requires": "uses:", "pattern": "^\\s*-?\\s*uses:\\s*['\"]?(?P<path>[\\w.-]+/[\\w./-]+)@" }
+  ]
+}

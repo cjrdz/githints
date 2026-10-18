@@ -42,9 +42,12 @@ type StringRule struct {
 // BlankSpec is the lexical surface of a language: what hides code from the
 // matcher. It is deliberately not a grammar.
 type BlankSpec struct {
-	LineComments  []string
-	BlockComments [][2]string
-	Strings       []StringRule
+	LineComments []string
+	// NotLineComments are sequences that begin like a line comment but are
+	// not one, such as PHP's "#[" attribute opener.
+	NotLineComments []string
+	BlockComments   [][2]string
+	Strings         []StringRule
 
 	// RegexLiterals enables JS-style /.../ literals, disambiguated from
 	// division by what precedes the slash.
@@ -53,24 +56,40 @@ type BlankSpec struct {
 
 // Blanker is a compiled BlankSpec.
 type Blanker struct {
-	lineComments  []string
-	blockComments [][2]string
-	strings       []StringRule
-	regexLiterals bool
+	lineComments    []string
+	notLineComments []string
+	blockComments   [][2]string
+	strings         []StringRule
+	regexLiterals   bool
+
+	// opens marks the bytes a comment or string can begin with. Most bytes
+	// of code begin neither, and checking each delimiter at every byte was
+	// most of the blanker's time on a large C++ tree.
+	opens [256]bool
 }
 
 // NewBlanker compiles a spec. Delimiters are ordered longest-first so that a
 // language declaring both `"""` and `"` matches the triple quote first.
 func NewBlanker(spec BlankSpec) *Blanker {
 	bl := &Blanker{
-		lineComments:  append([]string(nil), spec.LineComments...),
-		blockComments: append([][2]string(nil), spec.BlockComments...),
-		strings:       append([]StringRule(nil), spec.Strings...),
-		regexLiterals: spec.RegexLiterals,
+		lineComments:    append([]string(nil), spec.LineComments...),
+		notLineComments: append([]string(nil), spec.NotLineComments...),
+		blockComments:   append([][2]string(nil), spec.BlockComments...),
+		strings:         append([]StringRule(nil), spec.Strings...),
+		regexLiterals:   spec.RegexLiterals,
 	}
 	sortByLenDesc(bl.lineComments, func(s string) int { return len(s) })
 	sortByLenDesc(bl.blockComments, func(p [2]string) int { return len(p[0]) })
 	sortByLenDesc(bl.strings, func(r StringRule) int { return len(r.Open) })
+	for _, m := range bl.lineComments {
+		bl.opens[m[0]] = true
+	}
+	for _, p := range bl.blockComments {
+		bl.opens[p[0][0]] = true
+	}
+	for _, r := range bl.strings {
+		bl.opens[r.Open[0]] = true
+	}
 	return bl
 }
 
@@ -160,7 +179,7 @@ func (bl *Blanker) blank(src []byte, keepStrings bool) []string {
 			// Dropped.
 
 		case bsBlockComment:
-			if end := bl.blockComments[active][1]; strings.HasPrefix(raw[i:], end) {
+			if end := bl.blockComments[active][1]; c == end[0] && strings.HasPrefix(raw[i:], end) {
 				state = bsCode
 				i += len(end) - 1
 			}
@@ -183,12 +202,12 @@ func (bl *Blanker) blank(src []byte, keepStrings bool) []string {
 					}
 					i++
 				}
-			case strings.HasPrefix(raw[i:], rule.Close):
+			case c == rule.Close[0] && strings.HasPrefix(raw[i:], rule.Close):
 				b.WriteString(rule.Close)
 				prevSignificant = rule.Close[len(rule.Close)-1]
 				state = bsCode
 				i += len(rule.Close) - 1
-			case rule.InterpOpen != "" && strings.HasPrefix(raw[i:], rule.InterpOpen):
+			case rule.InterpOpen != "" && c == rule.InterpOpen[0] && strings.HasPrefix(raw[i:], rule.InterpOpen):
 				interp = append(interp, interpFrame{braceDepth: braceDepth, rule: active})
 				braceDepth++
 				b.WriteString(rule.InterpOpen)
@@ -222,18 +241,18 @@ func (bl *Blanker) blank(src []byte, keepStrings bool) []string {
 			}
 
 		default: // bsCode
-			if n := bl.matchLineComment(raw, i); n > 0 {
+			if !bl.opens[c] {
+				// Nothing can begin here; fall through to plain code.
+			} else if n := bl.matchLineComment(raw, i); n > 0 {
 				state = bsLineComment
 				i += n - 1
 				break
-			}
-			if idx, n := bl.matchBlockComment(raw, i); n > 0 {
+			} else if idx, n := bl.matchBlockComment(raw, i); n > 0 {
 				state = bsBlockComment
 				active = idx
 				i += n - 1
 				break
-			}
-			if idx, n := bl.matchStringOpen(raw, i); n > 0 {
+			} else if idx, n := bl.matchStringOpen(raw, i); n > 0 {
 				state = bsString
 				active = idx
 				b.WriteString(bl.strings[idx].Open)
@@ -278,6 +297,11 @@ func (bl *Blanker) blank(src []byte, keepStrings bool) []string {
 }
 
 func (bl *Blanker) matchLineComment(raw string, i int) int {
+	for _, m := range bl.notLineComments {
+		if strings.HasPrefix(raw[i:], m) {
+			return 0
+		}
+	}
 	for _, m := range bl.lineComments {
 		if strings.HasPrefix(raw[i:], m) {
 			return len(m)

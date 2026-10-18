@@ -1,0 +1,26 @@
+{
+  // shelf_router: router.get('/users/<id>', handler), or as a cascade,
+  // Router()..get('/health', health).
+  "framework": "shelf",
+  "languages": [
+    "dart"
+  ],
+  "when_imports": [
+    "package:shelf_router"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".get(",
+        ".post(",
+        ".put(",
+        ".patch(",
+        ".delete(",
+        ".all("
+      ],
+      "keep_strings": true,
+      "pattern": "(?:\\b\\w+|\\.)\\.(?P<detail>get|post|put|patch|delete|all)\\(\\s*['\\\"](?P<name>/[^'\\\"]*)['\\\"]"
+    }
+  ]
+}

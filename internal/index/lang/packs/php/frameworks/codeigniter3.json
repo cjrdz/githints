@@ -1,0 +1,46 @@
+{
+  // CodeIgniter 3, which predates composer: recognized by its application/
+  // layout. Routes are $route["uri"] = "controller/method" entries, with the
+  // handler as the detail; default_controller is the root, and the other
+  // settings sharing the array are not routes.
+  "framework": "codeigniter",
+  "languages": [
+    "php"
+  ],
+  "path_globs": [
+    "application/config/routes.php",
+    "application/models/**/*.php",
+    "application/controllers/**/*.php",
+    "application/migrations/*.php"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "$route[",
+      "keep_strings": true,
+      "name_exclude": "^(?:default_controller|404_override|translate_uri_dashes)$",
+      "pattern": "\\$route\\[\\s*['\"](?P<name>[^'\"]+)['\"]\\s*\\](?:\\[\\s*['\"][^'\"]*['\"]\\s*\\])?\\s*=\\s*['\"](?P<detail>[^'\"]*)['\"]"
+    },
+    {
+      "facet": "route",
+      "requires": "$route[",
+      "keep_strings": true,
+      "pattern": "\\$route\\[\\s*['\"]default_controller['\"]\\s*\\]\\s*=\\s*['\"](?P<detail>[^'\"]*)['\"](?P<name>)"
+    },
+    {
+      "facet": "model",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:CI_Model)\\b"
+    },
+    {
+      "facet": "controller",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:CI_Controller)\\b"
+    },
+    {
+      "facet": "migration",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:CI_Migration)\\b"
+    }
+  ]
+}

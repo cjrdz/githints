@@ -1,0 +1,47 @@
+{
+  // Drogon: ADD_METHOD_TO, PATH_ADD and WS_PATH_ADD routes (absolute
+  // paths), and registerHandler. METHOD_ADD paths are relative to a prefix
+  // Drogon derives from the controller's namespace and name, so they are not
+  // reported. Controllers and filters (middleware) by their base class.
+  "framework": "drogon",
+  "languages": ["cpp"],
+  "when_imports": ["drogon"],
+  "when_dependencies": ["Drogon", "drogon"],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "ADD_METHOD_TO",
+      "keep_strings": true,
+      "pattern": "\\bADD_METHOD_TO\\(\\s*[\\w:]+\\s*,\\s*\"(?P<name>[^\"]*)\"(?:\\s*,\\s*(?:drogon::)?(?P<detail>Get|Post|Put|Patch|Delete|Head|Options))?"
+    },
+    {
+      "facet": "route",
+      "requires": "PATH_ADD",
+      "keep_strings": true,
+      "pattern": "\\bPATH_ADD\\(\\s*\"(?P<name>[^\"]*)\"(?:\\s*,\\s*(?:drogon::)?(?P<detail>Get|Post|Put|Patch|Delete|Head|Options))?"
+    },
+    {
+      "facet": "route",
+      "requires": "WS_PATH_ADD",
+      "keep_strings": true,
+      "detail": "websocket",
+      "pattern": "\\bWS_PATH_ADD\\(\\s*\"(?P<name>[^\"]*)\""
+    },
+    {
+      "facet": "route",
+      "requires": "registerHandler",
+      "keep_strings": true,
+      "pattern": "\\bregisterHandler\\(\\s*\"(?P<name>[^\"]*)\""
+    },
+    {
+      "facet": "controller",
+      "requires": "Controller",
+      "pattern": "\\bclass\\s+(?P<name>[A-Za-z_]\\w*)\\s*(?:final\\s*)?:\\s*(?:public\\s+)?(?:drogon::)?(?:HttpController|HttpSimpleController|WebSocketController)\\s*<"
+    },
+    {
+      "facet": "middleware",
+      "requires_any": ["HttpFilter", "HttpMiddleware"],
+      "pattern": "\\bclass\\s+(?P<name>[A-Za-z_]\\w*)\\s*(?:final\\s*)?:\\s*(?:public\\s+)?(?:drogon::)?(?:HttpFilter|HttpMiddleware)\\s*<"
+    }
+  ]
+}

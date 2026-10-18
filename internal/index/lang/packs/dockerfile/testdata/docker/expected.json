@@ -1,0 +1,12 @@
+{
+  "facets": [
+    "infra docker Dockerfile build stage",
+    "infra docker Dockerfile deps stage",
+    "infra docker Dockerfile gcr.io/distroless/nodejs22-debian12 image",
+    "infra docker Dockerfile node:${NODE_VERSION}-alpine image",
+    "infra docker Dockerfile.dev node:22-alpine image",
+    "infra docker worker/api.Dockerfile python:3.12-slim image",
+    "infra docker worker/api.Dockerfile runtime stage"
+  ],
+  "edges": []
+}

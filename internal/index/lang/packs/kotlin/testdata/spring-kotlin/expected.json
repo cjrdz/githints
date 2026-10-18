@@ -1,0 +1,12 @@
+{
+  "facets": [
+    "controller spring src/main/kotlin/com/example/shop/web/OrderController.kt OrderController",
+    "model spring src/main/kotlin/com/example/shop/domain/Order.kt Order",
+    "route spring src/main/kotlin/com/example/shop/web/OrderController.kt /api/orders GET",
+    "route spring src/main/kotlin/com/example/shop/web/OrderController.kt /api/orders/{id}/cancel POST",
+    "service spring src/main/kotlin/com/example/shop/domain/Order.kt OrderRepository"
+  ],
+  "edges": [
+    "src/main/kotlin/com/example/shop/web/OrderController.kt -> src/main/kotlin/com/example/shop/domain/Order.kt"
+  ]
+}

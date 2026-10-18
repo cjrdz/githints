@@ -1,0 +1,21 @@
+{
+  // Make targets, the commands a developer runs (make test, make build).
+  // Special targets (.PHONY) and pattern rules (%.o) are not.
+  "framework": "make",
+  "languages": [
+    "makefile"
+  ],
+  "path_globs": [
+    "Makefile",
+    "makefile",
+    "GNUmakefile",
+    "*.mk"
+  ],
+  "rules": [
+    {
+      "facet": "command",
+      "requires": ":",
+      "pattern": "^(?P<name>[A-Za-z0-9_][\\w-]*)\\s*:(?:[^=]|$)"
+    }
+  ]
+}

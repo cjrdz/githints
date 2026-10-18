@@ -5,13 +5,15 @@ here is a commitment; what has shipped is described in [usage.md](usage.md).
 
 ## Next
 
-### Import resolution for Rust, PHP and C#
+### Index follow-ups
 
-These languages index symbols and outbound imports but receive no inbound edges,
-because a file's import name does not follow from its path: Rust needs `mod`
-declarations and the crate root, PHP needs PSR-4 maps from `composer.json`, C#
-needs project files. Each is a `BeginScan` hook plus an `ImportPath`, in the same
-shape as the Go and TypeScript resolvers.
+Import resolution reaches Rust, PHP, C#, Kotlin, Swift, Dart, Ruby, C and C++
+since 0.2.4. Left: prefixes added in another file (`include_router`,
+`app.use("/api", router)`, Drogon's `METHOD_ADD`), Rails' nested resources and
+Zeitwerk autoloading (Rails files have no edges between them), Swift projects
+without a `Package.swift`, C and C++ include paths only the build knows
+(`target_include_directories`, `compile_commands.json`), and reusing the
+parser's blanked views for detection, the next cost on a large tree.
 
 ### Outcome follow-ups
 
@@ -89,6 +91,19 @@ arrive.
 The dependency graph ships as a static, offline HTML file instead. A server would
 add an attack surface (authentication, DNS rebinding, CSRF) for little gain over
 a file that opens anywhere and cannot reach the network.
+
+### A parse cache for full rebuilds
+
+Unchanged files could skip parsing on `githints index` by content hash. A full
+rebuild mostly runs after an upgrade or a configuration change, exactly when such
+a cache would have to be thrown away, and the hook already rescans only what a
+commit touched, so the cache would rarely pay for itself.
+
+### Faster but unsafe SQLite settings
+
+`synchronous=OFF` would remove an occasional checkpoint sync from a full index,
+but SQLite documents that it can corrupt the database on power loss; `NORMAL` in
+WAL mode stays consistent, and the index already rebuilds in one transaction.
 
 ### tree-sitter
 

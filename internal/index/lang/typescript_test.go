@@ -3,6 +3,7 @@ package lang
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"testing"
 )
@@ -120,6 +121,7 @@ func TestTypeScriptParserExtractsSymbolsAndImports(t *testing.T) {
 		"src/features/catalog/helpers",
 		"src/features/catalog/lazy-module",
 		"src/features/catalog/logging",
+		"src/features/catalog/polyfill", // a side-effect import is a dependency too
 		"src/features/catalog/re-exports",
 		"src/features/types/user",
 	}
@@ -351,8 +353,13 @@ func TestLocalImportPathTypeScript(t *testing.T) {
 		}
 	}
 
-	if _, err := LocalImportPath("/repo", "styles.css"); err == nil {
-		t.Error("expected error for .css")
+	// A stylesheet is keyed by its path, extension included, which is how a
+	// script's import "./styles.css" names it.
+	if got, err := LocalImportPath("/repo", "src/styles.css"); err != nil || got != "src/styles.css" {
+		t.Errorf("LocalImportPath(src/styles.css) = %q, %v", got, err)
+	}
+	if _, err := LocalImportPath("/repo", "logo.png"); err == nil {
+		t.Error("expected error for .png")
 	}
 }
 
@@ -396,5 +403,20 @@ func TestTypeScriptLineContinuationKeepsLineNumbers(t *testing.T) {
 	sym := findSymbol(t, symbols, "afterContinuation", KindFunc)
 	if sym.LineStart != 4 {
 		t.Errorf("LineStart = %d, want 4 (the continuation swallowed a line)", sym.LineStart)
+	}
+}
+
+// TestTSSideEffectImports: an import with no bindings is still a dependency:
+// a stylesheet (import "./app.css"), a polyfill, a package's CSS.
+func TestTSSideEffectImports(t *testing.T) {
+	src := "import \"./app.css\";\nimport './polyfills'\nimport\"bootstrap/dist/css/bootstrap.css\";\nimport { Button } from \"./Button\";\n"
+	got := extractTSImports("src/main.tsx", []byte(src))
+	var keys []string
+	for _, imp := range got {
+		keys = append(keys, imp.ImportedPath)
+	}
+	want := []string{"src/app.css", "src/polyfills", "bootstrap/dist/css/bootstrap.css", "src/Button"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Errorf("imports %q, want %q", keys, want)
 	}
 }

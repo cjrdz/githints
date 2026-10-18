@@ -1,0 +1,87 @@
+{
+  // chi (github.com/go-chi/chi, v5 and earlier). Routes are method calls on a
+  // router: r.Get("/users", h) and the other verbs, r.Method("GET", "/x", h),
+  // r.Handle("/x", h) for every method, inline middleware through
+  // r.With(mw).Get(...), and sub-routers. A chi pattern always starts with
+  // "/" (chi panics otherwise), which is what tells a route from the many
+  // other .Get calls in a handler: r.Header.Get("Authorization"),
+  // r.URL.Query().Get("page"), http.Get("https://...").
+  "framework": "chi",
+  "languages": ["go"],
+  "when_imports": ["github.com/go-chi/chi"],
+  "prefixes": [
+    {
+      // r.Route("/admin", func(r chi.Router) { r.Get("/users", h) }) is
+      // /admin/users: the closure sits inside the call's parentheses, and
+      // nested Route calls join. r.Group(func(r chi.Router) {...}) adds no
+      // prefix, so its routes need nothing.
+      "requires": ".Route(",
+      "keep_strings": true,
+      "scope": "statement",
+      "pattern": "\\.Route\\(\\s*\"(?P<prefix>/[^\"]*)\"\\s*,\\s*func\\b"
+    }
+  ],
+  "rules": [
+    {
+      // r.Get("/users", handler), r.With(paginate).Get("/", list), and every
+      // other verb chi has.
+      "facet": "route",
+      "requires_any": [".Get(", ".Post(", ".Put(", ".Patch(", ".Delete(", ".Head(", ".Options(", ".Connect(", ".Trace("],
+      "keep_strings": true,
+      "pattern": "\\.(?P<detail>Get|Post|Put|Patch|Delete|Head|Options|Connect|Trace)\\(\\s*\"(?P<name>/[^\"]*)\""
+    },
+    {
+      // r.Query("/search", h): the HTTP QUERY method, spelled out here
+      // because "query" elsewhere (a tRPC procedure) is not one.
+      "facet": "route",
+      "requires": ".Query(",
+      "keep_strings": true,
+      "detail": "QUERY",
+      "pattern": "\\.Query\\(\\s*\"(?P<name>/[^\"]*)\""
+    },
+    {
+      // r.Method("GET", "/x", h) and r.MethodFunc: the method comes first.
+      "facet": "route",
+      "requires": ".Method",
+      "keep_strings": true,
+      "pattern": "\\.Method(?:Func)?\\(\\s*\"(?P<detail>[A-Za-z]+)\"\\s*,\\s*\"(?P<name>/[^\"]*)\""
+    },
+    {
+      // r.Method(http.MethodGet, "/x", h): the net/http constant names it.
+      "facet": "route",
+      "requires": "http.Method",
+      "keep_strings": true,
+      "pattern": "\\.Method(?:Func)?\\(\\s*http\\.Method(?P<detail>[A-Z][a-z]+)\\s*,\\s*\"(?P<name>/[^\"]*)\""
+    },
+    {
+      // r.Handle("/x", h) and r.HandleFunc answer every method, so no
+      // method is reported.
+      "facet": "route",
+      "requires": ".Handle",
+      "keep_strings": true,
+      "pattern": "\\.Handle(?:Func)?\\(\\s*\"(?P<name>/[^\"]*)\""
+    },
+    {
+      // r.Mount("/admin", adminRouter()) and r.Route("/reports", reportRoutes)
+      // attach routes declared elsewhere: reported as the mount point, with
+      // Mount or Route as the detail, since those routes are not followed.
+      "facet": "route",
+      "requires": ".Mount(",
+      "keep_strings": true,
+      "pattern": "\\.(?P<detail>Mount)\\(\\s*\"(?P<name>/[^\"]*)\""
+    },
+    {
+      "facet": "route",
+      "requires": ".Route(",
+      "keep_strings": true,
+      "pattern": "\\.(?P<detail>Route)\\(\\s*\"(?P<name>/[^\"]*)\"\\s*,\\s*[A-Za-z_][\\w.]*\\s*\\)"
+    },
+    {
+      // r.Use(middleware.Logger), r.Use(middleware.Timeout(60 * time.Second)),
+      // r.Use(ArticleCtx): the first middleware of each call.
+      "facet": "middleware",
+      "requires": ".Use(",
+      "pattern": "\\.Use\\(\\s*(?P<name>[A-Za-z_][\\w.]*)"
+    }
+  ]
+}

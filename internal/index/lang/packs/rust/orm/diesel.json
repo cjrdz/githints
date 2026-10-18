@@ -1,0 +1,22 @@
+{
+  // Diesel tables (table! { users (id) { ... } }) and SeaORM entities
+  // (#[sea_orm(table_name = "users")]), named by their table.
+  "framework": "diesel",
+  "languages": [
+    "rust"
+  ],
+  "when_dependencies": [
+    "diesel"
+  ],
+  "when_imports": [
+    "diesel"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "table!",
+      "lookahead": 1,
+      "pattern": "\\btable!\\s*\\{\\s*(?:\\w+::)*(?P<name>\\w+)\\s*\\("
+    }
+  ]
+}

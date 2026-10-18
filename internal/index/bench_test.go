@@ -18,6 +18,8 @@ import (
 //	BenchmarkRenderNotes      render alone, against a populated store
 //	BenchmarkIncrementalScan  the post-commit hook path, which users feel
 //	BenchmarkInsertSymbols    the store write path on its own
+//	BenchmarkPackSamples      a full scan of every pack sample in one
+//	                          repository: all languages, every detector
 //
 // Run with:
 //
@@ -191,7 +193,7 @@ func BenchmarkRenderNotes(b *testing.B) {
 			}
 
 			for b.Loop() {
-				if err := RenderNotes(st, root, false); err != nil {
+				if err := RenderNotes(st, root); err != nil {
 					b.Fatalf("RenderNotes: %v", err)
 				}
 			}
@@ -255,5 +257,31 @@ func BenchmarkInsertSymbols(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// BenchmarkPackSamples scans one repository holding every pack's sample
+// projects side by side, so the workload is the real mix: every language,
+// every framework detector, manifests of every kind. The synthetic benchmarks
+// above cover only Go and TypeScript, which no longer describes a scan.
+func BenchmarkPackSamples(b *testing.B) {
+	samples, err := filepath.Glob(filepath.Join("lang", "packs", "*", "testdata", "*"))
+	if err != nil || len(samples) == 0 {
+		b.Fatalf("no samples: %v", err)
+	}
+	root := filepath.Join(b.TempDir(), "repo")
+	for _, sample := range samples {
+		dst := filepath.Join(root, filepath.Base(filepath.Dir(filepath.Dir(sample)))+"-"+filepath.Base(sample))
+		if err := copySample(sample, dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+	initGitRepo(b, root)
+	opts := lang.ScanOptions{Root: root, Languages: []string{lang.AutoLanguages}, MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second}
+	for b.Loop() {
+		st := benchStore(b)
+		if err := FullScan(st, opts, true, 0); err != nil {
+			b.Fatalf("FullScan: %v", err)
+		}
 	}
 }

@@ -1,0 +1,32 @@
+{
+  // Less. Everything the css spec indexes, plus @variables and mixins with a
+  // parameter list (.border-radius(@r) { ... }), which are funcs. @import,
+  // with its (reference) or (css) options, resolves as a stylesheet import.
+  "language": "less",
+  "extensions": [".less"],
+  "depth_style": "brace",
+  "graph": "linked",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "import_path": "stylesheet",
+
+  // @media, @import and other at-rules have the shape of a variable only
+  // when followed by a colon, which none of them is.
+  "symbols": [
+    { "kind": "func", "requires": "(", "pattern": "^\\s*(?P<name>\\.[A-Za-z_-][\\w-]*)\\s*\\((?P<sig>[^)]*)\\)\\s*(?:when\\b[^{]*)?\\{" },
+    { "kind": "var", "requires": "@", "pattern": "^\\s*(?P<name>@[A-Za-z_][\\w-]*)\\s*:" },
+    { "kind": "var", "requires": "--", "pattern": "^\\s*(?P<name>--[A-Za-z_][\\w-]*)\\s*:" },
+    { "kind": "const", "requires": "keyframes", "pattern": "^\\s*@(?:-webkit-|-moz-)?keyframes\\s+(?P<name>[A-Za-z_][\\w-]*)" },
+    { "kind": "type", "requires": ".", "pattern": "^\\s*&?(?P<name>\\.[A-Za-z_-][\\w-]*)[^{};()]*(?:\\{.*|,)\\s*$" },
+    { "kind": "type", "requires": "#", "pattern": "^\\s*(?P<name>#[A-Za-z_-][\\w-]*)[^{};]*(?:\\{.*|,)\\s*$" }
+  ],
+
+  "imports": [
+    { "requires": "@import", "pattern": "^\\s*@import\\s+(?:\\([^)]*\\)\\s*)?(?:url\\(\\s*)?[\"']?(?P<path>[^\"'()\\s;]+)" }
+  ]
+}

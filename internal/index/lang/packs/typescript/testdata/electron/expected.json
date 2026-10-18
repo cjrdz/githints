@@ -1,0 +1,9 @@
+{
+  "facets": [
+    "command electron src/main.ts notes:list handle",
+    "command electron src/main.ts window:minimize on"
+  ],
+  "edges": [
+    "src/main.ts -> src/notes.ts"
+  ]
+}

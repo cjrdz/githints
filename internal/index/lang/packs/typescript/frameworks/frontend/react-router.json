@@ -1,0 +1,27 @@
+{
+  // React Router in code: <Route path="..."> elements and route objects
+  // ({ path: "..." }) passed to createBrowserRouter. A child route is reported
+  // with its own path.
+  "framework": "react-router",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "react-router",
+    "react-router-dom"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "<Route",
+      "keep_strings": true,
+      "pattern": "<Route\\b[^>]*?\\bpath=[\\\"'](?P<name>[^\\\"']*)[\\\"']"
+    },
+    {
+      "facet": "route",
+      "requires": "path:",
+      "keep_strings": true,
+      "pattern": "\\bpath:\\s*['\"`](?P<name>[^'\"`]*)['\"`]"
+    }
+  ]
+}

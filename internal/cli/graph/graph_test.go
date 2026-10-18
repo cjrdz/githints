@@ -43,7 +43,6 @@ func TestIndexGraphCommand(t *testing.T) {
 		Languages:    cfg.Index.Languages,
 		MaxFileSize:  int64(cfg.Index.MaxFileSize),
 		ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
-		Obsidian:     cfg.Index.ObsidianWikilinks,
 	}, false, cfg.Index.MaxBytes); err != nil {
 		t.Fatalf("full scan: %v", err)
 	}

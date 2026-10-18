@@ -1,0 +1,31 @@
+{
+  // The standard library router. Go 1.22 patterns carry the method
+  // ("GET /users/{id}"), which becomes the detail. A file that imports a router
+  // built on net/http (chi, gorilla, gin, echo, fiber) is that router's, so its
+  // .Handle calls are not reported twice.
+  "framework": "net/http",
+  "languages": [
+    "go"
+  ],
+  "when_imports": [
+    "net/http"
+  ],
+  "unless_imports": [
+    "github.com/go-chi/chi",
+    "github.com/gorilla/mux",
+    "github.com/gin-gonic/gin",
+    "github.com/labstack/echo",
+    "github.com/gofiber/fiber"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".HandleFunc(",
+        ".Handle("
+      ],
+      "keep_strings": true,
+      "pattern": "\\b\\w+\\.(?:HandleFunc|Handle)\\(\\s*\\\"(?:(?P<detail>[A-Z]+)\\s+)?(?P<name>/[^\\\"]*)\\\""
+    }
+  ]
+}

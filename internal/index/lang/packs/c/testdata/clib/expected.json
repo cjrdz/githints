@@ -1,0 +1,14 @@
+{
+  "facets": [
+    "command cmake CMakeLists.txt format",
+    "test cmake CMakeLists.txt util_test"
+  ],
+  "edges": [
+    "CMakeLists.txt -> src/CMakeLists.txt",
+    "src/main.c -> include/clib/api.h",
+    "src/main.c -> src/util.h",
+    "src/util.c -> src/util.h",
+    "src/util.h -> include/clib/api.h",
+    "tests/test_util.c -> src/util.h"
+  ]
+}

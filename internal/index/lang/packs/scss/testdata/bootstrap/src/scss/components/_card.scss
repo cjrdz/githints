@@ -1,0 +1,18 @@
+@use "../abstracts/variables" as v;
+
+.card-elevated {
+  box-shadow: 0 1px 2px #0002;
+
+  &.is-active {
+    outline: 2px solid;
+  }
+
+  .card-elevated__title,
+  .card-elevated__subtitle {
+    margin: 0;
+  }
+}
+
+#sidebar {
+  width: v.$sidebar-width;
+}

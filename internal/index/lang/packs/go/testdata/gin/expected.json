@@ -1,0 +1,12 @@
+{
+  "facets": [
+    "middleware gin main.go gin.Recovery",
+    "model gorm models/product.go Product",
+    "route gin main.go /api/v1/products POST",
+    "route gin main.go /api/v1/products/:id GET",
+    "route gin main.go /health GET"
+  ],
+  "edges": [
+    "main.go -> models/product.go"
+  ]
+}

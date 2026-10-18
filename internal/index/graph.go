@@ -2,6 +2,7 @@ package index
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 
@@ -22,12 +23,18 @@ type GraphNode struct {
 	InDegree  int      `json:"in"`
 	OutDegree int      `json:"out"`
 	External  bool     `json:"external,omitempty"`
+	// Test: every file of the node is a test file (IsTestFile).
+	Test bool `json:"test,omitempty"`
 }
 
 // GraphEdge says From imports To.
 type GraphEdge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	// Test: only test files make this import. In Go a package's _test.go
+	// files share its node, so without this the test helpers a package
+	// imports read as its dependencies.
+	Test bool `json:"test,omitempty"`
 }
 
 // Graph is the file-level dependency graph of the structural index.
@@ -141,7 +148,8 @@ func BuildGraph(db *Store, root string, opts GraphOptions) (Graph, error) {
 		id := nodeOf[f]
 		n, ok := nodes[id]
 		if !ok {
-			n = &GraphNode{ID: id, Dir: dirOf(f)}
+			// A node is a test node until one of its files is not.
+			n = &GraphNode{ID: id, Dir: dirOf(f), Test: true}
 			if p := registry.ForPath(f); p != nil {
 				n.Language = p.Language()
 			}
@@ -150,6 +158,7 @@ func BuildGraph(db *Store, root string, opts GraphOptions) (Graph, error) {
 		if id != f {
 			n.Files = append(n.Files, f)
 		}
+		n.Test = n.Test && IsTestFile(f)
 		n.Symbols += symbolCounts[f]
 	}
 	facetSeen := map[string]bool{}
@@ -165,7 +174,7 @@ func BuildGraph(db *Store, root string, opts GraphOptions) (Graph, error) {
 	}
 
 	type edgeKey struct{ from, to string }
-	seen := map[edgeKey]bool{}
+	seen := map[edgeKey]int{} // index into edges
 	var edges []GraphEdge
 	for _, imp := range imports {
 		from, ok := nodeOf[imp.FilePath]
@@ -186,13 +195,31 @@ func BuildGraph(db *Store, root string, opts GraphOptions) (Graph, error) {
 			continue // within one package
 		}
 		k := edgeKey{from, to}
-		if seen[k] {
+		test := IsTestFile(imp.FilePath)
+		if i, ok := seen[k]; ok {
+			// A test edge until one import behind it comes from non-test code.
+			edges[i].Test = edges[i].Test && test
 			continue
 		}
-		seen[k] = true
-		edges = append(edges, GraphEdge{From: from, To: to})
+		seen[k] = len(edges)
+		edges = append(edges, GraphEdge{From: from, To: to, Test: test})
 		nodes[from].OutDegree++
 		nodes[to].InDegree++
+	}
+
+	// Configuration languages (YAML, Dockerfile, Makefile) are nodes only
+	// when an import links them; a node for every workflow and compose file
+	// would bury the code they configure.
+	type linkedOnly interface{ GraphLinkedOnly() bool }
+	for id, n := range nodes {
+		// The focus stays whatever it is: asking for a file's neighbourhood
+		// must not fail because the file has none.
+		if n.InDegree+n.OutDegree > 0 || n.External || id == opts.Focus || id == nodeOf[opts.Focus] {
+			continue
+		}
+		if lo, ok := registry.ForLanguage(n.Language).(linkedOnly); ok && lo.GraphLinkedOnly() {
+			delete(nodes, id)
+		}
 	}
 
 	keep := make(map[string]bool, len(nodes))
@@ -283,6 +310,48 @@ func BuildGraph(db *Store, root string, opts GraphOptions) (Graph, error) {
 	}
 	return g, nil
 }
+
+// IsTestFile reports whether a repo-relative path is a test by its
+// language's convention: Go's _test.go, foo.test.ts and foo.spec.ts, Python's
+// test_x.py and x_test.py, Java's FooTest.java, PHP's FooTest.php, C and
+// C++'s foo_test.cc, foo_unittest.cc and test_foo.c, or any
+// file under a tests, __tests__, testdata, fixtures or __mocks__ directory
+// (and Java's src/test). It is a heuristic for the graph viewer's test
+// toggle, not a classification anything else relies on.
+func IsTestFile(p string) bool {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs[:len(segs)-1] {
+		switch seg {
+		case "test", "tests", "__tests__", "testdata", "fixtures", "__mocks__", "spec":
+			return true
+		case "src":
+			if i+1 < len(segs)-1 && segs[i+1] == "test" {
+				return true
+			}
+		}
+	}
+	base := segs[len(segs)-1]
+	ext := path.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	switch {
+	case strings.HasSuffix(base, "_test.go"):
+		return true
+	case strings.HasSuffix(stem, ".test") || strings.HasSuffix(stem, ".spec"):
+		return true
+	case ext == ".py" && (strings.HasPrefix(stem, "test_") || strings.HasSuffix(stem, "_test") || stem == "conftest"):
+		return true
+	case (ext == ".java" || ext == ".php" || ext == ".cs" || ext == ".kt") &&
+		(strings.HasSuffix(stem, "Test") || strings.HasSuffix(stem, "Tests")):
+		return true
+	case cFamilySource[ext] && (strings.HasPrefix(stem, "test_") || strings.HasSuffix(stem, "_test") ||
+		strings.HasSuffix(stem, "_tests") || strings.HasSuffix(stem, "_unittest")):
+		return true
+	}
+	return false
+}
+
+// cFamilySource are the C and C++ source extensions a test is written in.
+var cFamilySource = map[string]bool{".c": true, ".cc": true, ".cpp": true, ".cxx": true, ".c++": true}
 
 // packageID names a multi-file package node by its directory, with a
 // trailing slash so it never collides with a file path.

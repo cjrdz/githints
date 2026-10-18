@@ -1,0 +1,11 @@
+{
+  "facets": [
+    "component svelte src/lib/components/Counter.svelte Counter",
+    "middleware sveltekit src/hooks.server.ts handle",
+    "route sveltekit src/routes/(marketing)/blog/[slug]/+page.svelte /blog/[slug] page",
+    "route sveltekit src/routes/+page.svelte / page",
+    "route sveltekit src/routes/api/posts/+server.ts /api/posts GET",
+    "route sveltekit src/routes/api/posts/+server.ts /api/posts POST"
+  ],
+  "edges": []
+}

@@ -304,7 +304,7 @@ func cleanChanges(in []int64) ([]int64, error) {
 //	related_changes: [142, 143]
 //	---
 //
-// Other keys are ignored (Obsidian adds some). A file with no front matter is
+// Other keys are ignored (markdown editors add some). A file with no front matter is
 // a note whose title is its first "# " heading, or its name.
 func Parse(name string, data []byte) (Doc, error) {
 	if !utf8.Valid(data) {
@@ -375,8 +375,8 @@ func parseFront(front string, d *Doc) error {
 		}
 		if raw[0] == ' ' || raw[0] == '\t' {
 			// A continuation of the key above: a block list or a folded
-			// string. Ignored under a key we do not read (Obsidian writes
-			// these); refused under one we do, since half-reading a list
+			// string. Ignored under a key we do not read (markdown
+			// editors write these); refused under one we do, since half-reading a list
 			// would be worse than saying so.
 			if known {
 				return errors.New("multi-line values are not supported: write the list on one line, like [a, b]")

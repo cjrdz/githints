@@ -1,0 +1,25 @@
+{
+  // Sinatra routes: get '/hello' do ... end.
+  "framework": "sinatra",
+  "languages": [
+    "ruby"
+  ],
+  "when_imports": [
+    "sinatra",
+    "sinatra/base"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        "get ",
+        "post ",
+        "put ",
+        "patch ",
+        "delete "
+      ],
+      "keep_strings": true,
+      "pattern": "^\\s*(?P<detail>get|post|put|patch|delete)\\s*\\(?\\s*['\\\"](?P<name>[^'\\\"]*)['\\\"]\\s*\\)?\\s*(?:do|\\{)"
+    }
+  ]
+}

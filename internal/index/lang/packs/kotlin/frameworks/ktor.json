@@ -1,0 +1,43 @@
+{
+  // Ktor server routing. A route("/api") { ... } block prefixes the routes
+  // inside its braces, and nested blocks join; a get { } with no path is the
+  // block's own path. A call on an object (params.get("id")) is not a route.
+  "framework": "ktor",
+  "languages": [
+    "kotlin"
+  ],
+  "when_imports": [
+    "io.ktor.server"
+  ],
+  "prefixes": [
+    {
+      "requires": "route(",
+      "keep_strings": true,
+      "scope": "block",
+      "pattern": "(?:^|[^.\\w])route\\(\\s*\\\"(?P<prefix>[^\\\"]*)\\\"\\s*\\)\\s*\\{"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        "get(",
+        "post(",
+        "put(",
+        "patch(",
+        "delete(",
+        "head(",
+        "options(",
+        "get {",
+        "post {",
+        "put {",
+        "patch {",
+        "delete {",
+        "head {",
+        "options {"
+      ],
+      "keep_strings": true,
+      "pattern": "(?:^|[^.\\w])(?P<detail>get|post|put|patch|delete|head|options)(?:<[^>]*>)?\\s*(?:\\(\\s*(?:\"(?P<name>[^\"]*)\")?\\s*\\))?\\s*\\{"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "facets": [
+    "middleware fastify src/server.ts onRequest",
+    "model mikro-orm src/entities/Author.ts Author",
+    "model sequelize src/models/Item.ts Item",
+    "model sequelize src/models/Item.ts Tag",
+    "route fastify src/plugins/users.ts /users GET",
+    "route fastify src/plugins/users.ts /users/:id PUT",
+    "route fastify src/server.ts /health GET",
+    "route fastify src/server.ts /items POST",
+    "route fastify src/server.ts /items/:id DELETE"
+  ],
+  "edges": [
+    "src/server.ts -> src/plugins/users.ts"
+  ]
+}

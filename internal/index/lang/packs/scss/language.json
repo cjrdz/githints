@@ -1,0 +1,33 @@
+{
+  // Sass (SCSS syntax). Everything the css spec indexes, plus $variables,
+  // @mixin and @function (funcs), and %placeholders. @use, @forward and
+  // @import resolve as Sass does (partials, _index); see the stylesheet
+  // import style. The indented .sass syntax has no braces and is not read.
+  "language": "scss",
+  "extensions": [".scss"],
+  "depth_style": "brace",
+  "graph": "linked",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "import_path": "stylesheet",
+
+  "symbols": [
+    { "kind": "func", "requires": "@mixin", "pattern": "^\\s*@mixin\\s+(?P<name>[A-Za-z_][\\w-]*)(?:\\s*\\((?P<sig>[^)]*)\\))?" },
+    { "kind": "func", "requires": "@function", "pattern": "^\\s*@function\\s+(?P<name>[A-Za-z_][\\w-]*)\\s*\\((?P<sig>[^)]*)\\)" },
+    { "kind": "var", "requires": "$", "pattern": "^\\s*(?P<name>\\$[A-Za-z_][\\w-]*)\\s*:" },
+    { "kind": "var", "requires": "--", "pattern": "^\\s*(?P<name>--[A-Za-z_][\\w-]*)\\s*:" },
+    { "kind": "const", "requires": "keyframes", "pattern": "^\\s*@(?:-webkit-|-moz-)?keyframes\\s+(?P<name>[A-Za-z_][\\w-]*)" },
+    { "kind": "type", "requires": "%", "pattern": "^\\s*(?P<name>%[A-Za-z_][\\w-]*)\\s*\\{" },
+    { "kind": "type", "requires": ".", "pattern": "^\\s*&?(?P<name>\\.[A-Za-z_-][\\w-]*)[^{};]*(?:\\{.*|,)\\s*$" },
+    { "kind": "type", "requires": "#", "pattern": "^\\s*(?P<name>#[A-Za-z_-][\\w-]*)[^{};]*(?:\\{.*|,)\\s*$" }
+  ],
+
+  "imports": [
+    { "requires": "@", "pattern": "^\\s*@(?:use|forward|import)\\s+(?:url\\(\\s*)?[\"']?(?P<path>[^\"'()\\s;,]+)" }
+  ]
+}

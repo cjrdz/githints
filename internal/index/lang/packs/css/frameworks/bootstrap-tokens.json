@@ -1,0 +1,12 @@
+{
+  // Bootstrap 5's CSS custom properties (--bs-primary): a theme set in plain
+  // CSS, which need not import Bootstrap. The prefix is Bootstrap's own, so
+  // the dependency is gate enough.
+  "framework": "bootstrap",
+  "languages": ["css", "scss", "less"],
+  "when_dependencies": ["bootstrap"],
+  "rules": [
+    { "facet": "style", "requires": "--bs-", "detail": "theme token",
+      "pattern": "^\\s*(?P<name>--bs-[\\w-]+)\\s*:" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  // Eloquent models: classes extending Model, Pivot, or Authenticatable (the
+  // User model Laravel generates). Routes moved to frameworks/laravel.json.
+  "framework": "eloquent",
+  "languages": [
+    "php"
+  ],
+  "when_imports": [
+    "Illuminate\\Database\\Eloquent",
+    "Illuminate\\Foundation\\Auth\\User"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:Model|Pivot|Authenticatable)\\b"
+    }
+  ]
+}

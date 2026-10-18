@@ -2,8 +2,10 @@ package lang
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -140,7 +142,15 @@ func FuzzBlankerLineCount(f *testing.F) {
 	for _, src := range blankerCases {
 		f.Add([]byte(src))
 	}
-	bl := NewBlanker(TypeScriptBlankSpec())
+	f.Add([]byte("<?php\n#[Route('/x',\n  methods: ['GET'])]\n# c\n#['\n"))
+	// Every shipped spec, not only TypeScript: each declares its own
+	// delimiters (PHP's "#[" is code while "#" is a comment), and each is a
+	// different way to swallow a newline.
+	blankers := []*Blanker{NewBlanker(TypeScriptBlankSpec())}
+	parsers, _ := EmbeddedParsers()
+	for _, p := range parsers {
+		blankers = append(blankers, p.blanker)
+	}
 
 	f.Fuzz(func(t *testing.T, src []byte) {
 		want := 1
@@ -149,8 +159,13 @@ func FuzzBlankerLineCount(f *testing.F) {
 				want++
 			}
 		}
-		if got := len(bl.Blank(src)); got != want {
-			t.Fatalf("%d lines, want %d for %q", got, want, src)
+		for _, bl := range blankers {
+			if got := len(bl.Blank(src)); got != want {
+				t.Fatalf("%d lines, want %d for %q", got, want, src)
+			}
+			if got := len(bl.BlankKeepingStrings(src)); got != want {
+				t.Fatalf("keeping strings: %d lines, want %d for %q", got, want, src)
+			}
 		}
 	})
 }
@@ -338,5 +353,44 @@ func TestBlankKeepingStringsPreservesLineCount(t *testing.T) {
 		if got := len(bl.BlankKeepingStrings([]byte(src))); got != want {
 			t.Errorf("%s: %d lines, want %d", name, got, want)
 		}
+	}
+}
+
+// TestOpensTableIsOnlyAShortcut: skipping the delimiter checks at bytes no
+// delimiter starts with changes nothing. Every pack sample is blanked by its
+// language's blanker and by a copy that checks at every byte, as the blanker
+// did before the table, and the two must agree in both views.
+func TestOpensTableIsOnlyAShortcut(t *testing.T) {
+	reg := NewRegistry()
+	checked := 0
+	err := filepath.WalkDir("packs", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		sp, ok := reg.ForPath(filepath.ToSlash(p)).(*SpecParser)
+		if !ok {
+			return nil
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		every := *sp.blanker
+		for i := range every.opens {
+			every.opens[i] = true
+		}
+		for _, keep := range []bool{false, true} {
+			if got, want := sp.blanker.blank(src, keep), every.blank(src, keep); !reflect.DeepEqual(got, want) {
+				t.Errorf("%s (keep strings %v): the table changed the output", p, keep)
+			}
+		}
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked < 50 {
+		t.Fatalf("only %d sample files checked", checked)
 	}
 }

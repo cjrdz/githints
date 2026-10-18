@@ -1,0 +1,67 @@
+{
+  // Kotlin (Android, Ktor, Spring, Kotlin Multiplatform).
+  //
+  // A file is named by the package it declares, so the files of one package
+  // are one node, as a Go package's are. An import names a class or a
+  // top-level function inside a package; the import rules keep the package
+  // (import com.x.data.User is com.x.data), which is what links to that
+  // node. A nested class import (com.x.Outer.Inner) keeps com.x.Outer and
+  // links nowhere.
+  "language": "kotlin",
+  "extensions": [".kt", ".kts"],
+  "depth_style": "brace",
+
+  // Block comments nest in Kotlin and do not here; see the Rust spec.
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"\"\"", "close": "\"\"\"", "multiline": true, "interp_open": "${", "interp_close": "}" },
+    { "open": "\"", "close": "\"", "escape": "\\", "interp_open": "${", "interp_close": "}" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "import_path": "declared",
+  "import_path_declared": "^\\s*package\\s+(?P<path>[\\w.]+)",
+
+  "symbols": [
+    {
+      "kind": "type",
+      "requires": "class",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|internal|protected|open|abstract|sealed|final|data|enum|annotation|inner|value|inline|expect|actual)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "interface",
+      "pattern": "^\\s*(?:(?:public|private|internal|protected|sealed|fun|expect|actual)\\s+)*interface\\s+(?P<name>\\w+)"
+    },
+    {
+      // object Repository { } -- a companion object without a name is not a
+      // symbol of its own.
+      "kind": "type",
+      "requires": "object",
+      "pattern": "^\\s*(?:(?:public|private|internal|protected|data|expect|actual)\\s+)*object\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "typealias",
+      "pattern": "^\\s*(?:(?:public|private|internal)\\s+)?typealias\\s+(?P<name>\\w+)"
+    },
+    {
+      // fun, suspend fun, extension fun String.slug(), generic fun <T> f().
+      "kind": "func",
+      "requires": "fun",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|internal|protected|open|override|abstract|final|suspend|inline|operator|infix|tailrec|external|expect|actual)\\s+)*fun\\s+(?:<[^>]+>\\s*)?(?:[\\w.<>?]+\\.)?(?P<name>\\w+)\\s*\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      "kind": "const",
+      "requires": "const",
+      "pattern": "^\\s*(?:(?:public|private|internal)\\s+)?const\\s+val\\s+(?P<name>\\w+)"
+    }
+  ],
+
+  "imports": [
+    // import com.x.data.* keeps com.x.data.
+    { "requires": "import", "pattern": "^\\s*import\\s+(?P<path>[\\w.]+)\\.\\*" },
+    // import com.x.data.User (as U) keeps com.x.data.
+    { "requires": "import", "pattern": "^\\s*import\\s+(?P<path>[\\w.]+)\\.\\w+\\s*(?:as\\s+\\w+)?\\s*;?\\s*$" }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  // Spring. A class-level @RequestMapping prefixes the mappings of its methods;
+  // a mapping is told apart from it by the method declaration that follows. A
+  // mapping without a path is the class's own path. Classes are named by their
+  // stereotype: @RestController and @Controller are controllers, @Service,
+  // @Repository, @Component and Spring Data repository interfaces services,
+  // @Entity classes models; @Scheduled methods are jobs. The same rules read
+  // Kotlin.
+  "framework": "spring",
+  "languages": [
+    "java",
+    "kotlin"
+  ],
+  "when_imports": [
+    "org.springframework",
+    "jakarta.persistence",
+    "javax.persistence"
+  ],
+  "prefixes": [
+    {
+      "requires": "@RequestMapping",
+      "keep_strings": true,
+      "lookahead": 4,
+      "pattern": "@RequestMapping\\(\\s*(?:(?:value|path)\\s*=\\s*)?\\{?\\s*\\\"(?P<prefix>[^\\\"]*)\\\"(?:[^()]|\\([^()]*\\))*\\)\\s*(?:@\\w+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|final|abstract|open|data|internal|sealed)\\s+)*class\\s+"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "Mapping",
+      "keep_strings": true,
+      "lookahead": 4,
+      "pattern": "@(?P<detail>Get|Post|Put|Patch|Delete|Request)Mapping\\b(?:\\(\\s*(?:(?:value|path)\\s*=\\s*)?\\{?\\s*(?:\\\"(?P<name>[^\\\"]*)\\\")?(?:[^()]|\\([^()]*\\))*\\))?\\s*(?:@\\w+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|protected|private|static|final|synchronized)\\s+)*[\\w<>\\[\\]?,. ]+?\\s+[a-z_]\\w*\\s*\\("
+    },
+    {
+      "facet": "model",
+      "requires": "@Entity",
+      "lookahead": 4,
+      "pattern": "@Entity\\b(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*(?:@\\w+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|final|abstract|open|data|internal|sealed)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "controller",
+      "requires": "Controller",
+      "lookahead": 4,
+      "pattern": "@(?:Rest)?Controller\\b(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*(?:@\\w+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|final|abstract|open|data|internal|sealed)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "service",
+      "requires_any": [
+        "@Service",
+        "@Repository",
+        "@Component"
+      ],
+      "lookahead": 4,
+      "pattern": "@(?:Service|Repository|Component)\\b(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*(?:@\\w+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|final|abstract|open|data|internal|sealed)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "service",
+      "requires": "Repository<",
+      "pattern": "\\binterface\\s+(?P<name>\\w+)(?:\\s+extends\\s+|\\s*:\\s*)\\w*Repository<"
+    },
+    {
+      "facet": "job",
+      "requires": "@Scheduled",
+      "lookahead": 3,
+      "pattern": "@Scheduled\\b(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*(?:@\\w+(?:\\((?:[^()]|\\([^()]*\\))*\\))?\\s*)*(?:(?:public|protected|private|static|final|synchronized)\\s+)*[\\w<>\\[\\]?,. ]+?\\s+(?P<name>[a-z_]\\w*)\\s*\\("
+    }
+  ]
+}

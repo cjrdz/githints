@@ -1,0 +1,11 @@
+{
+  // UnoCSS: its configuration file, where presets, shortcuts and the theme
+  // are declared.
+  "framework": "unocss",
+  "languages": ["typescript"],
+  "path_globs": ["uno.config.{js,mjs,ts,mts}", "unocss.config.{js,mjs,ts,mts}"],
+  "rules": [
+    { "facet": "style", "detail": "config",
+      "path_pattern": "(?:^|/)(?P<name>(?:uno|unocss)\\.config)\\.(?:js|mjs|ts|mts)$" }
+  ]
+}

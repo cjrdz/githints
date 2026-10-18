@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/cjrdz/githints/internal/textsafe"
+	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -46,6 +48,12 @@ type Symbol struct {
 type Import struct {
 	FilePath     string
 	ImportedPath string
+
+	// Written is the import as the source spells it, when resolving changed
+	// it: `#include "crow.h"` is ImportedPath include/crow.h in a repository
+	// that vendors Crow, and Written crow.h. Detector gates match either.
+	// It is not stored; detection runs on the parse that produced it.
+	Written string
 }
 
 // LanguageParser turns a source file into symbols and imports.
@@ -68,6 +76,7 @@ type LanguageParser interface {
 type Registry struct {
 	parsers map[string]LanguageParser
 	byExt   map[string]LanguageParser
+	named   []LanguageParser // parsers claiming file names, in registration order
 	// origin records where each language came from, so the CLI can show a
 	// user which of their languages the repository supplied.
 	origin map[string]string
@@ -152,6 +161,14 @@ func (r *Registry) register(p LanguageParser) {
 		}
 		r.byExt[e] = p
 	}
+	r.noteNames(p)
+}
+
+// noteNames records a parser that claims files by name.
+func (r *Registry) noteNames(p LanguageParser) {
+	if nc, ok := p.(NameClaimer); ok && len(nc.FileNames()) > 0 {
+		r.named = append(r.named, p)
+	}
 }
 
 // ForLanguage returns the parser for a language name, or nil if none.
@@ -161,8 +178,46 @@ func (r *Registry) ForLanguage(name string) LanguageParser {
 
 // ForPath returns the parser for a file path, or nil if none.
 func (r *Registry) ForPath(path string) LanguageParser {
-	ext := strings.ToLower(filepath.Ext(path))
-	return r.byExt[ext]
+	return selectParser(r.byExt, r.named, path)
+}
+
+// NameClaimer is implemented by a parser that selects files by name as well
+// as by extension: a Dockerfile or a Makefile has no extension, and a
+// generated pnpm-lock.yaml is not worth indexing as YAML.
+type NameClaimer interface {
+	// FileNames are base names, or base-name globs (Dockerfile.*), the
+	// parser takes whatever their extension.
+	FileNames() []string
+	// ExcludedNames are base-name globs the parser does not take even when
+	// the extension is one of its own.
+	ExcludedNames() []string
+}
+
+// selectParser picks the parser for a path: a name claim first, then the
+// extension, unless that parser excludes the name.
+func selectParser(byExt map[string]LanguageParser, named []LanguageParser, p string) LanguageParser {
+	base := path.Base(filepath.ToSlash(p))
+	for _, np := range named {
+		// Only NameClaimers are listed; the check keeps a slip from panicking
+		// inside the commit hook.
+		if nc, ok := np.(NameClaimer); ok && nameMatches(nc.FileNames(), base) {
+			return np
+		}
+	}
+	lp := byExt[ExtensionOf(p)]
+	if nc, ok := lp.(NameClaimer); ok && nameMatches(nc.ExcludedNames(), base) {
+		return nil
+	}
+	return lp
+}
+
+func nameMatches(globs []string, base string) bool {
+	for _, g := range globs {
+		if ok, err := path.Match(g, base); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // AllParsers returns every registered parser.
@@ -185,6 +240,14 @@ func (r *Registry) Languages() []string {
 	sort.Strings(out)
 	return out
 }
+
+// AutoLanguages, in index.languages, enables every language the registry
+// knows, including specs the repository ships in .githints/langs. Files are
+// matched to a parser by extension, so a language with no files in the
+// repository costs nothing. It is the default because a fixed default skipped
+// every file of a language nobody thought to enable, and said only
+// "unsupported files: N".
+const AutoLanguages = "auto"
 
 // ResolveLanguages validates a list of configured languages against the
 // registry and returns a parser slice in the same order. It returns an error
@@ -223,9 +286,25 @@ func (r *Registry) ResolveLanguages(names []string) ([]LanguageParser, error) {
 func (r *Registry) ResolveKnownLanguages(names []string) ([]LanguageParser, []string, error) {
 	parsers := make([]LanguageParser, 0, len(names))
 	var unknown []string
-	for _, name := range names {
-		if p := r.ForLanguage(name); p != nil {
+	seen := make(map[string]bool)
+	add := func(name string, p LanguageParser) {
+		// A parser listed twice ("auto" plus a name, or a name repeated in
+		// config.json) would run its BeginScans hook twice.
+		if !seen[name] {
+			seen[name] = true
 			parsers = append(parsers, p)
+		}
+	}
+	for _, name := range names {
+		name = strings.ToLower(name)
+		if name == AutoLanguages {
+			for _, all := range r.Languages() {
+				add(all, r.ForLanguage(all))
+			}
+			continue
+		}
+		if p := r.ForLanguage(name); p != nil {
+			add(name, p)
 			continue
 		}
 		unknown = append(unknown, name)
@@ -235,6 +314,15 @@ func (r *Registry) ResolveKnownLanguages(names []string) ([]LanguageParser, []st
 			names, strings.Join(r.Languages(), ", "))
 	}
 	return parsers, unknown, nil
+}
+
+// ParserNames returns the language names of parsers, in order.
+func ParserNames(parsers []LanguageParser) []string {
+	out := make([]string, 0, len(parsers))
+	for _, p := range parsers {
+		out = append(out, strings.ToLower(p.Language()))
+	}
+	return out
 }
 
 // ExtensionOf returns the lower-case extension of path, or empty string.
@@ -251,22 +339,34 @@ func ParserSet(parsers []LanguageParser) map[LanguageParser]struct{} {
 	return set
 }
 
-// ExtensionMap builds a map from extension to parser. Extensions must
-// already be unique within the registry.
-func ExtensionMap(set map[LanguageParser]struct{}) map[string]LanguageParser {
-	m := make(map[string]LanguageParser)
+// FileMap selects a parser for a file from a configured set: by name claim
+// first (Dockerfile, Makefile), then by extension.
+type FileMap struct {
+	byExt map[string]LanguageParser
+	named []LanguageParser
+}
+
+// ExtensionMap builds the FileMap for a set of parsers. Extensions must
+// already be unique within the registry. Name claims are ordered by language
+// name, so the choice between two claims is the same on every run.
+func ExtensionMap(set map[LanguageParser]struct{}) *FileMap {
+	m := &FileMap{byExt: make(map[string]LanguageParser)}
 	for p := range set {
 		for _, ext := range p.Extensions() {
-			m[ext] = p
+			m.byExt[ext] = p
+		}
+		if nc, ok := p.(NameClaimer); ok && len(nc.FileNames()) > 0 {
+			m.named = append(m.named, p)
 		}
 	}
+	sort.Slice(m.named, func(i, j int) bool { return m.named[i].Language() < m.named[j].Language() })
 	return m
 }
 
 // SelectParser chooses a parser for a file from the configured set, returning
-// nil if none matches the extension.
-func SelectParser(extMap map[string]LanguageParser, path string) LanguageParser {
-	return extMap[ExtensionOf(path)]
+// nil if none claims it.
+func SelectParser(m *FileMap, path string) LanguageParser {
+	return selectParser(m.byExt, m.named, path)
 }
 
 // ScanOptions bundles the per-file guard limits and rendering options.
@@ -275,7 +375,6 @@ type ScanOptions struct {
 	Languages    []string
 	MaxFileSize  int64
 	ParseTimeout time.Duration
-	Obsidian     bool
 }
 
 // ImportPathResolver is implemented by parsers whose language has a notion of
@@ -309,6 +408,32 @@ func (r *Registry) ImportPath(root, file string) (string, error) {
 		return "", fmt.Errorf("language %s does not resolve import paths", p.Language())
 	}
 	return resolver.ImportPath(root, file)
+}
+
+// importKeyFiles are the project files an import key is derived from, beside
+// the file itself: Go's module path, Rust's crate name, Dart's package name,
+// PHP's PSR-4 map, Swift's package targets, Python's project roots (each
+// spec's import_path_root_markers are added). A change to one can change the
+// key of files the commit did not touch.
+var importKeyFiles = []string{
+	"go.mod", "go.work", "Cargo.toml", "pubspec.yaml", "composer.json", "Package.swift",
+	"pyproject.toml", "setup.py", "setup.cfg",
+}
+
+// AffectsImportKeys reports whether a repo-relative path is a file some
+// language derives import keys from, so the hook knows the stored keys of
+// files it did not touch may be stale.
+func (r *Registry) AffectsImportKeys(rel string) bool {
+	base := path.Base(filepath.ToSlash(rel))
+	if slices.Contains(importKeyFiles, base) {
+		return true
+	}
+	for _, p := range r.parsers {
+		if sp, ok := p.(*SpecParser); ok && slices.Contains(sp.rootMarkers, base) {
+			return true
+		}
+	}
+	return false
 }
 
 // LocalImportPath resolves against the built-in languages only.
@@ -401,12 +526,14 @@ func NotePath(root, src string) string {
 	return p
 }
 
-// FormatIndexedAt returns a printable string for a Unix timestamp.
+// FormatIndexedAt returns a printable string for a Unix timestamp: RFC 3339
+// in UTC, so INDEX.md reads the same on every machine. It printed the raw
+// number until v0.2.3.
 func FormatIndexedAt(ts int64) string {
 	if ts == 0 {
 		return "never"
 	}
-	return fmt.Sprintf("%d", ts)
+	return time.Unix(ts, 0).UTC().Format(time.RFC3339)
 }
 
 // SortedKeys returns the sorted keys of a map.
@@ -423,42 +550,12 @@ func SortedKeys(m map[string]int) []string {
 // escaping the hint renderer uses (textsafe.Markdown); there is one copy.
 func EscapeMarkdown(s string) string { return textsafe.Markdown(s) }
 
-// FileLink returns either a markdown link or an Obsidian wikilink.
-//
-// In Obsidian mode the target is the note filename (src + ".md") with
-// URL-encoded [, ], and | characters so the wikilink boundary stays intact.
-// Pipe syntax is always used so the display text is the raw repo-relative path.
-//
-// New code should use NoteLink: its default-mode targets are relative to the
-// linking document and include the .md suffix, so they resolve to the actual
-// note file — this default-mode target resolves to nothing on disk.
-func FileLink(root, src string, obsidian bool) string {
-	if obsidian {
-		return NoteLink("", src, src, true)
-	}
-	return fmt.Sprintf("[%s](%s)", src, filepath.ToSlash(src))
-}
-
 // NoteLink returns a link, labeled display, to the index note for target (a
 // repo-relative source file). fromDir is the directory of the linking
 // document relative to .githints/ — "index/<dir of the note's source>" for
 // per-file notes, "." for the INDEX.md rollup — so the default markdown
 // target resolves to the real note file (e.g. "../../cmd/main.go.md").
-// Obsidian wikilinks are location-independent; fromDir is ignored there.
-func NoteLink(fromDir, display, target string, obsidian bool) string {
-	if obsidian {
-		t := target + ".md"
-		// URL-encode only the characters that break wikilink syntax.
-		t = strings.ReplaceAll(t, "[", "%5B")
-		t = strings.ReplaceAll(t, "]", "%5D")
-		t = strings.ReplaceAll(t, "|", "%7C")
-		// Obsidian does not honor backslash escapes inside a wikilink. The
-		// display runs from the first "|" to the first "]]", so a lone bracket
-		// or pipe is harmless; a doubled bracket would end or nest the link
-		// early, so those pairs are split.
-		display = strings.NewReplacer("]]", "] ]", "[[", "[ [").Replace(textsafe.OneLine(display))
-		return fmt.Sprintf("[[%s|%s]]", t, display)
-	}
+func NoteLink(fromDir, display, target string) string {
 	rel, err := filepath.Rel(fromDir, filepath.Join("index", target+".md"))
 	if err != nil {
 		rel = filepath.Join("index", target+".md")
@@ -469,15 +566,22 @@ func NoteLink(fromDir, display, target string, obsidian bool) string {
 // encodeMarkdownTarget percent-encodes the characters that break markdown
 // inline-link targets: spaces, brackets, and parentheses.
 func encodeMarkdownTarget(s string) string {
-	r := strings.NewReplacer(
-		" ", "%20",
-		"[", "%5B",
-		"]", "%5D",
-		"(", "%28",
-		")", "%29",
-	)
-	return r.Replace(s)
+	if !strings.ContainsAny(s, " []()") {
+		return s // the usual case: nothing to encode, nothing allocated
+	}
+	return markdownTarget.Replace(s)
 }
+
+// The replacer is built once: a strings.Replacer compiles its lookup table
+// on first use, and building one per call made link encoding about a tenth of
+// the CPU of rendering the notes. A Replacer is safe for concurrent use.
+var markdownTarget = strings.NewReplacer(
+	" ", "%20",
+	"[", "%5B",
+	"]", "%5D",
+	"(", "%28",
+	")", "%29",
+)
 
 // EncodeLanguageCounts serializes the per-language file counts for the meta
 // row.

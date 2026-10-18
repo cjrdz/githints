@@ -1,0 +1,91 @@
+{
+  // Laravel. Routes are Route:: calls, with any chain before the method
+  // (Route::middleware("auth")->get(...)). A Route::prefix(...)->group(...) or
+  // Route::group(["prefix" => ...]) applies to the routes inside its closure,
+  // and nested groups join; a group loading another file
+  // (->group(base_path("routes/admin.php"))) does not follow it there.
+  // Eloquent models are in orm/eloquent.json.
+  "framework": "laravel",
+  "languages": [
+    "php"
+  ],
+  "when_imports": [
+    "Illuminate"
+  ],
+  "when_dependencies": [
+    "laravel/framework"
+  ],
+  "prefixes": [
+    {
+      "requires": "prefix(",
+      "keep_strings": true,
+      "scope": "statement",
+      "pattern": "Route::(?:\\w+\\([^()]*\\)->)*prefix\\(\\s*['\"](?P<prefix>[^'\"]*)['\"]\\s*\\)(?:->\\w+\\([^()]*\\))*?->group\\("
+    },
+    {
+      "requires": "group(",
+      "keep_strings": true,
+      "scope": "statement",
+      "pattern": "Route::group\\(\\s*\\[[^\\]]*['\"]prefix['\"]\\s*=>\\s*['\"](?P<prefix>[^'\"]*)['\"]"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "Route::",
+      "keep_strings": true,
+      "pattern": "Route::(?:\\w+\\([^()]*\\)->)*(?P<detail>get|post|put|patch|delete|options|any)\\(\\s*['\"](?P<name>[^'\"]*)['\"]"
+    },
+    {
+      "facet": "route",
+      "requires": "Route::",
+      "keep_strings": true,
+      "pattern": "Route::(?:\\w+\\([^()]*\\)->)*match\\(\\s*\\[[^\\]]*\\]\\s*,\\s*['\"](?P<name>[^'\"]*)['\"]"
+    },
+    {
+      "facet": "route",
+      "requires": "Route::",
+      "keep_strings": true,
+      "pattern": "Route::(?:\\w+\\([^()]*\\)->)*(?P<detail>resource|apiResource)\\(\\s*['\"](?P<name>[^'\"]*)['\"]"
+    },
+    {
+      "facet": "controller",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:Controller)\\b"
+    },
+    {
+      "facet": "service",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:ServiceProvider)\\b"
+    },
+    {
+      "facet": "schema",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:FormRequest|JsonResource|ResourceCollection)\\b"
+    },
+    {
+      "facet": "job",
+      "requires": "ShouldQueue",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\b[^{;]*\\bimplements\\s+[^{;]*\\bShouldQueue\\b"
+    },
+    {
+      "facet": "middleware",
+      "requires": "handle",
+      "path_pattern": "(?:^|/)app/Http/Middleware/(?:[^/]+/)*(?P<name>[^/]+)\\.php$",
+      "pattern": "\\bfunction\\s+handle\\s*\\("
+    },
+    {
+      "facet": "migration",
+      "requires": "Migration",
+      "path_pattern": "(?:^|/)database/migrations/(?P<name>[^/]+)\\.php$",
+      "pattern": "\\bextends\\s+Migration\\b"
+    },
+    // Artisan commands, named by the first word of $signature.
+    {
+      "facet": "command",
+      "requires": "$signature",
+      "keep_strings": true,
+      "pattern": "\\$signature\\s*=\\s*['\\\"](?P<name>[\\w:.-]+)"
+    }
+  ]
+}

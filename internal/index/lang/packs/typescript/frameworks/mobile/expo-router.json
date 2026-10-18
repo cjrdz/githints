@@ -1,0 +1,27 @@
+{
+  // Expo Router (React Native) routes are files under app/: (group) folders and
+  // index name no segment, _layout and +html are not routes, and name+api.ts
+  // files are API routes with one route per exported HTTP method.
+  "framework": "expo-router",
+  "languages": [
+    "typescript"
+  ],
+  "when_dependencies": [
+    "expo-router"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "name_style": "route",
+      "path_exclude": "\\+api\\.(?:ts|js)$",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:src/)?app(?P<name>(?:/[^/_+][^/]*)*?/[^/_+][^/]*?)\\.(?:tsx|jsx|ts|js)$"
+    },
+    {
+      "facet": "route",
+      "name_style": "route",
+      "requires": "export",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:src/)?app(?P<name>(?:/[^/_+][^/]*)*?/[^/_+][^/]*?)\\+api\\.(?:ts|js)$",
+      "pattern": "^\\s*export\\s+(?:async\\s+)?(?:function\\s+|const\\s+|let\\s+)(?P<detail>GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\b"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  // Doctrine: #[ORM\Entity] (or #[Entity], #[ODM\Document]) classes are models,
+  // AbstractMigration classes migrations.
+  "framework": "doctrine",
+  "languages": [
+    "php"
+  ],
+  "when_imports": [
+    "Doctrine\\ORM",
+    "Doctrine\\ODM",
+    "Doctrine\\Migrations"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires_any": [
+        "Entity",
+        "Document"
+      ],
+      "lookahead": 6,
+      "pattern": "#\\[(?:ORM\\\\|ODM\\\\)?(?:Entity|Document)\\b(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]\\s*(?:#\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\]\\s*)*(?:(?:final|abstract|readonly)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "migration",
+      "requires": "extends",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+\\\\?(?:[\\w\\\\]*\\\\)?(?:AbstractMigration)\\b"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{ "name": "bun-app", "dependencies": { "elysia": "^1" }, "devDependencies": { "@types/bun": "latest" } }

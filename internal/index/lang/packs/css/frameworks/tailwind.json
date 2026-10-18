@@ -1,0 +1,25 @@
+{
+  // Tailwind CSS in stylesheets. v4 is configured in CSS: @theme tokens,
+  // @utility and @custom-variant definitions, @plugin (daisyUI and others),
+  // and component classes under @layer components, which v3 projects use too.
+  // Gated on the import (@import "tailwindcss") or the dependency, since v3's
+  // @tailwind directives import nothing.
+  "framework": "tailwind",
+  "languages": ["css", "scss", "less"],
+  "when_imports": ["tailwindcss"],
+  "when_dependencies": ["tailwindcss", "@tailwindcss/vite", "@tailwindcss/postcss", "@tailwindcss/cli"],
+  "rules": [
+    { "facet": "style", "requires": "@import", "keep_strings": true, "detail": "import",
+      "pattern": "^\\s*@import\\s+(?:url\\(\\s*)?[\"'](?P<name>tailwindcss\\b[^\"']*)[\"']" },
+    { "facet": "style", "requires": "--", "inside": "^\\s*@theme\\b", "detail": "theme token",
+      "pattern": "^\\s*(?P<name>--[A-Za-z_][\\w-]*)\\s*:" },
+    { "facet": "style", "requires": "@utility", "detail": "utility",
+      "pattern": "^\\s*@utility\\s+(?P<name>[A-Za-z_-][\\w*-]*)" },
+    { "facet": "style", "requires": "@custom-variant", "detail": "variant",
+      "pattern": "^\\s*@custom-variant\\s+(?P<name>[A-Za-z_-][\\w-]*)" },
+    { "facet": "style", "requires": "@plugin", "keep_strings": true, "detail": "plugin",
+      "pattern": "^\\s*@plugin\\s+[\"'](?P<name>[^\"']+)[\"']" },
+    { "facet": "style", "requires": ".", "inside": "^\\s*@layer\\s+components\\b", "inside_children": true, "detail": "component class",
+      "pattern": "^\\s*(?P<name>\\.[A-Za-z_-][\\w-]*)" }
+  ]
+}

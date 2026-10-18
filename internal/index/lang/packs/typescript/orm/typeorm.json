@@ -1,0 +1,23 @@
+{
+  // TypeORM: @Entity classes are models, MigrationInterface classes migrations.
+  "framework": "typeorm",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "typeorm"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "@Entity",
+      "lookahead": 8,
+      "pattern": "@Entity\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "migration",
+      "requires": "MigrationInterface",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+implements\\s+MigrationInterface\\b"
+    }
+  ]
+}

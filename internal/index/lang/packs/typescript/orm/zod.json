@@ -1,0 +1,18 @@
+{
+  // Zod: a schema is a constant built from z.object, z.union and the other
+  // composite constructors, named by the constant.
+  "framework": "zod",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "zod"
+  ],
+  "rules": [
+    {
+      "facet": "schema",
+      "requires": "z.",
+      "pattern": "^\\s*(?:export\\s+)?const\\s+(?P<name>\\w+)\\s*(?::[^=]+)?=\\s*z\\s*\\.\\s*(?:object|strictObject|looseObject|union|discriminatedUnion|intersection|array|record|enum|tuple)\\("
+    }
+  ]
+}

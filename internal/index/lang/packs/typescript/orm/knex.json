@@ -1,0 +1,18 @@
+{
+  // Knex migrations: a file under migrations/ exporting up, named by its file.
+  "framework": "knex",
+  "languages": [
+    "typescript"
+  ],
+  "when_dependencies": [
+    "knex"
+  ],
+  "rules": [
+    {
+      "facet": "migration",
+      "requires": "up",
+      "path_pattern": "(?:^|/)migrations/(?P<name>[^/]+?)\\.(?:js|ts|cjs|mjs)$",
+      "pattern": "\\b(?:exports\\.up|export\\s+(?:async\\s+)?function\\s+up|export\\s+const\\s+up)\\b"
+    }
+  ]
+}

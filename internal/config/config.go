@@ -53,12 +53,11 @@ const (
 // so the index is built incrementally on every commit; the flag exists as an
 // opt-out for unusually large repos or unusual workflows.
 type Index struct {
-	Enabled           bool     `json:"enabled"`
-	Languages         []string `json:"languages"`
-	MaxBytes          int      `json:"max_bytes"`
-	MaxFileSize       int      `json:"max_file_size"`
-	ParseTimeoutMS    int      `json:"parse_timeout_ms"`
-	ObsidianWikilinks bool     `json:"obsidian_wikilinks"`
+	Enabled        bool     `json:"enabled"`
+	Languages      []string `json:"languages"`
+	MaxBytes       int      `json:"max_bytes"`
+	MaxFileSize    int      `json:"max_file_size"`
+	ParseTimeoutMS int      `json:"parse_timeout_ms"`
 	// GraphHTML regenerates .githints/graph.html, the offline dependency
 	// graph viewer, whenever the index is rebuilt or updated by the hook.
 	GraphHTML bool `json:"graph_html"`
@@ -74,12 +73,14 @@ func Default() Config {
 			MaxDiffBytes: defaultMaxDiffBytes,
 		},
 		Index: Index{
-			Enabled:           true,
-			Languages:         []string{"go"},
-			MaxBytes:          defaultIndexMaxBytes,
-			MaxFileSize:       defaultIndexMaxFileSize,
-			ParseTimeoutMS:    defaultIndexParseTimeoutMS,
-			ObsidianWikilinks: false,
+			Enabled: true,
+			// lang.AutoLanguages: every language the binary supports. A fixed
+			// default (["go"] through v0.2.3) indexed nothing in a Python
+			// repository.
+			Languages:      []string{"auto"},
+			MaxBytes:       defaultIndexMaxBytes,
+			MaxFileSize:    defaultIndexMaxFileSize,
+			ParseTimeoutMS: defaultIndexParseTimeoutMS,
 		},
 	}
 }
@@ -180,9 +181,6 @@ func applyEnvOverrides(cfg *Config) {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Index.ParseTimeoutMS = n
 		}
-	}
-	if v := os.Getenv("GITHINTS_INDEX_OBSIDIAN_WIKILINKS"); v != "" {
-		cfg.Index.ObsidianWikilinks = truthy(v)
 	}
 	if v := os.Getenv("GITHINTS_INDEX_GRAPH_HTML"); v != "" {
 		cfg.Index.GraphHTML = truthy(v)

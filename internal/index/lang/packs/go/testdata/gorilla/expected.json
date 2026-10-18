@@ -1,0 +1,8 @@
+{
+  "facets": [
+    "route gorilla router.go / GET",
+    "route gorilla router.go /api/metrics",
+    "route gorilla router.go /api/orders/{id} PATCH"
+  ],
+  "edges": []
+}

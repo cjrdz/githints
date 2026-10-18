@@ -1,0 +1,15 @@
+{
+  "facets": [
+    "component qt src/ui/mainwindow.h MainWindow",
+    "component qt src/ui/mainwindow.h StatusBadge",
+    "job qt src/worker.h Exporter",
+    "model qt src/models/todomodel.h TodoModel"
+  ],
+  "edges": [
+    "src/main.cpp -> src/ui/mainwindow.h",
+    "src/models/todomodel.cpp -> src/models/todomodel.h",
+    "src/ui/mainwindow.cpp -> src/ui/mainwindow.h",
+    "src/ui/mainwindow.cpp -> src/worker.h",
+    "src/ui/mainwindow.h -> src/models/todomodel.h"
+  ]
+}

@@ -151,7 +151,6 @@ func HookRun() error {
 				Languages:    cfg.Index.Languages,
 				MaxFileSize:  int64(cfg.Index.MaxFileSize),
 				ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
-				Obsidian:     cfg.Index.ObsidianWikilinks,
 			}, files, cfg.Index.MaxBytes); err != nil {
 				fmt.Fprintf(os.Stderr, "githints: incremental index scan: %v\n", err)
 			} else if cfg.Index.GraphHTML {

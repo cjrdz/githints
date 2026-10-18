@@ -1,0 +1,23 @@
+{
+  // Celery tasks: functions decorated @app.task, @celery.task or @shared_task.
+  // Task modules usually import the app from the project (from .celery import
+  // app), so the declared dependency is a gate too.
+  "framework": "celery",
+  "languages": [
+    "python"
+  ],
+  "when_imports": [
+    "celery"
+  ],
+  "when_dependencies": [
+    "celery"
+  ],
+  "rules": [
+    {
+      "facet": "job",
+      "requires": "task",
+      "lookahead": 2,
+      "pattern": "^\\s*@(?:\\w+\\.)?(?:task|shared_task)\\b(?:\\([^)]*\\))?\\s*\\n\\s*(?:@[\\w.]+(?:\\([^)]*\\))?\\s*\\n\\s*)*(?:async\\s+)?def\\s+(?P<name>\\w+)"
+    }
+  ]
+}

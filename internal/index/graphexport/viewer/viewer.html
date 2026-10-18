@@ -5,13 +5,21 @@
   <div class="controls">
     <input type="search" id="search" placeholder="Find a file  ( / )" aria-label="Find a file" autocomplete="off">
     <span class="stats" id="match-count" aria-live="polite"></span>
+    <label>Layout
+      <select id="layout">
+        <option value="layers">layers</option>
+        <option value="force">force</option>
+      </select>
+    </label>
     <label>Color by
       <select id="color-by">
+        <option value="folder">folder</option>
         <option value="language">language</option>
-        <option value="directory">top-level directory</option>
         <option value="facet">framework role</option>
       </select>
     </label>
+    <button type="button" id="toggle-group" aria-pressed="false" title="Collapse each folder into one node; click a folder to open it">Group folders</button>
+    <button type="button" id="toggle-tests" aria-pressed="false" title="Show test files, imports made only by tests, and helpers only tests import">Tests</button>
     <button type="button" id="toggle-labels" aria-pressed="true">Labels</button>
     <button type="button" id="toggle-table" aria-pressed="false">Table</button>
     <button type="button" id="fit">Fit</button>
@@ -25,7 +33,7 @@
     <div id="table-view" hidden>
       <table>
         <thead><tr>
-          <th><button type="button" data-key="id">File</button></th>
+          <th><button type="button" data-key="name">File</button></th>
           <th><button type="button" data-key="language">Language</button></th>
           <th class="num"><button type="button" data-key="in">Imported by</button></th>
           <th class="num"><button type="button" data-key="out">Imports</button></th>

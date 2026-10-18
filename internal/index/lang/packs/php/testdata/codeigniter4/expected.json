@@ -1,0 +1,16 @@
+{
+  "facets": [
+    "controller codeigniter app/Controllers/BaseController.php BaseController",
+    "controller codeigniter app/Controllers/Home.php Home",
+    "middleware codeigniter app/Filters/AuthFilter.php AuthFilter",
+    "migration codeigniter app/Database/Migrations/2024-01-01-000000_AddUsers.php AddUsers",
+    "model codeigniter app/Models/UserModel.php UserModel",
+    "route codeigniter app/Config/Routes.php / GET",
+    "route codeigniter app/Config/Routes.php /admin/users GET",
+    "route codeigniter app/Config/Routes.php /admin/users/(:num) POST",
+    "route codeigniter app/Config/Routes.php photos resource"
+  ],
+  "edges": [
+    "app/Controllers/Home.php -> app/Models/UserModel.php"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "crow-api",
+  "version": "0.1.0",
+  "dependencies": ["crow", { "name": "nlohmann-json" }]
+}

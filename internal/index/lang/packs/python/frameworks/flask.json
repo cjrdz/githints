@@ -1,0 +1,31 @@
+{
+  // Flask. Routes are decorators, so the route path and the function it
+  // decorates are on different lines; the path is what a reader is looking
+  // for, so that is what is recorded.
+  "framework": "flask",
+  "languages": ["python"],
+  "when_imports": ["flask"],
+  "prefixes": [
+    {
+      // bp = Blueprint("users", __name__, url_prefix="/users")
+      "requires": "Blueprint",
+      "keep_strings": true,
+      "pattern": "(?P<var>\\w+)\\s*=\\s*Blueprint\\((?:[^()]|\\([^()]*\\))*?\\burl_prefix\\s*=\\s*[\"'](?P<prefix>[^\"']*)[\"']"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "route(",
+      "keep_strings": true,
+      "pattern": "@(?P<var>\\w+)\\.route\\(\\s*[\"'](?P<name>[^\"']*)[\"']"
+    },
+    {
+      // Flask 2 added method shortcuts alongside @route.
+      "facet": "route",
+      "requires": "@",
+      "keep_strings": true,
+      "pattern": "@(?P<var>\\w+)\\.(?P<detail>get|post|put|patch|delete)\\(\\s*[\"'](?P<name>[^\"']*)[\"']"
+    }
+  ]
+}

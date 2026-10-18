@@ -1,0 +1,13 @@
+{
+  // styled-components: const Button = styled.button`...` and
+  // styled(Link)`...` define components; createGlobalStyle a global style.
+  "framework": "styled-components",
+  "languages": ["typescript", "vue", "svelte", "astro"],
+  "when_imports": ["styled-components"],
+  "rules": [
+    { "facet": "component", "requires": "styled",
+      "pattern": "\\b(?:const|let|var)\\s+(?P<name>[A-Za-z_$][\\w$]*)\\s*(?::[^=]+)?=\\s*styled(?:\\.[a-z][\\w]*|\\(\\s*[A-Za-z_$][\\w$.]*\\s*\\))" },
+    { "facet": "style", "requires": "createGlobalStyle", "detail": "global style",
+      "pattern": "\\b(?:const|let|var)\\s+(?P<name>[A-Za-z_$][\\w$]*)\\s*=\\s*createGlobalStyle\\b" }
+  ]
+}

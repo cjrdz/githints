@@ -67,9 +67,16 @@ client setup are in the [usage guide](docs/usage.md).
   full changelog, per-file hints, notes and a manifest with hashes, plus an
   optional DuckDB script, without ever copying the integrity salt.
 - **Indexes the code.** A regenerable index of symbols, imports and framework
-  roles (routes, models, components...) across Go, TypeScript/JavaScript, Vue,
-  Svelte, Astro, Python, Rust, Java, C#, PHP, SQL and Prisma, with imports
-  resolved per package so monorepos connect.
+  roles (routes, models, components, controllers, jobs...) across Go,
+  TypeScript/JavaScript, Vue, Svelte, Astro, Python, Rust, Java, Kotlin, Swift,
+  Dart, Ruby, C#, PHP, C, C++, SQL and Prisma, CSS, Sass and Less (Tailwind,
+  Bootstrap, Bulma, Foundation, Pico), plus Dockerfiles, CI workflows,
+  Kubernetes, Terraform, Make and CMake, with imports resolved per package so
+  monorepos connect. Every supported language is on by default. Framework packs
+  cover the common web, mobile (Android, iOS, Flutter, React Native) and desktop
+  (Electron, Tauri, SwiftUI, Qt) stacks. The post-commit hook keeps it current
+  for the cost of the files a commit touched, so an agent can ask where a route
+  or model lives instead of reading files to find out.
 - **Shows the dependency graph.** `githints index graph` writes an offline,
   interactive HTML viewer; Mermaid, Graphviz and JSON exports are one flag away.
 - **Works with any MCP client**, and has CLI equivalents for every read tool.

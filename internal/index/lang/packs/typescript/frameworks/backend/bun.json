@@ -1,0 +1,23 @@
+{
+  // Bun.serve({ routes: { "/api/users": handler } }), Bun 1.2's built-in router:
+  // the keys of the routes object, inside a Bun.serve call. Bun is a runtime
+  // global with no import, so this is gated on Bun's type package, which bun init
+  // adds. Routes matched by hand in fetch() are not detected.
+  "framework": "bun",
+  "languages": [
+    "typescript"
+  ],
+  "when_dependencies": [
+    "@types/bun",
+    "bun-types"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": ":",
+      "keep_strings": true,
+      "within": "Bun.serve(",
+      "pattern": "^\\s*['\\\"](?P<name>/[^'\\\"]*)['\\\"]\\s*:"
+    }
+  ]
+}

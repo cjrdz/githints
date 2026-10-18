@@ -1,0 +1,14 @@
+{
+  "facets": [
+    "model diesel src/schema.rs todos",
+    "route axum src/main.rs / GET",
+    "route axum src/main.rs /todos GET",
+    "route axum src/main.rs /todos POST",
+    "route axum src/main.rs /todos/:id DELETE"
+  ],
+  "edges": [
+    "src/handlers/todos.rs -> src/models.rs",
+    "src/handlers/todos.rs -> src/schema.rs",
+    "src/main.rs -> src/handlers/todos.rs"
+  ]
+}

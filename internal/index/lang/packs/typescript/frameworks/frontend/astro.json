@@ -1,0 +1,34 @@
+{
+  // Astro routes are files under src/pages: an .astro file is a page, a .ts or
+  // .js file names one endpoint per exported HTTP method. Components are the
+  // .astro files under a components/ directory.
+  "framework": "astro",
+  "languages": [
+    "astro",
+    "typescript"
+  ],
+  "when_dependencies": [
+    "astro"
+  ],
+  "path_globs": [
+    "*.astro"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "name_style": "route",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?src/pages(?P<name>(?:/[^/]+)*?/[^/]+?)\\.astro$"
+    },
+    {
+      "facet": "route",
+      "name_style": "route",
+      "requires": "export",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?src/pages(?P<name>(?:/[^/]+)*?/[^/]+?)\\.(?:ts|js)$",
+      "pattern": "^\\s*export\\s+(?:async\\s+)?(?:function\\s+|const\\s+|let\\s+)(?P<detail>GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\b"
+    },
+    {
+      "facet": "component",
+      "path_pattern": "(?:^|/)components/(?:[^/]+/)*(?P<name>[^/]+)\\.astro$"
+    }
+  ]
+}

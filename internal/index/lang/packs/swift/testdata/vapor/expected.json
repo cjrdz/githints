@@ -1,0 +1,11 @@
+{
+  "facets": [
+    "model fluent Sources/App/Models/Todo.swift Todo",
+    "route vapor Sources/App/routes.swift / GET",
+    "route vapor Sources/App/routes.swift /api/todos GET",
+    "route vapor Sources/App/routes.swift /api/todos POST",
+    "route vapor Sources/App/routes.swift /api/todos/:todoID DELETE",
+    "route vapor Sources/App/routes.swift /hello/:name GET"
+  ],
+  "edges": []
+}

@@ -1,0 +1,51 @@
+{
+  // Express routes are calls on an app or router: app.get("/users", h). A path
+  // must start with "/", which is what keeps app.get("env") (a settings getter)
+  // out. A router mounted in the same file (api.use("/admin", admin)) prefixes
+  // its routes; one mounted from another file keeps its own path.
+  //
+  // Gated on importing express, not on the dependency: an axios client's
+  // api.get("/users") has the same shape, and a full-stack package declares both.
+  "framework": "express",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "express"
+  ],
+  "prefixes": [
+    {
+      "requires": ".use(",
+      "keep_strings": true,
+      "pattern": "\\.use\\(\\s*['\"`](?P<prefix>/[^'\"`]*)['\"`]\\s*,\\s*(?P<var>[A-Za-z_$][\\w$]*)\\s*\\)"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".get(",
+        ".post(",
+        ".put(",
+        ".patch(",
+        ".delete(",
+        ".options(",
+        ".head(",
+        ".all("
+      ],
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>[A-Za-z_$][\\w$]*)\\.(?P<detail>get|post|put|patch|delete|options|head|all)\\(\\s*['\"`](?P<name>/[^'\"`]*|\\*)['\"`]"
+    },
+    {
+      "facet": "route",
+      "requires": ".route(",
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>[A-Za-z_$][\\w$]*)\\.route\\(\\s*['\"`](?P<name>/[^'\"`]*)['\"`]\\s*\\)"
+    },
+    {
+      "facet": "middleware",
+      "requires": ".use(",
+      "pattern": "\\.use\\(\\s*(?:['\"`][^'\"`]*['\"`]\\s*,\\s*)?(?P<name>[A-Za-z_$][\\w$.]*)\\("
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "facets": [
+    "controller spring src/main/java/com/example/shop/web/ProductController.java ProductController",
+    "job spring src/main/java/com/example/shop/service/PricingService.java refreshPrices",
+    "model spring src/main/java/com/example/shop/domain/Product.java Product",
+    "route spring src/main/java/com/example/shop/web/ProductController.java /api/products GET",
+    "route spring src/main/java/com/example/shop/web/ProductController.java /api/products/bulk POST",
+    "route spring src/main/java/com/example/shop/web/ProductController.java /api/products/{id} GET",
+    "service spring src/main/java/com/example/shop/domain/ProductRepository.java ProductRepository",
+    "service spring src/main/java/com/example/shop/service/PricingService.java PricingService"
+  ],
+  "edges": [
+    "src/main/java/com/example/shop/service/PricingService.java -> src/main/java/com/example/shop/domain/Product.java",
+    "src/main/java/com/example/shop/web/ProductController.java -> src/main/java/com/example/shop/domain/Product.java",
+    "src/main/java/com/example/shop/web/ProductController.java -> src/main/java/com/example/shop/domain/ProductRepository.java"
+  ]
+}

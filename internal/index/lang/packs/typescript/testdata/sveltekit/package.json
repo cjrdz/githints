@@ -1,0 +1,1 @@
+{ "name": "kit", "devDependencies": { "@sveltejs/kit": "^2", "svelte": "^5" } }

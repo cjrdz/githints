@@ -1,0 +1,22 @@
+{
+  // UIKit (and AppKit) view controllers and views.
+  "framework": "uikit",
+  "languages": [
+    "swift"
+  ],
+  "when_imports": [
+    "UIKit",
+    "AppKit"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "requires_any": [
+        "ViewController",
+        "UIView",
+        "NSView"
+      ],
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*:\\s*(?:[\\w.]+\\s*,\\s*)*(?:(?:UI|NS)\\w*ViewController|UIView|NSView)\\b"
+    }
+  ]
+}

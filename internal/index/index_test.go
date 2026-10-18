@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -505,81 +506,6 @@ func TestFullScanMaxBytesGuard(t *testing.T) {
 	}
 }
 
-func TestFullScanObsidianWikilinks(t *testing.T) {
-	st, dir := tempStore(t)
-	defer st.Close()
-
-	root := filepath.Join(dir, "repo")
-	initGitRepo(t, root)
-	// The renderer resolves a file to its module import path before looking up
-	// dependents, so the fixture needs a go.mod and a real module-path import.
-	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.23\n")
-	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
-	writeGo(t, root, "b.go", "package main\nimport \"example.com/m\"\nfunc B() {}\n")
-
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second, Obsidian: true}, false, 0); err != nil {
-		t.Fatalf("FullScan: %v", err)
-	}
-
-	noteA := lang.NotePath(root, "a.go")
-	data, err := os.ReadFile(noteA)
-	if err != nil {
-		t.Fatalf("read note a.go: %v", err)
-	}
-	if !strings.Contains(string(data), "[[b.go.md|b.go]]") {
-		t.Errorf("expected Obsidian wikilink to b.go, got:\n%s", string(data))
-	}
-}
-
-func TestFullScanObsidianEscapesBracketsInFilename(t *testing.T) {
-	st, dir := tempStore(t)
-	defer st.Close()
-
-	root := filepath.Join(dir, "repo")
-	initGitRepo(t, root)
-	// File name with brackets breaks wikilink syntax; the target must be URL-encoded.
-	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.23\n")
-	writeGo(t, root, "a.go", "package main\nfunc A() {}\n")
-	writeGo(t, root, "file[weird].go", "package main\nimport \"example.com/m\"\nfunc Weird() {}\n")
-
-	if err := FullScan(st, lang.ScanOptions{Root: root, Languages: []string{"go"}, MaxFileSize: 1024, ParseTimeout: 5 * time.Second, Obsidian: true}, false, 0); err != nil {
-		t.Fatalf("FullScan: %v", err)
-	}
-
-	noteA := lang.NotePath(root, "a.go")
-	data, err := os.ReadFile(noteA)
-	if err != nil {
-		t.Fatalf("read note a.go: %v", err)
-	}
-	if !strings.Contains(string(data), "[[file%5Bweird%5D.go.md|file[weird].go]]") {
-		t.Errorf("expected URL-encoded target with raw display text, got:\n%s", string(data))
-	}
-}
-
-func TestFileLinkDefaultIsMarkdown(t *testing.T) {
-	got := lang.FileLink("/repo", "cmd/main.go", false)
-	want := "[cmd/main.go](cmd/main.go)"
-	if got != want {
-		t.Errorf("FileLink default = %q, want %q", got, want)
-	}
-}
-
-func TestFileLinkObsidianWikilink(t *testing.T) {
-	got := lang.FileLink("/repo", "cmd/main.go", true)
-	want := "[[cmd/main.go.md|cmd/main.go]]"
-	if got != want {
-		t.Errorf("FileLink obsidian = %q, want %q", got, want)
-	}
-}
-
-func TestFileLinkObsidianEscapesBracketsAndPipe(t *testing.T) {
-	got := lang.FileLink("/repo", "file[weird|name].go", true)
-	want := "[[file%5Bweird%7Cname%5D.go.md|file[weird|name].go]]"
-	if got != want {
-		t.Errorf("FileLink obsidian escape = %q, want %q", got, want)
-	}
-}
-
 func TestFullScanResolvesTSConfigPathsAndPrunes(t *testing.T) {
 	st, dir := tempStore(t)
 	defer st.Close()
@@ -809,7 +735,7 @@ func TestFullScanStillRejectsUnknownLanguage(t *testing.T) {
 	}
 }
 
-func initGitRepo(t *testing.T, root string) {
+func initGitRepo(t testing.TB, root string) {
 	t.Helper()
 	cmd := exec.Command("git", "init", "-q", root)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -891,30 +817,9 @@ func TestVerifyIndexReportsDriftAndCoverage(t *testing.T) {
 		t.Errorf("ignored.go missing from Uncovered: %v", report.Uncovered)
 	}
 
-	// The full scan also seeded the Obsidian graph preset.
-	presetPath := filepath.Join(root, ".githints", ".obsidian", "graph.json")
-	data, err := os.ReadFile(presetPath)
-	if err != nil {
-		t.Fatalf("graph preset not written: %v", err)
-	}
-	if !strings.Contains(string(data), "path:index") {
-		t.Errorf("preset missing path:index filter: %s", data)
-	}
-
-	// A second scan must not clobber user-modified preset content.
-	custom := `{"search":"path:index/src","hideUnresolved":false}`
-	if err := os.WriteFile(presetPath, []byte(custom), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := FullScan(st, opts, true, 0); err != nil {
-		t.Fatalf("FullScan 2: %v", err)
-	}
-	data, err = os.ReadFile(presetPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != custom {
-		t.Errorf("preset was clobbered: %s", data)
+	// No Obsidian vault settings: the graph viewer replaced them.
+	if _, err := os.Lstat(filepath.Join(root, ".githints", ".obsidian")); !os.IsNotExist(err) {
+		t.Errorf(".githints/.obsidian was created (err = %v)", err)
 	}
 }
 
@@ -1881,5 +1786,165 @@ func TestFindSymbolsByNameBoundsInSQL(t *testing.T) {
 	}
 	if _, err := st.FindSymbolsByName("", 7); err == nil {
 		t.Fatal("empty name accepted")
+	}
+}
+
+// TestScanLanguagesAreRecordedAndExplained is the FastAPI report: a Python
+// file in a repository indexing only Go was counted as "unsupported" and
+// nothing said why. The scan now names the language left out, records what it
+// ran with, and the hook and doctor say when the enabled set has outgrown it.
+func TestScanLanguagesAreRecordedAndExplained(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+
+	root := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	initGitRepo(t, root)
+	writeGo(t, root, "main.go", "package main\n\nfunc main() {}\n")
+	writeGo(t, root, "app/main.py", "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get(\"/health\")\ndef health():\n    return {}\n")
+	opts := func(langs ...string) lang.ScanOptions {
+		return lang.ScanOptions{Root: root, Languages: langs, MaxFileSize: 1 << 16, ParseTimeout: 5 * time.Second}
+	}
+
+	stderr, err := captureStderr(func() error { return FullScan(st, opts("go"), false, 0) })
+	if err != nil {
+		t.Fatalf("FullScan go: %v", err)
+	}
+	if !strings.Contains(stderr, `1 python file(s) not indexed: "python" is not in index.languages`) {
+		t.Errorf("scan did not name the disabled language; stderr:\n%s", stderr)
+	}
+	if why, err := st.LanguagesStaleness([]string{"go", "python"}); err != nil || why != "not built with python" {
+		t.Errorf("staleness = %q, %v; want %q", why, err, "not built with python")
+	}
+
+	stderr, err = captureStderr(func() error { return IncrementalScan(st, opts("auto"), []string{"main.go"}, 0) })
+	if err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	if !strings.Contains(stderr, "run `githints index` once") {
+		t.Errorf("hook did not ask for a rebuild after languages were added; stderr:\n%s", stderr)
+	}
+
+	if err := FullScan(st, opts("auto"), false, 0); err != nil {
+		t.Fatalf("FullScan auto: %v", err)
+	}
+	meta, err := st.Meta()
+	if err != nil {
+		t.Fatalf("Meta: %v", err)
+	}
+	if meta.LanguageCounts["python"] != 1 || meta.LanguageCounts["go"] != 1 {
+		t.Errorf("language counts = %v, want one go and one python file", meta.LanguageCounts)
+	}
+	all := lang.ParserNames(mustResolve(t, root, "auto"))
+	if why, err := st.LanguagesStaleness(all); err != nil || why != "" {
+		t.Errorf("staleness after an auto scan = %q, %v; want none", why, err)
+	}
+
+	// An index from before languages were recorded cannot vouch for any.
+	if err := st.metaSet("indexed_languages", ""); err != nil {
+		t.Fatalf("metaSet: %v", err)
+	}
+	if why, _ := st.LanguagesStaleness(all); !strings.Contains(why, "built before") {
+		t.Errorf("staleness of an unrecorded index = %q, want it reported", why)
+	}
+}
+
+func mustResolve(t *testing.T, root string, names ...string) []lang.LanguageParser {
+	t.Helper()
+	parsers, _, err := lang.NewRegistryForRoot(root).ResolveKnownLanguages(names)
+	if err != nil {
+		t.Fatalf("resolve %v: %v", names, err)
+	}
+	return parsers
+}
+
+// TestHookWarnsWhenAManifestChanges: a manifest decides which frameworks
+// every file below it is detected with, and the hook only rescans the files a
+// commit touched.
+func TestHookWarnsWhenAManifestChanges(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+	root := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepo(t, root)
+	writeGo(t, root, "main.go", "package main\n\nfunc main() {}\n")
+	writeGo(t, root, "requirements.txt", "fastapi\n")
+	opts := lang.ScanOptions{Root: root, Languages: []string{"auto"}, MaxFileSize: 1 << 16, ParseTimeout: 5 * time.Second}
+
+	stderr, err := captureStderr(func() error { return IncrementalScan(st, opts, []string{"main.go"}, 0) })
+	if err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	if strings.Contains(stderr, "re-detect frameworks") {
+		t.Errorf("warned without a manifest change:\n%s", stderr)
+	}
+	stderr, err = captureStderr(func() error { return IncrementalScan(st, opts, []string{"main.go", "requirements.txt"}, 0) })
+	if err != nil {
+		t.Fatalf("IncrementalScan: %v", err)
+	}
+	if !strings.Contains(stderr, "requirements.txt changed; run `githints index` to re-detect frameworks") {
+		t.Errorf("no warning after a manifest change:\n%s", stderr)
+	}
+}
+
+// TestIgnoredDirsMatchesPerDirectoryChecks: the batched, level-by-level
+// directory check decides exactly what one check-ignore per directory did,
+// for every directory the walk would reach.
+func TestIgnoredDirsMatchesPerDirectoryChecks(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+	for _, d := range []string{
+		"src/app", "src/app/node_modules/pkg", "node_modules/a/b", "dist", "build/keep", "build/drop",
+		"generated/api", "docs/with space", "vendor/x",
+	} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(d)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeGo(t, root, ".gitignore", "node_modules/\ndist\nbuild/*\n!build/keep/\n")
+	writeGo(t, root, ".githintsignore", "generated/\nvendor\n")
+
+	got := ignoredDirs(root)
+
+	want := map[string]bool{}
+	var walk func(dir string)
+	walk = func(dir string) {
+		entries, _ := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			rel := e.Name()
+			if dir != "." {
+				rel = dir + "/" + rel
+			}
+			if rel == ".git" || rel == ".githints" {
+				continue
+			}
+			if shouldIgnoreFile(root, rel) {
+				want[rel] = true
+				continue
+			}
+			walk(rel)
+		}
+	}
+	walk(".")
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("batched %v\nper-directory %v", got, want)
+	}
+	for _, d := range []string{"node_modules", "src/app/node_modules", "dist", "build/drop", "generated", "vendor"} {
+		if !got[d] {
+			t.Errorf("%s should be ignored", d)
+		}
+	}
+	for _, d := range []string{"build/keep", "docs/with space", "src/app"} {
+		if got[d] {
+			t.Errorf("%s should not be ignored", d)
+		}
 	}
 }

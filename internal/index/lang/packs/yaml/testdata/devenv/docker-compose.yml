@@ -1,0 +1,14 @@
+services:
+  web:
+    image: nginx:1.27
+    depends_on:
+      - api
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgres://db/app
+  db:
+    image: postgres:16
+
+volumes:
+  pgdata:

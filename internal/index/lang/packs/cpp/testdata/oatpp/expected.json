@@ -1,0 +1,8 @@
+{
+  "facets": [
+    "controller oatpp src/controller/UserController.hpp UserController",
+    "route oatpp src/controller/UserController.hpp /users POST",
+    "route oatpp src/controller/UserController.hpp /users/{id} GET"
+  ],
+  "edges": []
+}

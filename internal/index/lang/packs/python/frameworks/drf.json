@@ -1,0 +1,32 @@
+{
+  // Django REST Framework: serializers are schemas, views and viewsets
+  // controllers, and router.register("users", UserViewSet) a route.
+  "framework": "drf",
+  "languages": [
+    "python"
+  ],
+  "when_imports": [
+    "rest_framework"
+  ],
+  "rules": [
+    {
+      "facet": "schema",
+      "requires": "Serializer",
+      "pattern": "^\\s*class\\s+(?P<name>\\w+)\\s*\\([^)]*\\bserializers\\.\\w*Serializer\\b"
+    },
+    {
+      "facet": "controller",
+      "requires_any": [
+        "ViewSet",
+        "APIView"
+      ],
+      "pattern": "^\\s*class\\s+(?P<name>\\w+)\\s*\\([^)]*\\b(?:viewsets\\.|generics\\.)?\\w*(?:ViewSet|APIView)\\b"
+    },
+    {
+      "facet": "route",
+      "requires": ".register(",
+      "keep_strings": true,
+      "pattern": "\\.register\\(\\s*r?[\\\"'](?P<name>[^\\\"']*)[\\\"']"
+    }
+  ]
+}

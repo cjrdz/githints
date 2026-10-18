@@ -1,0 +1,21 @@
+{
+  // SeaORM entities, named by their table.
+  "framework": "sea-orm",
+  "languages": [
+    "rust"
+  ],
+  "when_imports": [
+    "sea_orm"
+  ],
+  "when_dependencies": [
+    "sea-orm"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "sea_orm(",
+      "keep_strings": true,
+      "pattern": "#\\[sea_orm\\([^\\]]*\\btable_name\\s*=\\s*\\\"(?P<name>[^\\\"]+)\\\""
+    }
+  ]
+}

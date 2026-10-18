@@ -1,0 +1,10 @@
+{
+  "facets": [
+    "route sinatra app.rb / GET",
+    "route sinatra app.rb /items/:id POST"
+  ],
+  "edges": [
+    "app.rb -> lib/greeter.rb",
+    "lib/greeter.rb -> lib/greeter/version.rb"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "facets": [
+    "route shelf bin/server.dart /health GET",
+    "route shelf bin/server.dart /users/<id> POST"
+  ],
+  "edges": [
+    "bin/server.dart -> lib/handlers.dart"
+  ]
+}

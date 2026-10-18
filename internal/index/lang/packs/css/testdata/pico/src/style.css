@@ -1,0 +1,7 @@
+@import "@picocss/pico/css/pico.min.css";
+
+:root {
+  --pico-primary: #e11d48;
+  --pico-font-family: system-ui;
+  --site-width: 60rem;
+}

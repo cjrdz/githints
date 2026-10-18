@@ -1,0 +1,7 @@
+{
+  "facets": [
+    "route pistache main.cpp /users POST",
+    "route pistache main.cpp /users/:id GET"
+  ],
+  "edges": []
+}

@@ -1,0 +1,7 @@
+{
+  "facets": [
+    "component uikit Notes/SceneDelegate.swift BadgeView",
+    "component uikit Notes/SceneDelegate.swift NotesViewController"
+  ],
+  "edges": []
+}

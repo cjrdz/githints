@@ -1,0 +1,16 @@
+{
+  // Pico CSS: where it is imported (@import "@picocss/pico", import
+  // "@picocss/pico" in a script, @use "pico" with (...) in Sass), and the
+  // --pico- custom properties a theme sets. The prefix is Pico's own, so the
+  // dependency is gate enough for them.
+  "framework": "pico",
+  "languages": ["css", "scss", "typescript"],
+  "when_imports": ["@picocss/pico", "pico"],
+  "when_dependencies": ["@picocss/pico"],
+  "rules": [
+    { "facet": "style", "requires_any": ["import", "@use", "@forward"], "keep_strings": true, "detail": "import",
+      "pattern": "^\\s*(?:@(?:import|use|forward)|import)\\s+(?:url\\(\\s*)?[\"']~?(?P<name>(?:@picocss/pico|pico)\\b[^\"']*)[\"']" },
+    { "facet": "style", "requires": "--pico-", "detail": "theme token",
+      "pattern": "^\\s*(?P<name>--pico-[\\w-]+)\\s*:" }
+  ]
+}

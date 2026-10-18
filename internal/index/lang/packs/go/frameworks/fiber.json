@@ -1,0 +1,40 @@
+{
+  // Fiber, Express-style. app.Group("/api") prefixes the routes of the variable
+  // it is assigned to.
+  "framework": "fiber",
+  "languages": [
+    "go"
+  ],
+  "when_imports": [
+    "github.com/gofiber/fiber"
+  ],
+  "prefixes": [
+    {
+      "requires": ".Group(",
+      "keep_strings": true,
+      "pattern": "(?P<var>\\w+)\\s*:?=\\s*(?P<parent>\\w+)\\.Group\\(\\s*\\\"(?P<prefix>[^\\\"]*)\\\""
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".Get(",
+        ".Post(",
+        ".Put(",
+        ".Patch(",
+        ".Delete(",
+        ".Head(",
+        ".Options(",
+        ".All("
+      ],
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>\\w+)\\.(?P<detail>Get|Post|Put|Patch|Delete|Head|Options|All)\\(\\s*\"(?P<name>[^\"]*)\""
+    },
+    {
+      "facet": "middleware",
+      "requires": ".Use(",
+      "pattern": "\\.Use\\(\\s*(?P<name>[\\w.]+)\\("
+    }
+  ]
+}

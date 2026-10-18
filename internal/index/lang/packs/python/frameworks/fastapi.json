@@ -1,0 +1,51 @@
+{
+  // FastAPI. Same decorator shape as Flask's shortcuts, told apart by the
+  // import gate rather than by the pattern.
+  "framework": "fastapi",
+  "languages": ["python"],
+  "when_imports": ["fastapi"],
+  "prefixes": [
+    {
+      // router = APIRouter(prefix="/items", tags=["items"]): routes declared
+      // on that router are reported as /items/... The prefix an
+      // include_router call adds in another file is not followed.
+      "requires": "APIRouter",
+      "keep_strings": true,
+      "pattern": "(?P<var>\\w+)\\s*(?::\\s*\\w+\\s*)?=\\s*APIRouter\\((?:[^()]|\\([^()]*\\))*?\\bprefix\\s*=\\s*[\"'](?P<prefix>[^\"']*)[\"']"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "@",
+      "keep_strings": true,
+      "pattern": "@(?P<var>\\w+)\\.(?P<detail>get|post|put|patch|delete|head|options|trace)\\(\\s*[\"'](?P<name>[^\"']*)[\"']"
+    },
+    {
+      "facet": "route",
+      "requires": "api_route",
+      "keep_strings": true,
+      "pattern": "@(?P<var>\\w+)\\.api_route\\(\\s*[\"'](?P<name>[^\"']*)[\"']"
+    },
+    {
+      // app.add_api_route("/items", list_items, methods=["GET"])
+      "facet": "route",
+      "requires": "add_api_route",
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>\\w+)\\.add_api_route\\(\\s*[\"'](?P<name>[^\"']*)[\"']"
+    },
+    {
+      // A WebSocket endpoint is a route too; the detail says which kind.
+      "facet": "route",
+      "requires": "websocket",
+      "keep_strings": true,
+      "pattern": "@(?P<var>\\w+)\\.(?P<detail>websocket)\\(\\s*[\"'](?P<name>[^\"']*)[\"']"
+    },
+    {
+      // app.add_middleware(CORSMiddleware, allow_origins=[...])
+      "facet": "middleware",
+      "requires": "add_middleware",
+      "pattern": "\\.add_middleware\\(\\s*(?P<name>\\w+)"
+    }
+  ]
+}

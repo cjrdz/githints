@@ -1,0 +1,36 @@
+{
+  // React, in files that import it. A component is a function returning JSX,
+  // which a line matcher cannot see, so this leans on the naming convention
+  // React itself enforces: a component must start with a capital letter or JSX
+  // will not render it. A capitalised non-component function in a React file is
+  // therefore a false positive; reporting no components at all would be worse.
+  // react-jsx.json covers files that do not import React.
+  "framework": "react",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "react",
+    "react-dom"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "requires": "function",
+      "pattern": "^\\s*(?:export\\s+)?(?:default\\s+)?function\\s+(?P<name>[A-Z]\\w*)\\s*\\("
+    },
+    {
+      "facet": "component",
+      "requires": "=>",
+      "pattern": "^\\s*(?:export\\s+)?(?:const|let)\\s+(?P<name>[A-Z]\\w*)\\s*(?::[^=]+)?=\\s*(?:async\\s+)?(?:\\([^)]*\\)|\\w+)\\s*(?::[^=]+)?=>"
+    },
+    {
+      "facet": "component",
+      "requires_any": [
+        "memo",
+        "forwardRef"
+      ],
+      "pattern": "^\\s*(?:export\\s+)?(?:const|let)\\s+(?P<name>[A-Z]\\w*)\\s*(?::[^=]+)?=\\s*(?:React\\.)?(?:memo|forwardRef)(?:<[^>]*>)?\\("
+    }
+  ]
+}

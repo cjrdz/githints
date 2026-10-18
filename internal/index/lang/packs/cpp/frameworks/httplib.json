@@ -1,0 +1,17 @@
+{
+  // cpp-httplib: svr.Get("/hi", handler). The client has the same methods
+  // (cli.Get("/hi")), so a route needs a handler after the path: a lambda,
+  // &function or std::bind. A handler passed by plain name is missed.
+  "framework": "httplib",
+  "languages": ["cpp"],
+  "when_imports": ["httplib.h", "httplib"],
+  "when_dependencies": ["httplib", "cpp-httplib"],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [".Get(", ".Post(", ".Put(", ".Patch(", ".Delete(", ".Options("],
+      "keep_strings": true,
+      "pattern": "\\b\\w+\\s*\\.\\s*(?P<detail>Get|Post|Put|Patch|Delete|Options)\\(\\s*R?\"\\(?(?P<name>/[^\"]*?)\\)?\"\\s*,\\s*(?:\\[|&|std::bind)"
+    }
+  ]
+}

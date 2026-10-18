@@ -1,0 +1,10 @@
+// Theme: Bootstrap's variables are overridden before Bootstrap is imported.
+@use "sass:math";
+@import "abstracts/variables";
+
+$primary: #0d6efd;
+$enable-shadows: true;
+$border-radius: .5rem;
+
+@import "~bootstrap/scss/bootstrap";
+@import "components/card";

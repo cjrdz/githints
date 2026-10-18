@@ -1,0 +1,19 @@
+{
+  // SQLModel: one class shape for both tables and plain schemas, told apart
+  // by table=True.
+  "framework": "sqlmodel",
+  "languages": ["python"],
+  "when_imports": ["sqlmodel"],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "table",
+      "pattern": "^\\s*class\\s+(?P<name>\\w+)\\s*\\([^)]*\\bSQLModel\\b[^)]*\\btable\\s*=\\s*True"
+    },
+    {
+      "facet": "schema",
+      "requires": "SQLModel",
+      "pattern": "^\\s*class\\s+(?P<name>\\w+)\\s*\\(\\s*SQLModel\\s*\\)"
+    }
+  ]
+}
