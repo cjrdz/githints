@@ -181,8 +181,11 @@ date. A release is an annotated tag on `main`:
 
 ```sh
 git checkout main && git pull
-git tag -a v0.2.1 -F -   # the message becomes the top of the release notes
-git push origin v0.2.1
+# The message becomes the top of the release notes. --cleanup=verbatim keeps
+# the changelog's "### Upgrade notes" headings, which git would otherwise strip
+# as comments.
+git tag -a --cleanup=verbatim v0.2.5 -F notes.md
+git push origin v0.2.5
 ```
 
 - **The tag body becomes the release notes.** `.goreleaser.yml` puts
