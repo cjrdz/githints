@@ -1,0 +1,116 @@
+{
+  // C++, and C headers: .h is read with these rules, which cover C's
+  // declarations too (see the c spec).
+  "language": "cpp",
+  "extensions": [".cpp", ".cc", ".cxx", ".c++", ".h", ".hpp", ".hh", ".hxx", ".h++", ".ipp", ".tpp", ".inl"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    // A raw string with the default delimiter. R"tag( ... )tag" is not
+    // recognised: the delimiter is chosen per string.
+    { "open": "R\"(", "close": ")\"", "multiline": true },
+    { "open": "\"", "close": "\"", "escape": "\\", "continue_on_escape": true },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "import_path": "include",
+
+  // Words that are never a type: a match whose type is one is a statement
+  // (`return f(x);`, `throw Error(x);`), not a declaration. See the c spec.
+  "ignore_names": [
+    "if", "else", "for", "while", "do", "switch", "case", "return", "goto", "sizeof",
+    "typedef", "static", "extern", "inline", "defined", "static_assert", "alignof",
+    "decltype", "noexcept", "__attribute__",
+    "new", "delete", "throw", "co_return", "co_await", "co_yield", "using", "namespace",
+    "template", "typename", "catch", "operator"
+  ],
+
+  "symbols": [
+    {
+      "kind": "type",
+      "requires": "typedef",
+      "pattern": "^\\s*typedef\\s+[^;(]*\\(\\s*\\*\\s*(?P<name>[A-Za-z_]\\w*)\\s*\\)\\s*\\("
+    },
+    {
+      "kind": "type",
+      "requires": "typedef",
+      "pattern": "^\\s*typedef\\s+[\\w\\s*:<>,]+?\\b(?P<name>[A-Za-z_]\\w*)\\s*(?:\\[[^\\]]*\\])?\\s*;"
+    },
+    {
+      "kind": "type",
+      "requires": "enum",
+      "pattern": "^\\s*(?:typedef\\s+)?enum\\s+(?:class\\s+|struct\\s+)?(?:[A-Z][A-Z0-9_]*\\s+)?(?P<name>[A-Za-z_]\\w*)\\s*(?::\\s*[\\w:\\s]+)?(?:\\{.*)?$"
+    },
+    // class, struct or union, past a template header, attributes and an
+    // export macro (class MYLIB_API Widget : public QWidget {). A forward
+    // declaration ends with ; and is not one.
+    {
+      "kind": "type",
+      "requires": "class",
+      "pattern": "^\\s*(?:template\\s*<.*>\\s*)?(?:typedef\\s+)?class\\s+(?:\\[\\[.*?\\]\\]\\s*)?(?:alignas\\([^)]*\\)\\s*)?(?:[A-Z][A-Z0-9_]*\\s+)?(?P<name>[A-Za-z_]\\w*)(?:\\s*<[^;{]*>)?\\s*(?:final\\s*)?(?::\\s*[^;{]*)?(?:\\{.*)?$"
+    },
+    {
+      "kind": "type",
+      "requires": "struct",
+      "pattern": "^\\s*(?:template\\s*<.*>\\s*)?(?:typedef\\s+)?struct\\s+(?:\\[\\[.*?\\]\\]\\s*)?(?:alignas\\([^)]*\\)\\s*)?(?:[A-Z][A-Z0-9_]*\\s+)?(?P<name>[A-Za-z_]\\w*)(?:\\s*<[^;{]*>)?\\s*(?:final\\s*)?(?::\\s*[^;{]*)?(?:\\{.*)?$"
+    },
+    {
+      "kind": "type",
+      "requires": "union",
+      "pattern": "^\\s*(?:template\\s*<.*>\\s*)?(?:typedef\\s+)?union\\s+(?:\\[\\[.*?\\]\\]\\s*)?(?:alignas\\([^)]*\\)\\s*)?(?:[A-Z][A-Z0-9_]*\\s+)?(?P<name>[A-Za-z_]\\w*)(?:\\s*<[^;{]*>)?\\s*(?:final\\s*)?(?::\\s*[^;{]*)?(?:\\{.*)?$"
+    },
+    {
+      "kind": "type",
+      "requires": "using",
+      "pattern": "^\\s*(?:template\\s*<.*>\\s*)?using\\s+(?P<name>[A-Za-z_]\\w*)\\s*="
+    },
+    {
+      "kind": "type",
+      "requires": "concept",
+      "pattern": "^\\s*(?:template\\s*<.*>\\s*)?concept\\s+(?P<name>[A-Za-z_]\\w*)\\s*="
+    },
+    {
+      "kind": "type",
+      "requires": "}",
+      "pattern": "^\\s*\\}\\s*(?P<name>[A-Za-z_]\\w*)\\s*;"
+    },
+    {
+      "kind": "func",
+      "requires": "define",
+      "pattern": "^\\s*#\\s*define\\s+(?P<name>[A-Za-z_]\\w*)\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      "kind": "const",
+      "requires": "define",
+      "pattern": "^\\s*#\\s*define\\s+(?P<name>[A-Za-z_]\\w*)\\s+\\S"
+    },
+    {
+      // A member defined outside its class: Widget::paint, Widget::Widget,
+      // Widget::~Widget, Vec::operator+. Named with its class, so
+      // find_symbol("Widget") finds the class and its members. Only
+      // definitions: a qualified declaration ending in ; is a call.
+      "kind": "method",
+      "requires": "::",
+      "pattern": "^\\s*(?:template\\s*<.*>\\s*)?(?:[A-Z][A-Z0-9_]+\\s+)*(?:(?:inline|static|constexpr|consteval|virtual|explicit|friend|extern|const|unsigned|signed|long|short|volatile|typename)\\s+)*(?:(?P<type>[A-Za-z_][\\w:]*(?:<[^;{}()]*>)?(?:::\\w+)*)(?:\\s*[*&]+\\s*|\\s+)(?:const\\s*[*&]*\\s*)?)?(?P<name>(?:[A-Za-z_]\\w*(?:<[^;{}()]*>)?::)+(?:~?[A-Za-z_]\\w*|operator\\s*(?:\\(\\)|[^\\s(]+)))\\s*\\((?P<sig>[^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*(?:const\\s*)?(?:&&?\\s*)?(?:noexcept(?:\\([^()]*\\))?\\s*)?(?:override\\s*|final\\s*)*(?:->\\s*[^{;]+?\\s*)?(?::[^;]*)?(?:\\{.*)?$"
+    },
+    {
+      // A function, or a member declared in its class. A constructor
+      // declared as `explicit Widget(...)` is kept; one with no specifier
+      // has no word before its name to tell it from a call.
+      "kind": "func",
+      "requires": "(",
+      "pattern": "^\\s*(?:template\\s*<.*>\\s*)?(?:\\[\\[.*?\\]\\]\\s*)*(?:[A-Z][A-Z0-9_]+\\s+)*(?:(?:inline|static|constexpr|consteval|virtual|friend|extern|const|unsigned|signed|long|short|volatile|typename|struct|enum|class)\\s+)*(?P<type>[A-Za-z_][\\w:]*(?:<[^;{}()]*>)?)(?:\\s*[*&]+\\s*|\\s+)(?:const\\s*[*&]*\\s*)?(?:__\\w+\\s+)*(?P<name>~?[A-Za-z_]\\w*|operator\\s*(?:\\(\\)|[^\\s(]+))\\s*\\((?P<sig>[^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*(?:const\\s*)?(?:&&?\\s*)?(?:noexcept(?:\\([^()]*\\))?\\s*)?(?:override\\s*|final\\s*)*(?:->\\s*[^{;=]+?\\s*)?(?:=\\s*(?:0|default|delete)\\s*)?(?:;|\\{.*)?$"
+    },
+    {
+      "kind": "func",
+      "requires": "(",
+      "pattern": "^(?P<name>[A-Za-z0-9_]*[a-z]\\w*)\\s*\\((?P<sig>[^()]*(?:\\([^()]*\\)[^()]*)*)\\)\\s*$"
+    }
+  ],
+
+  "imports": [
+    { "requires": "include", "relative": true, "pattern": "^\\s*#\\s*include\\s*\"(?P<path>[^\"]+)\"" },
+    { "requires": "include", "pattern": "^\\s*#\\s*include\\s*<(?P<path>[^>]+)>" }
+  ]
+}

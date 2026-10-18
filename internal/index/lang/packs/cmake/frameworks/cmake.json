@@ -1,0 +1,19 @@
+{
+  // CMake: a custom target is a command a developer runs
+  // (cmake --build . --target format); add_test registers a test with CTest.
+  "framework": "cmake",
+  "languages": ["cmake"],
+  "path_globs": ["CMakeLists.txt", "*.cmake"],
+  "rules": [
+    {
+      "facet": "command",
+      "requires": "add_custom_target",
+      "pattern": "^\\s*add_custom_target\\(\\s*(?P<name>[\\w.-]+)"
+    },
+    {
+      "facet": "test",
+      "requires": "add_test",
+      "pattern": "^\\s*add_test\\(\\s*(?:NAME\\s+)?(?P<name>[\\w.:-]+)"
+    }
+  ]
+}

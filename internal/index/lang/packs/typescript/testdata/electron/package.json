@@ -1,0 +1,1 @@
+{ "name": "desk", "main": "src/main.ts", "devDependencies": { "electron": "^33" } }

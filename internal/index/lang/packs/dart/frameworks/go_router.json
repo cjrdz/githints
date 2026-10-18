@@ -1,0 +1,19 @@
+{
+  // GoRouter routes: path: inside a GoRoute(...). A child route's path is
+  // relative and reported as written.
+  "framework": "go_router",
+  "languages": [
+    "dart"
+  ],
+  "when_imports": [
+    "package:go_router"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "GoRoute(",
+      "keep_strings": true,
+      "pattern": "\\bGoRoute\\((?:[^()]|\\([^()]*\\))*?\\bpath:\\s*['\\\"](?P<name>[^'\\\"]*)['\\\"]"
+    }
+  ]
+}

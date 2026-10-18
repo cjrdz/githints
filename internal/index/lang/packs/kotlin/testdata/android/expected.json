@@ -1,0 +1,18 @@
+{
+  "facets": [
+    "component android app/src/main/java/com/example/notes/MainActivity.kt MainActivity",
+    "component android app/src/main/java/com/example/notes/ui/NotesApp.kt NoteDetail",
+    "component android app/src/main/java/com/example/notes/ui/NotesApp.kt NoteList",
+    "component android app/src/main/java/com/example/notes/ui/NotesApp.kt NotesApp",
+    "job android app/src/main/java/com/example/notes/sync/SyncWorker.kt SyncWorker",
+    "model android app/src/main/java/com/example/notes/data/Note.kt Note",
+    "route android app/src/main/java/com/example/notes/ui/NotesApp.kt notes",
+    "route android app/src/main/java/com/example/notes/ui/NotesApp.kt notes/{id}",
+    "service android app/src/main/java/com/example/notes/data/Note.kt NoteDao",
+    "service android app/src/main/java/com/example/notes/ui/NotesViewModel.kt NotesViewModel"
+  ],
+  "edges": [
+    "app/src/main/java/com/example/notes/MainActivity.kt -> app/src/main/java/com/example/notes/ui/",
+    "app/src/main/java/com/example/notes/ui/ -> app/src/main/java/com/example/notes/data/Note.kt"
+  ]
+}

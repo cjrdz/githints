@@ -1,0 +1,104 @@
+{
+  // Rails. Routes are read from config/routes.rb (and config/routes/*.rb):
+  // verbs, resources and resource, root, with namespace and scope blocks
+  // prefixing what is indented inside them. Nested resources are reported
+  // under their own name, not under the parent's member path. Models,
+  // controllers, jobs (Active Job and Sidekiq), migrations and rake tasks are
+  // found anywhere; the abstract ApplicationRecord, ApplicationController and
+  // ApplicationJob are not. Application files are loaded by constant name and
+  // import nothing, so the Gemfile's rails is the gate.
+  "framework": "rails",
+  "languages": [
+    "ruby"
+  ],
+  "when_dependencies": [
+    "rails",
+    "railties"
+  ],
+  "when_imports": [
+    "rails",
+    "active_record",
+    "action_controller"
+  ],
+  "path_globs": [
+    "config/routes.rb",
+    "config/routes/*.rb"
+  ],
+  "prefixes": [
+    {
+      "requires": "namespace",
+      "scope": "indent",
+      "pattern": "^\\s*namespace\\s+:(?P<prefix>\\w+)\\b[^\\n]*\\bdo\\b"
+    },
+    {
+      "requires": "scope",
+      "keep_strings": true,
+      "scope": "indent",
+      "pattern": "^\\s*scope\\s+(?:path:\\s*)?['\\\"](?P<prefix>[^'\\\"]*)['\\\"][^\\n]*\\bdo\\b"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        "get ",
+        "post ",
+        "put ",
+        "patch ",
+        "delete ",
+        "match "
+      ],
+      "keep_strings": true,
+      "path_pattern": "(?:^|/)config/routes(?:/[^/]+)?\\.rb$",
+      "pattern": "^\\s*(?P<detail>get|post|put|patch|delete|match)\\s*\\(?\\s*['\\\"](?P<name>[^'\\\"]*)['\\\"]"
+    },
+    {
+      "facet": "route",
+      "requires": "resource",
+      "path_pattern": "(?:^|/)config/routes(?:/[^/]+)?\\.rb$",
+      "pattern": "^\\s*(?P<detail>resources|resource)\\s*\\(?\\s*:(?P<name>\\w+)"
+    },
+    {
+      "facet": "route",
+      "requires": "root",
+      "path_pattern": "(?:^|/)config/routes(?:/[^/]+)?\\.rb$",
+      "pattern": "^\\s*root\\b(?P<name>)"
+    },
+    {
+      "facet": "model",
+      "requires": "<",
+      "name_exclude": "^Application(?:Record|Controller|Job|Mailer)$",
+      "pattern": "^\\s*class\\s+(?P<name>[\\w:]+)\\s*<\\s*(?:ApplicationRecord|ActiveRecord::Base)\\b"
+    },
+    {
+      "facet": "controller",
+      "requires": "<",
+      "name_exclude": "^Application(?:Record|Controller|Job|Mailer)$",
+      "pattern": "^\\s*class\\s+(?P<name>[\\w:]+)\\s*<\\s*(?:ApplicationController|ActionController::(?:Base|API)|[\\w:]*Controller)\\b"
+    },
+    {
+      "facet": "job",
+      "requires": "<",
+      "name_exclude": "^Application(?:Record|Controller|Job|Mailer)$",
+      "pattern": "^\\s*class\\s+(?P<name>[\\w:]+)\\s*<\\s*(?:ApplicationJob|ActiveJob::Base)\\b"
+    },
+    {
+      "facet": "job",
+      "requires": "class",
+      "lookahead": 2,
+      "pattern": "^\\s*class\\s+(?P<name>[\\w:]+)\\s*\\n\\s*include\\s+Sidekiq::(?:Job|Worker)\\b"
+    },
+    {
+      "facet": "migration",
+      "requires": "Migration",
+      "path_pattern": "(?:^|/)db/migrate/(?P<name>[^/]+)\\.rb$",
+      "pattern": "<\\s*ActiveRecord::Migration\\b"
+    },
+    {
+      "facet": "command",
+      "requires": "task",
+      "path_pattern": "\\.rake$",
+      "pattern": "^\\s*task\\s*\\(?\\s*:?(?P<name>\\w+)"
+    }
+  ]
+}

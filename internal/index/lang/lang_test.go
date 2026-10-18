@@ -3,6 +3,7 @@ package lang
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -238,6 +239,27 @@ func TestResolveKnownLanguagesSkipsUnknown(t *testing.T) {
 	}
 }
 
+// TestResolveAutoEnablesEveryLanguage pins "auto", the default: a repository
+// in a language nobody listed used to index nothing.
+func TestResolveAutoEnablesEveryLanguage(t *testing.T) {
+	r := NewRegistry()
+	for _, names := range [][]string{{"auto"}, {"AUTO"}, {"go", "auto", "go"}} {
+		parsers, unknown, err := r.ResolveKnownLanguages(names)
+		if err != nil {
+			t.Fatalf("%v: %v", names, err)
+		}
+		if len(unknown) != 0 {
+			t.Errorf("%v: unknown = %v, want none", names, unknown)
+		}
+		// Each language once: a duplicate parser would run BeginScans twice.
+		got := ParserNames(parsers)
+		sort.Strings(got)
+		if want := r.Languages(); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%v resolved to %v, want %v", names, got, want)
+		}
+	}
+}
+
 // TestResolveKnownLanguagesErrorsWhenNoneKnown guards against degrading into a
 // scan with no parsers, which would index nothing and report success.
 func TestResolveKnownLanguagesErrorsWhenNoneKnown(t *testing.T) {
@@ -334,14 +356,14 @@ func TestNoteLinkDefaultResolvesToNoteFile(t *testing.T) {
 		{".", "example.com/m/pkg/lib", "pkg/lib/lib.go", "[example.com/m/pkg/lib](index/pkg/lib/lib.go.md)"},
 	}
 	for _, tc := range cases {
-		if got := NoteLink(tc.fromDir, tc.display, tc.target, false); got != tc.want {
+		if got := NoteLink(tc.fromDir, tc.display, tc.target); got != tc.want {
 			t.Errorf("NoteLink(%q, %q, %q) = %q, want %q", tc.fromDir, tc.display, tc.target, got, tc.want)
 		}
 	}
 }
 
 func TestNoteLinkDefaultEncodesTarget(t *testing.T) {
-	got := NoteLink("index", "file[weird].go", "file[weird].go", false)
+	got := NoteLink("index", "file[weird].go", "file[weird].go")
 	// The display text is escaped too: an unbalanced bracket in a file name
 	// would otherwise end the link text early.
 	want := "[file\\[weird\\].go](file%5Bweird%5D.go.md)"
@@ -351,21 +373,11 @@ func TestNoteLinkDefaultEncodesTarget(t *testing.T) {
 }
 
 // A file name shaped like the tail of a link must not produce a live link to
-// an attacker-chosen URL, in either link mode.
+// an attacker-chosen URL.
 func TestNoteLinkDisplayCannotBreakOut(t *testing.T) {
 	name := "x](https://evil.example) [y"
-	if got := NoteLink("index", name, "x", false); strings.Contains(got, "](https://evil") {
+	if got := NoteLink("index", name, "x"); strings.Contains(got, "](https://evil") {
 		t.Errorf("markdown link display broke out: %q", got)
-	}
-	if got := NoteLink("index", "a]]b\n# h", "x", true); strings.Contains(got, "a]]") || strings.Contains(got, "\n") {
-		t.Errorf("wikilink display broke out: %q", got)
-	}
-}
-
-func TestNoteLinkObsidianIgnoresFromDir(t *testing.T) {
-	got := NoteLink("index/pkg", "label", "dir/b.go", true)
-	if want := "[[dir/b.go.md|label]]"; got != want {
-		t.Errorf("NoteLink = %q, want %q", got, want)
 	}
 }
 
@@ -516,5 +528,14 @@ func TestGoImportPathUsesNearestModule(t *testing.T) {
 		if _, err := p.ImportPath(root, "tools/gen.go"); err == nil {
 			t.Errorf("scanned=%v: a file outside every module got an import path", scanned)
 		}
+	}
+}
+
+func TestFormatIndexedAt(t *testing.T) {
+	if got := FormatIndexedAt(0); got != "never" {
+		t.Errorf("FormatIndexedAt(0) = %q", got)
+	}
+	if got, want := FormatIndexedAt(1792257709), "2026-10-17T17:21:49Z"; got != want {
+		t.Errorf("FormatIndexedAt = %q, want %q", got, want)
 	}
 }

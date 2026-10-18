@@ -1,0 +1,10 @@
+{
+  "facets": [
+    "style bootstrap less/theme.less @brand-primary variable",
+    "style bootstrap less/theme.less @font-size-base variable",
+    "style bootstrap less/theme.less bootstrap/less/bootstrap.less import"
+  ],
+  "edges": [
+    "less/theme.less -> less/mixins.less"
+  ]
+}

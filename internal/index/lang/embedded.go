@@ -1,21 +1,10 @@
 package lang
 
 import (
-	"embed"
 	"fmt"
-	"io/fs"
 	"os"
-	"path"
-	"sort"
 	"sync"
 )
-
-// specFS holds every language shipped as data. Adding a language here is
-// adding a file: the registry picks it up with no Go change and no edit to
-// NewRegistry.
-//
-//go:embed specs/*.json
-var specFS embed.FS
 
 // Specs are parsed and compiled once per process. NewRegistry runs on every
 // scan, and recompiling a few dozen regexes each time would be pure waste; a
@@ -38,39 +27,28 @@ func EmbeddedParsers() ([]*SpecParser, []error) {
 	return embeddedParsers, embeddedErrs
 }
 
+// loadEmbedded builds a parser from every packs/<language>/language.json.
+// Adding a language is adding that file: the registry picks it up with no Go
+// change and no edit to NewRegistry.
 func loadEmbedded() {
-	entries, err := fs.ReadDir(specFS, "specs")
+	names, err := packFiles(true)
 	if err != nil {
-		embeddedErrs = append(embeddedErrs, fmt.Errorf("read embedded specs: %w", err))
+		embeddedErrs = append(embeddedErrs, err)
 		return
 	}
-	// Sorted so registration order, and therefore any duplicate-claim error,
-	// is the same on every machine.
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() && path.Ext(e.Name()) == ".json" {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-
 	for _, name := range names {
-		data, err := specFS.ReadFile(path.Join("specs", name))
+		data, err := packFS.ReadFile(name)
 		if err != nil {
-			embeddedErrs = append(embeddedErrs, fmt.Errorf("%s: %w", name, err))
+			embeddedErrs = append(embeddedErrs, fmt.Errorf("%s: %w", packLabel(name), err))
 			continue
 		}
-		spec, err := LoadSpec(data)
+		// Validated and compiled on first use, not here; see newSpecParser.
+		spec, err := decodeSpec(data)
 		if err != nil {
-			embeddedErrs = append(embeddedErrs, fmt.Errorf("%s: %w", name, err))
+			embeddedErrs = append(embeddedErrs, fmt.Errorf("%s: %w", packLabel(name), err))
 			continue
 		}
-		parser, err := NewSpecParser(spec)
-		if err != nil {
-			embeddedErrs = append(embeddedErrs, fmt.Errorf("%s: %w", name, err))
-			continue
-		}
-		embeddedParsers = append(embeddedParsers, parser)
+		embeddedParsers = append(embeddedParsers, newSpecParser(spec))
 	}
 }
 
@@ -93,6 +71,7 @@ func (r *Registry) registerSpecParser(p *SpecParser, origin string) error {
 	for _, ext := range p.Extensions() {
 		r.byExt[ext] = p
 	}
+	r.noteNames(p)
 	return nil
 }
 

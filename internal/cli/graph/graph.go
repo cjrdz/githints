@@ -24,8 +24,7 @@ import (
 const pageName = "graph.html"
 
 // Run exports the index's file dependency graph. The default is a single
-// offline HTML page under .githints/, a graph view that needs neither Obsidian
-// nor a server.
+// offline HTML page under .githints/, a graph view that needs no server.
 func Run(args []string) error {
 	fset := flag.NewFlagSet("index graph", flag.ExitOnError)
 	format := fset.String("format", "html", "output format: "+strings.Join(graphexport.Formats, ", "))

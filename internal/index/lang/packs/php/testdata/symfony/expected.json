@@ -1,0 +1,17 @@
+{
+  "facets": [
+    "command symfony src/Command/CreateUserCommand.php app:create-user",
+    "controller symfony src/Controller/BlogController.php BlogController",
+    "job symfony src/MessageHandler/SendNotificationHandler.php SendNotificationHandler",
+    "migration doctrine migrations/Version20240101000000.php Version20240101000000",
+    "model doctrine src/Entity/Post.php Post",
+    "route symfony src/Controller/BlogController.php /blog GET",
+    "route symfony src/Controller/BlogController.php /blog/{slug} GET",
+    "schema symfony src/Form/PostType.php PostType"
+  ],
+  "edges": [
+    "src/Controller/BlogController.php -> src/Entity/Post.php",
+    "src/Entity/Post.php -> src/Repository/PostRepository.php",
+    "src/Repository/PostRepository.php -> src/Entity/Post.php"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  // CMake build files. A target (add_executable, add_library, and Qt's
+  // qt_add_executable and qt_add_library) is a type, an
+  // option a var, a function or macro a func. add_subdirectory links a
+  // directory's CMakeLists.txt to its parent's; like other build files they
+  // are graph nodes only when linked.
+  "language": "cmake",
+  "extensions": [".cmake"],
+  "filenames": ["CMakeLists.txt"],
+  "depth_style": "none",
+  "graph": "linked",
+
+  // #[[ ... ]] is a block comment; # alone a line comment.
+  "comments": { "line": ["#"], "not_line": ["#[["], "block": [["#[[", "]]"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\", "multiline": true }
+  ],
+
+  // A directory, which add_subdirectory names.
+  "import_path": "directory",
+
+  "symbols": [
+    { "kind": "func", "requires": "(", "pattern": "^\\s*(?i:function|macro)\\s*\\(\\s*(?P<name>[\\w.-]+)" },
+    // qt_add_executable and qt_add_library are how Qt 6 projects declare
+    // their targets.
+    { "kind": "type", "requires": "add_", "pattern": "^\\s*(?i:(?:qt_)?add_executable|(?:qt_)?add_library)\\s*\\(\\s*(?P<name>[\\w.:+-]+)" },
+    { "kind": "var", "requires": "option", "pattern": "^\\s*(?i:option)\\s*\\(\\s*(?P<name>\\w+)" }
+  ],
+
+  "imports": [
+    { "requires": "add_subdirectory", "relative": true, "pattern": "^\\s*(?i:add_subdirectory)\\s*\\(\\s*\"?(?P<path>[\\w./-]+)" }
+  ]
+}

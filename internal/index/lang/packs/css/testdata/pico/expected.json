@@ -1,0 +1,11 @@
+{
+  "facets": [
+    "style pico src/main.js @picocss/pico import",
+    "style pico src/style.css --pico-font-family theme token",
+    "style pico src/style.css --pico-primary theme token",
+    "style pico src/style.css @picocss/pico/css/pico.min.css import"
+  ],
+  "edges": [
+    "src/main.js -> src/style.css"
+  ]
+}

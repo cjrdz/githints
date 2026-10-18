@@ -25,7 +25,12 @@ func (GoParser) Extensions() []string { return []string{".go"} }
 
 func (GoParser) Parse(path string, src []byte) ([]Symbol, []Import, error) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+	// Declarations and imports are all the index reads. Comments are not
+	// collected (the blanked views used for detection strip them anyway) and
+	// identifiers are not resolved to objects: SkipObjectResolution drops a
+	// whole pass over the tree that nothing here uses, and Go parsing is the
+	// largest CPU cost of a scan.
+	f, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)
 	if err != nil {
 		// ParseFile can return a partial file on syntax errors; if it did, we
 		// still try to extract what we can. Otherwise we report the error.

@@ -1,0 +1,8 @@
+$global-font-size: 100%;
+$primary-color: #1779ba;
+
+@import "foundation-sites/scss/foundation";
+
+@include foundation-global-styles;
+@include foundation-button;
+@include foundation-xy-grid-classes;

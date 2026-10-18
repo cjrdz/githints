@@ -1,0 +1,12 @@
+{
+  "facets": [
+    "infra terraform main.tf eks module",
+    "infra terraform main.tf logs aws_s3_bucket",
+    "infra terraform main.tf network module",
+    "infra terraform modules/network/main.tf private aws_subnet",
+    "infra terraform modules/network/main.tf this aws_vpc"
+  ],
+  "edges": [
+    "main.tf -> modules/network/main.tf"
+  ]
+}

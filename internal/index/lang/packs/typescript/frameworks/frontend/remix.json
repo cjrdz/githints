@@ -1,0 +1,22 @@
+{
+  // Flat file routes (Remix v2, and React Router 7 with flatRoutes()): each file
+  // in app/routes/ is a route, its name read with dots as slashes
+  // (users.$id.edit.tsx is /users/:id/edit; _index, _layouts and trailing _ as
+  // React Router reads them). A folder route is its folder's route.tsx.
+  "framework": "react-router",
+  "languages": [
+    "typescript"
+  ],
+  "when_dependencies": [
+    "@remix-run/dev",
+    "@remix-run/react",
+    "@react-router/fs-routes"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "name_style": "flat",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?app/routes/(?P<name>[^/]+?)(?:/route)?\\.(?:tsx|jsx|ts|js)$"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  // SvelteKit routes are directories under src/routes: +page.svelte is a page,
+  // +server.ts names one route per exported HTTP method. (group) directories do
+  // not add to the URL. hooks.server.ts exports the server middleware.
+  "framework": "sveltekit",
+  "languages": [
+    "svelte",
+    "typescript"
+  ],
+  "when_dependencies": [
+    "@sveltejs/kit"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "name_style": "route",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?src/routes(?P<name>(?:/[^/]+)*)/\\+(?P<detail>page)\\.svelte$"
+    },
+    {
+      "facet": "route",
+      "name_style": "route",
+      "requires": "export",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?src/routes(?P<name>(?:/[^/]+)*)/\\+server\\.(?:ts|js)$",
+      "pattern": "^\\s*export\\s+(?:async\\s+)?(?:function\\s+|const\\s+|let\\s+)(?P<detail>GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\b"
+    },
+    {
+      "facet": "middleware",
+      "requires": "export",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?src/hooks\\.server\\.(?:ts|js)$",
+      "pattern": "^\\s*export\\s+(?:const|async\\s+function|function)\\s+(?P<name>handle\\w*)\\b"
+    }
+  ]
+}

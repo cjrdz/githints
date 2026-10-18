@@ -1,0 +1,37 @@
+{
+  // Vue. Every .vue file is a single-file component, named by its file, except
+  // under pages/, where a router (Nuxt, unplugin-vue-router) names it by its
+  // route and the file name is [id] or index. In
+  // TypeScript, defineComponent declares one, and an explicit name: inside it
+  // names it; outside defineComponent a capitalised name: is ordinary data.
+  "framework": "vue",
+  "languages": [
+    "typescript",
+    "vue"
+  ],
+  "when_imports": [
+    "vue"
+  ],
+  "path_globs": [
+    "*.vue"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "path_pattern": "(?:^|/)(?P<name>[^/]+)\\.vue$",
+      "path_exclude": "(?:^|/)pages/"
+    },
+    {
+      "facet": "component",
+      "requires": "defineComponent",
+      "pattern": "^\\s*(?:export\\s+)?(?:const|let)\\s+(?P<name>\\w+)\\s*(?::[^=]+)?=\\s*defineComponent\\("
+    },
+    {
+      "facet": "component",
+      "requires": "name:",
+      "keep_strings": true,
+      "within": "defineComponent(",
+      "pattern": "^\\s*name:\\s*['\\\"](?P<name>[A-Z]\\w*)['\\\"]"
+    }
+  ]
+}

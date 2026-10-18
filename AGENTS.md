@@ -93,8 +93,14 @@ is refused, and `./githints note list` reports files it left out and why.
 | Where did we change X? | `search_changes(query)` | `./githints search -query=Q` |
 | What changed in a period? | `get_changes_in_range(since, until)` | `./githints changes -since=T -until=T` |
 
+Ask the index before reading files to find something: one `find_facets` or
+`find_symbol` call costs far fewer tokens than searching file contents.
+`find_symbol` matches a name prefix, and a C++ member defined outside its class
+is named `Class::member`, so a class name also finds its members.
+
 Index responses include `last_indexed_at`; if it is stale, run
-`./githints index`.
+`./githints index`. If a note's links look wrong, `./githints index verify`
+reports drift (stale notes, ghost rows, stale import keys).
 
 ## Rule: verify the diff when a summary is unclear
 

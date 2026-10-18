@@ -1,0 +1,57 @@
+{
+  // C#.
+  //
+  // A file's import key is the namespace it declares (`namespace App.Models;`
+  // or `namespace App.Models {`), which `using App.Models;` names; files
+  // sharing a namespace become one node, as a Go package's files do.
+  "language": "csharp",
+  "extensions": [".cs"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"\"\"", "close": "\"\"\"", "escape": "\\", "multiline": true },
+    { "open": "\"", "close": "\"", "escape": "\\" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "import_path": "declared",
+  "import_path_declared": "^\\s*namespace\\s+(?P<path>[\\w.]+)",
+
+  "symbols": [
+    {
+      "kind": "type",
+      "requires": "class",
+      "pattern": "^\\s*(?:(?:public|private|protected|internal|abstract|sealed|static|partial|file)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "interface",
+      "pattern": "^\\s*(?:(?:public|private|protected|internal|partial|file)\\s+)*interface\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "struct",
+      "pattern": "^\\s*(?:(?:public|private|protected|internal|readonly|ref|partial|file)\\s+)*struct\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "record",
+      "pattern": "^\\s*(?:(?:public|private|protected|internal|abstract|sealed|partial)\\s+)*record\\s+(?:class\\s+|struct\\s+)?(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "enum",
+      "pattern": "^\\s*(?:(?:public|private|protected|internal)\\s+)*enum\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "method",
+      "requires": "(",
+      "pattern": "^\\s*(?:\\[[^\\]]*\\]\\s*)*(?:public|private|protected|internal)\\s+(?:(?:static|virtual|override|abstract|sealed|async|extern|partial|new|unsafe)\\s+)*(?:<[^>]+>\\s*)?[\\w.<>\\[\\],?]+\\s+(?P<name>\\w+)\\s*\\((?P<sig>[^)]*)\\)"
+    }
+  ],
+
+  "imports": [
+    { "requires": "using", "pattern": "^\\s*(?:global\\s+)?using\\s+(?:static\\s+)?(?P<path>[\\w.]+)\\s*;" }
+  ]
+}

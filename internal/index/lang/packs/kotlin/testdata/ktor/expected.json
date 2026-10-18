@@ -1,0 +1,11 @@
+{
+  "facets": [
+    "route ktor src/main/kotlin/com/example/plugins/Routing.kt / GET",
+    "route ktor src/main/kotlin/com/example/plugins/Routing.kt /api/cache DELETE",
+    "route ktor src/main/kotlin/com/example/plugins/Routing.kt /api/users GET",
+    "route ktor src/main/kotlin/com/example/plugins/Routing.kt /api/users/{id} POST"
+  ],
+  "edges": [
+    "src/main/kotlin/com/example/Application.kt -> src/main/kotlin/com/example/plugins/Routing.kt"
+  ]
+}

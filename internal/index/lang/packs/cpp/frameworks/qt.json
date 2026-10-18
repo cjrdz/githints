@@ -1,0 +1,28 @@
+{
+  // Qt: widgets and Qt Quick items are components, item models are models,
+  // threads and runnables are jobs. The base class is what says so; a class
+  // deriving from another of the project's widgets is not followed.
+  "framework": "qt",
+  "languages": ["cpp"],
+  "when_imports": ["Qt*", "QWidget", "QMainWindow", "QDialog", "QFrame", "QObject", "QQuickItem",
+                   "QQuickPaintedItem", "QGraphicsView", "QAbstractItemModel", "QAbstractListModel",
+                   "QAbstractTableModel", "QThread", "QRunnable", "QLabel", "QOpenGLWidget"],
+  "when_dependencies": ["Qt5", "Qt6", "Qt", "qtbase", "qt"],
+  "rules": [
+    {
+      "facet": "component",
+      "requires": "class",
+      "pattern": "\\bclass\\s+(?:[A-Z][A-Z0-9_]*\\s+)?(?P<name>[A-Za-z_]\\w*)\\s*(?:final\\s*)?:\\s*(?:(?:public|protected|private|virtual)\\s+)*(?:[\\w:]+(?:<[^>]*>)?\\s*,\\s*(?:(?:public|protected|private|virtual)\\s+)*)*(?:Q\\w*(?:Widget|Window|Dialog|View|Item)|QFrame|QLabel|QAbstractButton|QQuickPaintedItem)\\b"
+    },
+    {
+      "facet": "model",
+      "requires": "Model",
+      "pattern": "\\bclass\\s+(?:[A-Z][A-Z0-9_]*\\s+)?(?P<name>[A-Za-z_]\\w*)\\s*(?:final\\s*)?:\\s*(?:(?:public|protected|private|virtual)\\s+)*(?:QAbstract\\w*Model|QStandardItemModel|QSortFilterProxyModel|QSql\\w*Model|QStringListModel)\\b"
+    },
+    {
+      "facet": "job",
+      "requires_any": ["QThread", "QRunnable"],
+      "pattern": "\\bclass\\s+(?:[A-Z][A-Z0-9_]*\\s+)?(?P<name>[A-Za-z_]\\w*)\\s*(?:final\\s*)?:\\s*(?:(?:public|protected|private|virtual)\\s+)*(?:[\\w:]+(?:<[^>]*>)?\\s*,\\s*(?:(?:public|protected|private|virtual)\\s+)*)*(?:QThread|QRunnable)\\b"
+    }
+  ]
+}

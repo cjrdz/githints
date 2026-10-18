@@ -1,0 +1,10 @@
+{
+  "facets": [
+    "component emotion src/Card.tsx Card",
+    "component styled-components src/Button.tsx Button",
+    "component styled-components src/Button.tsx NavLink",
+    "component styled-components src/Button.tsx Title",
+    "style styled-components src/Button.tsx GlobalStyle global style"
+  ],
+  "edges": []
+}

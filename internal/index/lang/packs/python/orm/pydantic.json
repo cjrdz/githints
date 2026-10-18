@@ -1,0 +1,18 @@
+{
+  // Pydantic models validate and shape data; they are not stored, which is
+  // what makes them a schema rather than a model. FastAPI request and
+  // response bodies are mostly these.
+  //
+  // Only classes naming a pydantic base directly are found: ItemCreate(ItemBase)
+  // inherits through a project class the pattern cannot see.
+  "framework": "pydantic",
+  "languages": ["python"],
+  "when_imports": ["pydantic", "pydantic_settings"],
+  "rules": [
+    {
+      "facet": "schema",
+      "requires": "class",
+      "pattern": "^\\s*class\\s+(?P<name>\\w+)\\s*\\([^)]*\\b(?:BaseModel|RootModel|BaseSettings)\\b"
+    }
+  ]
+}

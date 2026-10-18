@@ -1,0 +1,71 @@
+{
+  // Rust.
+  //
+  // Char literals are deliberately absent from the string rules. A lifetime
+  // (`&'a str`) opens a quote that never closes, so treating ' as a string
+  // delimiter would blank the rest of every line carrying one. Losing the
+  // occasional char literal costs far less.
+  //
+  // Block comments nest in Rust and do not here, so a nested /* */ ends the
+  // comment early. Rare enough to accept, and the failure is visible rather
+  // than silent.
+  "language": "rust",
+  "extensions": [".rs"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\", "multiline": true }
+  ],
+
+  // A file is named by the crate module tree: src/lib.rs and src/main.rs are
+  // the crate (named from Cargo.toml), src/a/b.rs and src/a/b/mod.rs are
+  // crate::a::b. `use crate::`, `self::` and `super::` resolve to the deepest
+  // module file that exists; other crates keep their path.
+  "import_path": "rust",
+
+  "symbols": [
+    {
+      "kind": "func",
+      "requires": "fn",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:default\\s+)?(?:const\\s+)?(?:async\\s+)?(?:unsafe\\s+)?(?:extern\\s+\"[^\"]*\"\\s+)?fn\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*\\((?P<sig>[^)]*)\\)"
+    },
+    {
+      "kind": "type",
+      "requires": "struct",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?struct\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "enum",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?enum\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "trait",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?(?:unsafe\\s+)?trait\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "type",
+      "requires": "type",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?type\\s+(?P<name>\\w+)"
+    },
+    {
+      "kind": "const",
+      "requires": "const",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?const\\s+(?P<name>\\w+)\\s*:"
+    },
+    {
+      "kind": "var",
+      "requires": "static",
+      "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?static\\s+(?:mut\\s+)?(?P<name>\\w+)\\s*:"
+    }
+  ],
+
+  "imports": [
+    // use crate::{models::User, db};
+    { "requires": "use", "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?use\\s+(?P<path>[\\w:]+?)::\\{(?P<members>[^}]*)\\}" },
+    // use crate::models::User; (a group's prefix stops this one at the brace)
+    { "requires": "use", "pattern": "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?use\\s+(?P<path>[\\w:]*\\w)\\s*(?:as\\s+\\w+\\s*)?;" }
+  ]
+}

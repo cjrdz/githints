@@ -1,0 +1,27 @@
+{
+  // Terraform and OpenTofu: resources, named by their label with their type as
+  // the detail, and module calls.
+  "framework": "terraform",
+  "languages": [
+    "terraform"
+  ],
+  "path_globs": [
+    "*.tf",
+    "*.tofu"
+  ],
+  "rules": [
+    {
+      "facet": "infra",
+      "requires": "resource",
+      "keep_strings": true,
+      "pattern": "^\\s*resource\\s+\\\"(?P<detail>[\\w-]+)\\\"\\s+\\\"(?P<name>[\\w-]+)\\\""
+    },
+    {
+      "facet": "infra",
+      "requires": "module",
+      "keep_strings": true,
+      "pattern": "^\\s*module\\s+\\\"(?P<name>[\\w-]+)\\\"",
+      "detail": "module"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+stages: [build, deploy]
+
+variables:
+  GO_VERSION: "1.23"
+
+.go-template:
+  image: golang:1.23
+
+build:
+  extends: .go-template
+  script: go build ./...
+
+deploy prod:
+  stage: deploy
+  script: ./deploy.sh

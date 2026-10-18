@@ -1,0 +1,28 @@
+{
+  // Dockerfiles. Selected by name (Dockerfile, Containerfile, Dockerfile.dev,
+  // api.Dockerfile) as much as by extension. A build stage (FROM x AS build)
+  // is a symbol, and a base image an import, kept without its tag so every
+  // node:20 and node:22 is the same dependency. Dockerfiles are graph nodes
+  // only when something links them.
+  "language": "dockerfile",
+  "extensions": [".dockerfile"],
+  "filenames": ["Dockerfile", "Containerfile", "Dockerfile.*", "Containerfile.*", "*.Dockerfile"],
+  "depth_style": "none",
+  "graph": "linked",
+
+  "comments": { "line": ["#"] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\" }
+  ],
+
+  "symbols": [
+    { "kind": "type", "requires": "FROM",
+      "pattern": "^\\s*FROM\\s+(?:--platform=\\S+\\s+)?\\S+\\s+(?:AS|as)\\s+(?P<name>[\\w.-]+)" },
+    { "kind": "var", "requires": "ARG", "pattern": "^\\s*ARG\\s+(?P<name>\\w+)" }
+  ],
+
+  "imports": [
+    { "requires": "FROM",
+      "pattern": "^\\s*FROM\\s+(?:--platform=\\S+\\s+)?(?P<path>[\\w.-]+(?:/[\\w.-]+)*)" }
+  ]
+}

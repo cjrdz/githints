@@ -56,6 +56,13 @@ jobs:
       - name: go test -race
         run: go test -race ./...
 
+      # Once each, short sizes only: a benchmark that no longer compiles or
+      # fails is caught here rather than when someone next measures. The
+      # regression guard is TestScanCostModel, which counts work instead of
+      # timing it.
+      - name: benchmarks run
+        run: go test -run '^$' -bench . -benchtime 1x -short ./internal/index/
+
       - name: go build
         run: go build ./...
 

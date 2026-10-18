@@ -1,0 +1,23 @@
+{
+  // tRPC procedures: getUser: publicProcedure.input(...).query(...) is an
+  // endpoint named by its key, with query, mutation or subscription as the
+  // detail. Procedures are recognized by a builder whose name ends in Procedure
+  // or procedure, which is the convention every tRPC template follows.
+  "framework": "trpc",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "@trpc/server"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        "rocedure"
+      ],
+      "lookahead": 6,
+      "pattern": "^\\s*(?P<name>\\w+)\\s*:\\s*(?:\\w+\\.)*\\w*[pP]rocedure\\b(?:\\s*\\.\\s*\\w+\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))*\\s*\\.\\s*(?P<detail>query|mutation|subscription)\\("
+    }
+  ]
+}

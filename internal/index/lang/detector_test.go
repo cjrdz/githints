@@ -10,6 +10,11 @@ func TestEmbeddedDetectorsAreValid(t *testing.T) {
 	for _, err := range errs {
 		t.Errorf("embedded detector failed to load: %v", err)
 	}
+	// They compile lazily in a scan; here every one is compiled, so a broken
+	// pattern fails the build instead of silently dropping a framework.
+	for _, err := range set.CompileAll() {
+		t.Errorf("embedded detector does not compile: %v", err)
+	}
 	if set.Empty() {
 		t.Fatal("no detectors loaded; the go:embed pattern may have stopped matching")
 	}

@@ -1,0 +1,9 @@
+{
+  "facets": [
+    "job bullmq src/worker.ts emails",
+    "route trpc src/router.ts createUser mutation",
+    "route trpc src/router.ts getUser query",
+    "route trpc src/router.ts onTick subscription"
+  ],
+  "edges": []
+}

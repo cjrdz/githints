@@ -1,0 +1,40 @@
+{
+  // Actix Web: route attributes (#[get("/users")]), .route("/x", web::get()...)
+  // and web::resource. A web::scope("/api") prefixes the routes chained inside
+  // the call it is part of.
+  "framework": "actix",
+  "languages": [
+    "rust"
+  ],
+  "when_imports": [
+    "actix_web"
+  ],
+  "prefixes": [
+    {
+      "requires": "web::scope",
+      "keep_strings": true,
+      "scope": "statement",
+      "pattern": "web::scope\\(\\s*\\\"(?P<prefix>[^\\\"]*)\\\""
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "#[",
+      "keep_strings": true,
+      "pattern": "#\\[(?P<detail>get|post|put|patch|delete|head|options)\\(\\s*\"(?P<name>[^\"]*)\""
+    },
+    {
+      "facet": "route",
+      "requires": ".route(",
+      "keep_strings": true,
+      "pattern": "\\.route\\(\\s*\"(?P<name>[^\"]*)\"\\s*,\\s*web::(?P<detail>get|post|put|patch|delete|head|options)\\(\\)"
+    },
+    {
+      "facet": "route",
+      "requires": "web::resource",
+      "keep_strings": true,
+      "pattern": "web::resource\\(\\s*\"(?P<name>[^\"]*)\""
+    }
+  ]
+}

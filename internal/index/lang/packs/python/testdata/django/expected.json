@@ -1,0 +1,12 @@
+{
+  "facets": [
+    "migration django shop/migrations/0001_initial.py Migration",
+    "model django shop/models.py Product",
+    "route django shop/urls.py / views.index",
+    "route django shop/urls.py products/<int:pk>/ views.detail"
+  ],
+  "edges": [
+    "shop/urls.py -> shop/views.py",
+    "shop/views.py -> shop/models.py"
+  ]
+}

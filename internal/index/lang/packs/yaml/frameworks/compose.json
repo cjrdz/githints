@@ -1,0 +1,27 @@
+{
+  // Docker Compose services: the keys directly under services:.
+  "framework": "docker-compose",
+  "languages": [
+    "yaml"
+  ],
+  "path_globs": [
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.*.yml",
+    "docker-compose.*.yaml",
+    "compose.yml",
+    "compose.yaml",
+    "compose.*.yml",
+    "compose.*.yaml"
+  ],
+  "rules": [
+    {
+      "facet": "infra",
+      "requires": ":",
+      "inside": "^services:\\s*$",
+      "inside_children": true,
+      "pattern": "^\\s+(?P<name>[\\w.-]+):\\s*$",
+      "detail": "service"
+    }
+  ]
+}

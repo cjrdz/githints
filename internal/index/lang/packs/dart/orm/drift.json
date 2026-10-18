@@ -1,0 +1,17 @@
+{
+  // Drift tables: classes extending Table.
+  "framework": "drift",
+  "languages": [
+    "dart"
+  ],
+  "when_imports": [
+    "package:drift"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "Table",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+Table\\b"
+    }
+  ]
+}

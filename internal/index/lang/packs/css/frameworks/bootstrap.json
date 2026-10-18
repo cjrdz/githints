@@ -1,0 +1,18 @@
+{
+  // Bootstrap, where a stylesheet or script imports it. In Sass (or v3's
+  // Less) the theme is the variables set before the import: in a file that
+  // imports Bootstrap, every $variable (or @variable) is an override. A
+  // project's own variables elsewhere are not claimed, which is why this
+  // detector is gated on the import and the --bs- one on the dependency.
+  "framework": "bootstrap",
+  "languages": ["scss", "css", "less", "typescript"],
+  "when_imports": ["bootstrap"],
+  "rules": [
+    { "facet": "style", "requires_any": ["import", "@use", "@forward"], "keep_strings": true, "detail": "import",
+      "pattern": "^\\s*(?:@(?:import|use|forward)|import)\\s+(?:\\([^)]*\\)\\s*)?(?:url\\(\\s*)?[\"']~?(?P<name>bootstrap[^\"']*)[\"']" },
+    { "facet": "style", "requires": "$", "detail": "variable",
+      "pattern": "^\\s*(?P<name>\\$[A-Za-z_][\\w-]*)\\s*:" },
+    { "facet": "style", "requires": "@", "detail": "variable",
+      "pattern": "^\\s*(?P<name>@[A-Za-z_][\\w-]*)\\s*:" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  // Drizzle: a table is declared by pgTable, mysqlTable or sqliteTable, and
+  // named by the table it creates.
+  "framework": "drizzle",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "drizzle-orm"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "Table(",
+      "keep_strings": true,
+      "pattern": "\\b(?:pg|mysql|sqlite|singlestore)Table\\(\\s*['\\\"](?P<name>[^'\\\"]+)['\\\"]"
+    }
+  ]
+}

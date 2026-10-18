@@ -1,0 +1,1 @@
+{ "name": "edge", "dependencies": { "hono": "^4", "drizzle-orm": "^0.36" } }

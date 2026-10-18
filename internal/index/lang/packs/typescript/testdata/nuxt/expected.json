@@ -1,0 +1,14 @@
+{
+  "facets": [
+    "component vue app/components/AppHeader.vue AppHeader",
+    "middleware nuxt app/middleware/auth.global.ts auth",
+    "middleware nuxt server/middleware/log.ts log",
+    "route nuxt app/pages/blog/[...slug].vue /blog/[...slug]",
+    "route nuxt app/pages/index.vue /",
+    "route nuxt app/pages/users/[id].vue /users/[id]",
+    "route nuxt server/api/users/[id].delete.ts /api/users/[id] DELETE",
+    "route nuxt server/api/users/index.get.ts /api/users GET",
+    "route nuxt server/routes/sitemap.xml.ts /sitemap.xml"
+  ],
+  "edges": []
+}

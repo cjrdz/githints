@@ -78,7 +78,10 @@ func resolveTSImport(importerFile, spec string) string {
 // --- import extraction -----------------------------------------------------
 
 var (
-	reTSImportStart = regexp.MustCompile(`^\s*(?:import|export)\s+[\w{*]`)
+	// A side-effect import (import "./app.css", import "./polyfills") starts
+	// with its string: the pattern once required a name, brace or star, so
+	// none of them were read.
+	reTSImportStart = regexp.MustCompile(`^\s*(?:(?:import|export)\s+[\w{*]|import\s*["'])`)
 	reTSFrom        = regexp.MustCompile(`\bfrom\s*["']([^"']+)["']`)
 	reTSImportSide  = regexp.MustCompile(`^\s*import\s*["']([^"']+)["']`)
 	reTSDynamic     = regexp.MustCompile(`\bimport\s*\(\s*["']([^"']+)["']`)

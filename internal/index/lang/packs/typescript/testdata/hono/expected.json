@@ -1,0 +1,12 @@
+{
+  "facets": [
+    "middleware hono src/index.ts logger",
+    "model drizzle src/db/schema.ts users",
+    "route hono src/index.ts /api/health GET",
+    "route hono src/index.ts /books POST",
+    "route hono src/index.ts /books/:id GET"
+  ],
+  "edges": [
+    "src/index.ts -> src/db/schema.ts"
+  ]
+}

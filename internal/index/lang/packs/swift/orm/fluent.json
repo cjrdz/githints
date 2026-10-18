@@ -1,0 +1,18 @@
+{
+  // Fluent (Vapor) models: classes conforming to Model.
+  "framework": "fluent",
+  "languages": [
+    "swift"
+  ],
+  "when_imports": [
+    "Fluent",
+    "FluentKit"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "Model",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*:\\s*(?:[\\w.]+\\s*,\\s*)*(?:Model)\\b"
+    }
+  ]
+}

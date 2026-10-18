@@ -1,0 +1,24 @@
+{
+  // SwiftData @Model classes and Core Data NSManagedObject subclasses.
+  "framework": "swiftdata",
+  "languages": [
+    "swift"
+  ],
+  "when_imports": [
+    "SwiftData",
+    "CoreData"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "@Model",
+      "lookahead": 2,
+      "pattern": "@Model\\b\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:public|private|fileprivate|internal|open|package|final)\\s+)*class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "model",
+      "requires": "NSManagedObject",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*(?:<[^>]*>)?\\s*:\\s*(?:[\\w.]+\\s*,\\s*)*(?:NSManagedObject)\\b"
+    }
+  ]
+}

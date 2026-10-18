@@ -1,0 +1,22 @@
+{
+  "facets": [
+    "component react app/root.tsx App",
+    "component react app/routes/($lang).about.tsx About",
+    "component react app/routes/_auth.login.tsx Login",
+    "component react app/routes/_index.tsx Index",
+    "component react app/routes/dashboard.$teamId/chart.tsx Chart",
+    "component react app/routes/dashboard.$teamId/route.tsx Dashboard",
+    "component react app/routes/files.$.tsx Files",
+    "component react app/routes/users.$id.edit.tsx EditUser",
+    "route react-router app/routes/($lang).about.tsx /:lang?/about",
+    "route react-router app/routes/_auth.login.tsx /login",
+    "route react-router app/routes/_index.tsx /",
+    "route react-router app/routes/dashboard.$teamId/route.tsx /dashboard/:teamId",
+    "route react-router app/routes/files.$.tsx /files/*",
+    "route react-router app/routes/sitemap[.]xml.ts /sitemap.xml",
+    "route react-router app/routes/users.$id.edit.tsx /users/:id/edit"
+  ],
+  "edges": [
+    "app/routes/dashboard.$teamId/route.tsx -> app/routes/dashboard.$teamId/chart.tsx"
+  ]
+}

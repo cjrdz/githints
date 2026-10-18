@@ -1,0 +1,39 @@
+{
+  // Ruby (Rails, Sinatra, gems).
+  //
+  // Files are named by their path without the extension, and lib/ is
+  // stripped, so `require "my_gem/version"` names lib/my_gem/version.rb.
+  // require_relative is joined to the requiring file's directory. A Rails
+  // application loads its app/ files by constant name (Zeitwerk) and never
+  // requires them, so those files have no edges between them.
+  //
+  // Nesting is read from indentation, which Ruby style keeps consistent: a
+  // def inside a def is a local helper, a def inside a class a method.
+  // Heredocs and %-literals are not modelled.
+  "language": "ruby",
+  "extensions": [".rb", ".rake"],
+  "depth_style": "indent",
+
+  "comments": { "line": ["#"], "block": [["=begin", "=end"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\", "interp_open": "#{", "interp_close": "}" },
+    { "open": "'", "close": "'", "escape": "\\" }
+  ],
+
+  "import_path": "slash",
+  "import_path_strip_prefixes": ["lib"],
+
+  "symbols": [
+    { "kind": "type", "requires": "class", "pattern": "^\\s*class\\s+(?P<name>[\\w:]+)" },
+    { "kind": "type", "requires": "module", "pattern": "^\\s*module\\s+(?P<name>[\\w:]+)" },
+    { "kind": "func", "requires": "def",
+      "pattern": "^\\s*def\\s+(?:self\\.)?(?P<name>[\\w?!=]+)(?:\\s*\\((?P<sig>[^)]*)\\))?" },
+    { "kind": "const", "requires": "=", "pattern": "^\\s*(?P<name>[A-Z][A-Z0-9_]*)\\s*=[^=~]" }
+  ],
+
+  "imports": [
+    { "requires": "require_relative", "relative": true,
+      "pattern": "^\\s*require_relative\\s*\\(?\\s*['\"](?P<path>[^'\"]+)['\"]" },
+    { "requires": "require", "pattern": "^\\s*require\\s*\\(?\\s*['\"](?P<path>[^'\"]+)['\"]" }
+  ]
+}

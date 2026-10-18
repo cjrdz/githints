@@ -1,0 +1,23 @@
+{
+  "facets": [
+    "middleware fastapi app/main.py CORSMiddleware",
+    "model sqlmodel app/models.py User",
+    "route fastapi app/api/items.py /items/ws websocket",
+    "route fastapi app/api/items.py /items/{item_id}",
+    "route fastapi app/api/users.py /users GET",
+    "route fastapi app/api/users.py /users POST",
+    "route fastapi app/api/users.py /users/{user_id} GET",
+    "route fastapi app/health.py /health GET",
+    "route fastapi app/main.py / GET",
+    "schema pydantic app/api/items.py ItemIn",
+    "schema sqlmodel app/models.py UserBase",
+    "schema sqlmodel app/models.py UserPublic"
+  ],
+  "edges": [
+    "app/api/users.py -> app/db.py",
+    "app/api/users.py -> app/models.py",
+    "app/main.py -> app/api/items.py",
+    "app/main.py -> app/api/users.py",
+    "app/main.py -> app/health.py"
+  ]
+}

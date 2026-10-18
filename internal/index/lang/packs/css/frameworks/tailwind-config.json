@@ -1,0 +1,11 @@
+{
+  // A Tailwind v3 (or v4 legacy) configuration file: where the theme, the
+  // content globs and the plugins are.
+  "framework": "tailwind",
+  "languages": ["typescript"],
+  "path_globs": ["tailwind.config.{js,cjs,mjs,ts,cts,mts}"],
+  "rules": [
+    { "facet": "style", "detail": "config",
+      "path_pattern": "(?:^|/)(?P<name>tailwind\\.config)\\.(?:js|cjs|mjs|ts|cts|mts)$" }
+  ]
+}

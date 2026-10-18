@@ -1,0 +1,13 @@
+{
+  "facets": [
+    "component angular src/app/highlight.directive.ts HighlightDirective",
+    "component angular src/app/user-card/user-card.ts UserCard",
+    "route angular-router src/app/app.routes.ts **",
+    "route angular-router src/app/app.routes.ts /",
+    "route angular-router src/app/app.routes.ts users/:id",
+    "service angular src/app/user.service.ts UserService"
+  ],
+  "edges": [
+    "src/app/app.routes.ts -> src/app/user-card/user-card.ts"
+  ]
+}

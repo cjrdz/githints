@@ -1,0 +1,48 @@
+{
+  // Next.js routes are files. The app router names a route by its directory
+  // (app/(shop)/products/[id]/page.tsx is /products/[id]; route groups and
+  // @slots do not add to the URL, and _private folders are not routable), and a
+  // route.ts names one route per exported HTTP method. The pages router names a
+  // route by its file; _app and _document are not routes.
+  //
+  // The app and pages directories are recognized at a project root: the
+  // repository root or apps/<x> and packages/<x>, optionally under src/. A
+  // folder called pages deeper in the tree is not Next's.
+  "framework": "next",
+  "languages": [
+    "typescript"
+  ],
+  "when_dependencies": [
+    "next"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "name_style": "route",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:src/)?app(?P<name>(?:/[^/_][^/]*)*)/(?P<detail>page)\\.(?:tsx|jsx|ts|js)$"
+    },
+    {
+      "facet": "route",
+      "name_style": "route",
+      "requires": "export",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:src/)?app(?P<name>(?:/[^/_][^/]*)*)/route\\.(?:ts|js)$",
+      "pattern": "^\\s*export\\s+(?:async\\s+)?(?:function\\s+|const\\s+|let\\s+)(?P<detail>GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\b"
+    },
+    {
+      "facet": "route",
+      "name_style": "route",
+      "requires": " as ",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:src/)?app(?P<name>(?:/[^/_][^/]*)*)/route\\.(?:ts|js)$",
+      "pattern": "\\bas\\s+(?P<detail>GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\b"
+    },
+    {
+      "facet": "route",
+      "name_style": "route",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:src/)?pages(?P<name>(?:/[^/_][^/]*)*/[^/_][^/]*?)\\.(?:tsx|jsx|ts|js)$"
+    },
+    {
+      "facet": "middleware",
+      "path_pattern": "^(?:(?:apps|packages)/[^/]+/)?(?:src/)?(?P<name>middleware|proxy)\\.(?:ts|js)$"
+    }
+  ]
+}

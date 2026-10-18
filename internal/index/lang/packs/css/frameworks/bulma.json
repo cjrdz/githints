@@ -1,0 +1,15 @@
+{
+  // Bulma, where a stylesheet or script imports it: the import, and in Sass
+  // the $variables a file importing it sets (before @import, or in
+  // @use "bulma/sass" with (...)). Bulma 1's --bulma- custom properties are
+  // in bulma-tokens.
+  "framework": "bulma",
+  "languages": ["scss", "css", "typescript"],
+  "when_imports": ["bulma"],
+  "rules": [
+    { "facet": "style", "requires_any": ["import", "@use", "@forward"], "keep_strings": true, "detail": "import",
+      "pattern": "^\\s*(?:@(?:import|use|forward)|import)\\s+(?:url\\(\\s*)?[\"']~?(?P<name>bulma[^\"']*)[\"']" },
+    { "facet": "style", "requires": "$", "detail": "variable",
+      "pattern": "^\\s*(?P<name>\\$[A-Za-z_][\\w-]*)\\s*:" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "facets": [
+    "controller nestjs src/cats/cats.controller.ts CatsController",
+    "controller nestjs src/users/users.controller.ts UsersController",
+    "middleware nestjs src/common/logger.middleware.ts LoggerMiddleware",
+    "migration typeorm src/migrations/1700000000000-Init.ts Init1700000000000",
+    "model typeorm src/users/entities/user.entity.ts User",
+    "route nestjs src/cats/cats.controller.ts /cats/:id DELETE",
+    "route nestjs src/users/users.controller.ts /users GET",
+    "route nestjs src/users/users.controller.ts /users/:id GET",
+    "route nestjs src/users/users.controller.ts /users/bulk POST",
+    "schema nestjs src/users/dto/create-user.dto.ts CreateUserDto",
+    "service nestjs src/common/logger.middleware.ts LoggerMiddleware",
+    "service nestjs src/users/users.service.ts UsersService"
+  ],
+  "edges": [
+    "src/users/users.controller.ts -> src/users/dto/create-user.dto.ts",
+    "src/users/users.controller.ts -> src/users/users.service.ts",
+    "src/users/users.service.ts -> src/users/entities/user.entity.ts"
+  ]
+}

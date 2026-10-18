@@ -1,0 +1,9 @@
+{
+  "facets": [
+    "command make Makefile build",
+    "command make Makefile lint",
+    "command make Makefile test",
+    "command make scripts/release.mk release"
+  ],
+  "edges": []
+}

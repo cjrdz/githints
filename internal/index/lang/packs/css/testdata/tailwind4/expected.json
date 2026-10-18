@@ -1,0 +1,23 @@
+{
+  "facets": [
+    "component react src/components/Button.tsx Button",
+    "component react src/main.tsx App",
+    "style tailwind src/app.css --breakpoint-3xl theme token",
+    "style tailwind src/app.css --color-brand theme token",
+    "style tailwind src/app.css --color-brand-dark theme token",
+    "style tailwind src/app.css --font-display theme token",
+    "style tailwind src/app.css .btn component class",
+    "style tailwind src/app.css .card component class",
+    "style tailwind src/app.css @tailwindcss/typography plugin",
+    "style tailwind src/app.css content-auto utility",
+    "style tailwind src/app.css daisyui plugin",
+    "style tailwind src/app.css dark variant",
+    "style tailwind src/app.css tab-* utility",
+    "style tailwind src/app.css tailwindcss import"
+  ],
+  "edges": [
+    "src/components/Button.tsx -> src/components/Button.module.css",
+    "src/main.tsx -> src/app.css",
+    "src/main.tsx -> src/components/Button.tsx"
+  ]
+}

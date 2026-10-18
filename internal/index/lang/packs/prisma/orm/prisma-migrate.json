@@ -1,0 +1,10 @@
+{
+  // Prisma Migrate writes each migration as
+  // prisma/migrations/<timestamp>_<name>/migration.sql, named by its directory.
+  "framework": "prisma",
+  "languages": ["sql"],
+  "path_globs": ["prisma/migrations/*/migration.sql"],
+  "rules": [
+    { "facet": "migration", "path_pattern": "(?:^|/)prisma/migrations/(?P<name>[^/]+)/migration\\.sql$" }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  // Emotion: styled.button`...` and styled(Link)(...) define components, as
+  // in styled-components; a Global or css`` block is not a component.
+  "framework": "emotion",
+  "languages": ["typescript", "vue", "svelte", "astro"],
+  "when_imports": ["@emotion/styled"],
+  "rules": [
+    { "facet": "component", "requires": "styled",
+      "pattern": "\\b(?:const|let|var)\\s+(?P<name>[A-Za-z_$][\\w$]*)\\s*(?::[^=]+)?=\\s*styled(?:\\.[a-z][\\w]*|\\(\\s*[A-Za-z_$][\\w$.]*\\s*\\))" }
+  ]
+}

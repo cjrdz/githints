@@ -1,0 +1,53 @@
+{
+  // Fastify. Route plugins are usually a function taking the instance, with no
+  // import of fastify at all, so this is gated on the dependency and confines
+  // shorthand routes to the conventional instance names (fastify, app, server,
+  // instance) to stay clear of HTTP clients. route({ method, url }) is read in
+  // either order. A prefix given to register() in another file is not followed.
+  "framework": "fastify",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "fastify",
+    "fastify-plugin"
+  ],
+  "when_dependencies": [
+    "fastify"
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".get(",
+        ".post(",
+        ".put(",
+        ".patch(",
+        ".delete(",
+        ".options(",
+        ".head(",
+        ".all("
+      ],
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>fastify|app|server|instance)\\.(?P<detail>get|post|put|patch|delete|options|head|all)\\(\\s*['\"`](?P<name>/[^'\"`]*|\\*)['\"`]"
+    },
+    {
+      "facet": "route",
+      "requires": ".route(",
+      "keep_strings": true,
+      "pattern": "\\.route\\(\\s*\\{(?:[^{}]|\\{[^{}]*\\})*?\\bmethod:\\s*['\\\"](?P<detail>[A-Za-z]+)['\\\"](?:[^{}]|\\{[^{}]*\\})*?\\burl:\\s*['\\\"](?P<name>[^'\\\"]*)['\\\"]"
+    },
+    {
+      "facet": "route",
+      "requires": ".route(",
+      "keep_strings": true,
+      "pattern": "\\.route\\(\\s*\\{(?:[^{}]|\\{[^{}]*\\})*?\\burl:\\s*['\\\"](?P<name>[^'\\\"]*)['\\\"](?:[^{}]|\\{[^{}]*\\})*?\\bmethod:\\s*['\\\"](?P<detail>[A-Za-z]+)['\\\"]"
+    },
+    {
+      "facet": "middleware",
+      "requires": ".addHook(",
+      "keep_strings": true,
+      "pattern": "\\.addHook\\(\\s*['\\\"](?P<name>\\w+)['\\\"]"
+    }
+  ]
+}

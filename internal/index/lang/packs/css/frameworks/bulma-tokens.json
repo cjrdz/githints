@@ -1,0 +1,10 @@
+{
+  // Bulma 1's CSS custom properties (--bulma-primary-h): a theme in plain CSS.
+  "framework": "bulma",
+  "languages": ["css", "scss"],
+  "when_dependencies": ["bulma"],
+  "rules": [
+    { "facet": "style", "requires": "--bulma-", "detail": "theme token",
+      "pattern": "^\\s*(?P<name>--bulma-[\\w-]+)\\s*:" }
+  ]
+}

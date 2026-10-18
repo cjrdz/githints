@@ -1,0 +1,69 @@
+{
+  // ASP.NET Core. Controller routes: a class-level [Route("api/[controller]")]
+  // prefixes the [HttpGet("{id}")] attributes of its actions ([controller] is
+  // kept as written). Minimal APIs: app.MapGet("/x", ...), and a MapGroup
+  // assigned to a variable prefixes its routes. Program.cs relies on implicit
+  // usings, so the project's Web SDK or ASP.NET package is a gate too.
+  "framework": "aspnetcore",
+  "languages": [
+    "csharp"
+  ],
+  "when_imports": [
+    "Microsoft.AspNetCore"
+  ],
+  "when_dependencies": [
+    "Microsoft.NET.Sdk.Web",
+    "Microsoft.AspNetCore*"
+  ],
+  "prefixes": [
+    {
+      "requires": "[Route",
+      "keep_strings": true,
+      "lookahead": 4,
+      "pattern": "\\[Route\\(\\s*\\\"(?P<prefix>[^\\\"]*)\\\"\\s*\\)\\]\\s*(?:\\[[^\\]]*\\]\\s*)*(?:(?:public|internal|sealed|partial|abstract|static)\\s+)*class\\b"
+    },
+    {
+      "requires": "MapGroup",
+      "keep_strings": true,
+      "pattern": "(?P<var>\\w+)\\s*=\\s*(?P<parent>\\w+)\\.MapGroup\\(\\s*\\\"(?P<prefix>[^\\\"]*)\\\""
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "[Http",
+      "keep_strings": true,
+      "pattern": "\\[Http(?P<detail>Get|Post|Put|Patch|Delete|Head|Options)(?:\\((?:\\s*\\\"(?P<name>[^\\\"]*)\\\")?[^)]*\\))?\\]"
+    },
+    {
+      "facet": "route",
+      "requires": ".Map",
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>\\w+)\\.Map(?P<detail>Get|Post|Put|Patch|Delete|Methods)\\(\\s*\"(?P<name>[^\"]*)\""
+    },
+    {
+      "facet": "controller",
+      "requires": "Controller",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*:\\s*(?:Controller|ControllerBase)\\b"
+    },
+    {
+      "facet": "middleware",
+      "requires": "UseMiddleware",
+      "pattern": "\\.UseMiddleware<(?P<name>[\\w.]+)>"
+    },
+    {
+      "facet": "service",
+      "requires_any": [
+        ".AddScoped<",
+        ".AddTransient<",
+        ".AddSingleton<"
+      ],
+      "pattern": "\\.Add(?:Scoped|Transient|Singleton)<(?:[\\w.]+\\s*,\\s*)?(?P<name>[\\w.]+)>"
+    },
+    {
+      "facet": "job",
+      "requires": "BackgroundService",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s*:\\s*BackgroundService\\b"
+    }
+  ]
+}

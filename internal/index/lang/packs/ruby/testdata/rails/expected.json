@@ -1,0 +1,22 @@
+{
+  "facets": [
+    "command rails lib/tasks/cleanup.rake drafts",
+    "controller rails app/controllers/admin/users_controller.rb UsersController",
+    "controller rails app/controllers/articles_controller.rb ArticlesController",
+    "job rails app/jobs/publish_job.rb PublishJob",
+    "job rails app/workers/digest_worker.rb DigestWorker",
+    "migration rails db/migrate/20240101000000_create_articles.rb 20240101000000_create_articles",
+    "model rails app/models/article.rb Article",
+    "route rails config/routes.rb /",
+    "route rails config/routes.rb /admin/stats GET",
+    "route rails config/routes.rb /admin/users resources",
+    "route rails config/routes.rb /api/webhooks/:provider POST",
+    "route rails config/routes.rb about GET",
+    "route rails config/routes.rb articles resources",
+    "route rails config/routes.rb comments resources",
+    "route rails config/routes.rb logout DELETE",
+    "route rails config/routes.rb profile resource",
+    "route rails config/routes.rb up GET"
+  ],
+  "edges": []
+}

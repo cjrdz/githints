@@ -1,0 +1,18 @@
+{
+  // Tauri: #[tauri::command] functions are what the frontend invoke()s.
+  "framework": "tauri",
+  "languages": [
+    "rust"
+  ],
+  "when_dependencies": [
+    "tauri"
+  ],
+  "rules": [
+    {
+      "facet": "command",
+      "requires": "tauri::command",
+      "lookahead": 3,
+      "pattern": "#\\[tauri::command(?:\\([^)]*\\))?\\]\\s*(?:#\\[[^\\]]*\\]\\s*)*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+(?P<name>\\w+)"
+    }
+  ]
+}

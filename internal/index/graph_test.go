@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cjrdz/githints/internal/index/lang"
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // graphFixture builds a repo with a two-file Go package, a one-file Go
@@ -174,5 +175,179 @@ func TestFullScanRecordsResolverVersion(t *testing.T) {
 	st, _ := graphFixture(t)
 	if v, err := st.IndexResolverVersion(); err != nil || v != ResolverVersion {
 		t.Fatalf("resolver version = %d, %v; want %d", v, err, ResolverVersion)
+	}
+}
+
+// TestBuildGraphMarksTestCode: an import only test files make is a test
+// edge, even between packages whose other files are code, and a node of test
+// files only is a test node. The viewer hides both by default.
+func TestBuildGraphMarksTestCode(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+	root := filepath.Join(dir, "repo")
+	initGitRepo(t, root)
+	for _, d := range []string{"store", "util", "testkit", "web"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeGo(t, root, "go.mod", "module example.com/m\n\ngo 1.23\n")
+	writeGo(t, root, "store/store.go", "package store\n\nimport \"example.com/m/util\"\n\nfunc Get() int { return util.One() }\n")
+	writeGo(t, root, "store/store_test.go", "package store\n\nimport (\n\t\"example.com/m/testkit\"\n\t\"example.com/m/util\"\n)\n\nfunc TestGet() { testkit.Use(); util.One() }\n")
+	writeGo(t, root, "util/util.go", "package util\n\nfunc One() int { return 1 }\n")
+	writeGo(t, root, "testkit/kit.go", "package testkit\n\nfunc Use() {}\n")
+	writeGo(t, root, "web/b.ts", "export const b = 1;\n")
+	writeGo(t, root, "web/b.test.ts", "import { b } from './b';\nexport const t = b;\n")
+	opts := lang.ScanOptions{Root: root, Languages: []string{"go", "typescript"}, MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatal(err)
+	}
+	g, err := BuildGraph(st, root, GraphOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	test := map[[2]string]bool{}
+	for _, e := range g.Edges {
+		test[[2]string{e.From, e.To}] = e.Test
+	}
+	for edge, want := range map[[2]string]bool{
+		{"store/", "testkit/kit.go"}:  true,  // only store_test.go imports it
+		{"store/", "util/util.go"}:    false, // store.go imports it too
+		{"web/b.test.ts", "web/b.ts"}: true,
+	} {
+		got, ok := test[edge]
+		if !ok || got != want {
+			t.Errorf("edge %v: present=%v test=%v, want test=%v", edge, ok, got, want)
+		}
+	}
+	for _, n := range g.Nodes {
+		want := n.ID == "web/b.test.ts"
+		if n.Test != want {
+			t.Errorf("node %s test=%v, want %v", n.ID, n.Test, want)
+		}
+	}
+}
+
+func TestIsTestFile(t *testing.T) {
+	for p, want := range map[string]bool{
+		"store/store_test.go": true, "store/store.go": false,
+		"src/a.test.ts": true, "src/a.spec.tsx": true, "src/__tests__/a.ts": true, "src/attest.ts": false,
+		"tests/test_api.py": true, "app/test_api.py": true, "app/api_test.py": true, "app/conftest.py": true, "app/testing.py": false,
+		"src/test/java/a/FooTest.java": true, "src/main/java/a/Foo.java": false, "tests/Feature/UserTest.php": true,
+		"app/Http/Controllers/TestController.php": false, "x/testdata/sample.go": true, "spec/models/user_spec.rb": true,
+		"src/net/http_test.cc": true, "src/net/http_unittest.cpp": true, "src/test_util.c": true, "src/latest.c": false,
+		"src/protest_runner.cpp": false, "src/util_test.h": false,
+	} {
+		if got := IsTestFile(p); got != want {
+			t.Errorf("IsTestFile(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// TestBuildGraphLeavesOutUnlinkedConfig: a YAML or Dockerfile with no edges
+// is not a node, one that an import links is, and a focus on an unlinked
+// one still works.
+func TestBuildGraphLeavesOutUnlinkedConfig(t *testing.T) {
+	st, dir := tempStore(t)
+	defer st.Close()
+	root := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepo(t, root)
+	writeGo(t, root, "main.go", "package main\n\nfunc main() {}\n")
+	writeGo(t, root, "Dockerfile", "FROM golang:1.23 AS build\n")
+	writeGo(t, root, ".github/workflows/ci.yml", "jobs:\n  release:\n    uses: ./.github/workflows/release.yml\n")
+	writeGo(t, root, ".github/workflows/release.yml", "jobs:\n  publish:\n    runs-on: x\n")
+	writeGo(t, root, "settings.yml", "name: x\n")
+	opts := lang.ScanOptions{Root: root, Languages: []string{"auto"}, MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second}
+	if err := FullScan(st, opts, false, 0); err != nil {
+		t.Fatal(err)
+	}
+	g, err := BuildGraph(st, root, GraphOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, n := range g.Nodes {
+		ids[n.ID] = true
+	}
+	for id, want := range map[string]bool{
+		"main.go": true, ".github/workflows/ci.yml": true, ".github/workflows/release.yml": true,
+		"Dockerfile": false, "settings.yml": false,
+	} {
+		if ids[id] != want {
+			t.Errorf("node %s present=%v, want %v (nodes %v)", id, ids[id], want, ids)
+		}
+	}
+	g, err = BuildGraph(st, root, GraphOptions{Focus: "settings.yml", Depth: 1})
+	if err != nil {
+		t.Fatalf("focus on an unlinked file: %v", err)
+	}
+	if len(g.Nodes) != 1 || g.Nodes[0].ID != "settings.yml" {
+		t.Errorf("focus graph = %+v", g.Nodes)
+	}
+}
+
+// TestBulkAndPerFileNotesAreIdentical: a full render loads the index in four
+// queries and the hook queries per file; both must write the same bytes, or a
+// note would change on every commit for no reason. Checked over every pack
+// sample, which between them cover every language's symbols, facets and
+// edges.
+func TestBulkAndPerFileNotesAreIdentical(t *testing.T) {
+	cases, err := filepath.Glob(filepath.Join("lang", "packs", "*", "testdata", "*"))
+	if err != nil || len(cases) == 0 {
+		t.Fatalf("no samples: %v", err)
+	}
+	for _, sample := range cases {
+		t.Run(filepath.Base(filepath.Dir(filepath.Dir(sample)))+"/"+filepath.Base(sample), func(t *testing.T) {
+			st, tmp := tempStore(t)
+			defer st.Close()
+			root := filepath.Join(tmp, "repo")
+			if err := copySample(sample, root); err != nil {
+				t.Fatal(err)
+			}
+			initGitRepo(t, root)
+			opts := lang.ScanOptions{Root: root, Languages: []string{"auto"}, MaxFileSize: 1 << 20, ParseTimeout: 5 * time.Second}
+			if err := FullScan(st, opts, true, 0); err != nil {
+				t.Fatal(err)
+			}
+			files, err := st.AllIndexedFiles()
+			if err != nil {
+				t.Fatal(err)
+			}
+			bulk := map[string]string{}
+			for _, f := range files {
+				p, _, err := lang.IndexNotePath(root, f)
+				if err != nil {
+					continue
+				}
+				b, err := os.ReadFile(p)
+				if err != nil {
+					t.Fatalf("note for %s: %v", f, err)
+				}
+				bulk[f] = string(b)
+				if err := os.Remove(p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			registry := lang.NewRegistryForRoot(root)
+			keys := resolveImportPaths(st, root, registry)
+			w, err := safefs.NewWriter(githintsDir(root), safefs.StateDirPerm, 0o644)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer w.Close()
+			for f, want := range bulk {
+				if err := renderFileNote(w, dbNotes{st}, root, f, keys); err != nil {
+					t.Fatal(err)
+				}
+				p, _, _ := lang.IndexNotePath(root, f)
+				got, _ := os.ReadFile(p)
+				if string(got) != want {
+					t.Errorf("%s: per-file note differs from bulk\nbulk:\n%s\nper-file:\n%s", f, want, got)
+				}
+			}
+		})
 	}
 }

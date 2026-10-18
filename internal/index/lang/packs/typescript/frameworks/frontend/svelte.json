@@ -1,0 +1,17 @@
+{
+  // Svelte. Every .svelte file is a component, named by its file, except
+  // SvelteKit's +page, +layout and +error files, which sveltekit.json reports.
+  "framework": "svelte",
+  "languages": [
+    "svelte"
+  ],
+  "path_globs": [
+    "*.svelte"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "path_pattern": "(?:^|/)(?P<name>[^/+][^/]*)\\.svelte$"
+    }
+  ]
+}

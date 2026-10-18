@@ -1,0 +1,22 @@
+{
+  // Kubernetes objects: a manifest's kind, named by its metadata.name. Any YAML
+  // file can be one, so the shape is the gate: a top-level kind with a
+  // capitalised value followed by metadata with a name. A templated name
+  // (Helm's {{ ... }}) is skipped.
+  "framework": "kubernetes",
+  "languages": [
+    "yaml"
+  ],
+  "path_globs": [
+    "*.yaml",
+    "*.yml"
+  ],
+  "rules": [
+    {
+      "facet": "infra",
+      "requires": "kind:",
+      "lookahead": 8,
+      "pattern": "^kind:\\s*(?P<detail>[A-Z]\\w*)\\s*\\n(?:.*\\n)*?metadata:\\s*\\n(?:[ \\t]+.*\\n)*?[ \\t]+name:\\s*['\\\"]?(?P<name>[\\w.-]+)['\\\"]?\\s*$"
+    }
+  ]
+}

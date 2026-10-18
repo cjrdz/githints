@@ -1,0 +1,32 @@
+{
+  // Docker. A base image is infrastructure the build depends on; only a pinned
+  // reference (a tag, digest or registry path: node:22-alpine,
+  // ghcr.io/org/base) counts, since a bare name may equally be an earlier
+  // stage (FROM build). Named build stages are reported too.
+  "framework": "docker",
+  "languages": [
+    "dockerfile"
+  ],
+  "path_globs": [
+    "Dockerfile",
+    "Containerfile",
+    "Dockerfile.*",
+    "Containerfile.*",
+    "*.Dockerfile",
+    "*.dockerfile"
+  ],
+  "rules": [
+    {
+      "facet": "infra",
+      "requires": "FROM",
+      "pattern": "^\\s*FROM\\s+(?:--platform=\\S+\\s+)?(?P<name>[\\w.-]+(?:/[\\w.-]+)*(?::[\\w.${}-]+|@sha256:\\w+)|[\\w.-]+(?:/[\\w.-]+)+)",
+      "detail": "image"
+    },
+    {
+      "facet": "infra",
+      "requires": "FROM",
+      "pattern": "^\\s*FROM\\s+(?:--platform=\\S+\\s+)?\\S+\\s+(?:AS|as)\\s+(?P<name>[\\w.-]+)",
+      "detail": "stage"
+    }
+  ]
+}

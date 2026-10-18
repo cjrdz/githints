@@ -1,0 +1,33 @@
+{
+  // Angular. A component or service is a decorated class, and the decorator
+  // closes before the class begins, so the rules look ahead over the next few
+  // statements to the class name. Naming does not rely on a Component or
+  // Service suffix, which the current style guide drops.
+  "framework": "angular",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "@angular/core"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "requires": "@Component",
+      "lookahead": 4,
+      "pattern": "@Component\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "component",
+      "requires": "@Directive",
+      "lookahead": 4,
+      "pattern": "@Directive\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "service",
+      "requires": "@Injectable",
+      "lookahead": 4,
+      "pattern": "@Injectable\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "facets": [
+    "route fiber main.go / GET",
+    "route fiber main.go /api/items/:id PUT"
+  ],
+  "edges": []
+}

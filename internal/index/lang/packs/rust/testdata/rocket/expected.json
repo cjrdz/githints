@@ -1,0 +1,6 @@
+{
+  "facets": [
+    "route rocket src/main.rs /hello/<name> GET"
+  ],
+  "edges": []
+}

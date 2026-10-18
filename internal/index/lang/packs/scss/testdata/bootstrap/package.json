@@ -1,0 +1,1 @@
+{ "name": "admin", "dependencies": { "bootstrap": "^5.3.3", "@popperjs/core": "^2.11.8" }, "devDependencies": { "sass": "^1.77.0" } }

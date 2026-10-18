@@ -1,0 +1,58 @@
+{
+  // NestJS. @Controller("users") prefixes the routes of the class after it, a
+  // bare @Get() is the controller's own path, and the controller, service and
+  // middleware are named by their class. Classes ending in Dto are schemas;
+  // DTO files import class-validator or the swagger and mapped-types helpers
+  // rather than Nest itself, so those count as gates too.
+  "framework": "nestjs",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "@nestjs/*",
+    "class-validator",
+    "class-transformer"
+  ],
+  "prefixes": [
+    {
+      "requires": "@Controller",
+      "keep_strings": true,
+      "pattern": "@Controller\\(\\s*(?:['\\\"](?P<prefix>[^'\\\"]*)['\\\"])?\\s*\\)"
+    },
+    {
+      "requires": "@Controller",
+      "keep_strings": true,
+      "pattern": "@Controller\\(\\s*\\{[^{}]*?\\bpath:\\s*['\\\"](?P<prefix>[^'\\\"]*)['\\\"]"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "@",
+      "keep_strings": true,
+      "pattern": "@(?P<detail>Get|Post|Put|Patch|Delete|Options|Head|All)\\(\\s*(?:['\\\"](?P<name>[^'\\\"]*)['\\\"])?\\s*,?\\s*\\)"
+    },
+    {
+      "facet": "controller",
+      "requires": "@Controller",
+      "lookahead": 4,
+      "pattern": "@Controller\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "service",
+      "requires": "@Injectable",
+      "lookahead": 4,
+      "pattern": "@Injectable\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    },
+    {
+      "facet": "middleware",
+      "requires": "NestMiddleware",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+implements\\s+(?:[\\w\\s,]*?\\b)?NestMiddleware\\b"
+    },
+    {
+      "facet": "schema",
+      "requires": "class",
+      "pattern": "^\\s*export\\s+class\\s+(?P<name>\\w+(?:Dto|DTO))\\b"
+    }
+  ]
+}

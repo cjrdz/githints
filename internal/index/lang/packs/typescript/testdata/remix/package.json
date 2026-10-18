@@ -1,0 +1,1 @@
+{ "name": "rmx", "dependencies": { "@remix-run/react": "^2", "react": "^18" }, "devDependencies": { "@remix-run/dev": "^2" } }

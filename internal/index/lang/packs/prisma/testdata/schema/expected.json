@@ -1,0 +1,8 @@
+{
+  "facets": [
+    "migration prisma prisma/migrations/20240101120000_init/migration.sql 20240101120000_init",
+    "model prisma prisma/schema.prisma Post",
+    "model prisma prisma/schema.prisma User"
+  ],
+  "edges": []
+}

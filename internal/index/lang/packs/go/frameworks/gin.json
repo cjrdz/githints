@@ -1,0 +1,40 @@
+{
+  // Gin. r.Group("/api") prefixes the routes of the variable it is assigned to,
+  // and a group of a group joins both.
+  "framework": "gin",
+  "languages": [
+    "go"
+  ],
+  "when_imports": [
+    "github.com/gin-gonic/gin"
+  ],
+  "prefixes": [
+    {
+      "requires": ".Group(",
+      "keep_strings": true,
+      "pattern": "(?P<var>\\w+)\\s*:?=\\s*(?P<parent>\\w+)\\.Group\\(\\s*\\\"(?P<prefix>[^\\\"]*)\\\""
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".GET(",
+        ".POST(",
+        ".PUT(",
+        ".PATCH(",
+        ".DELETE(",
+        ".HEAD(",
+        ".OPTIONS(",
+        ".Any("
+      ],
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>\\w+)\\.(?P<detail>GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Any)\\(\\s*\"(?P<name>[^\"]*)\""
+    },
+    {
+      "facet": "middleware",
+      "requires": ".Use(",
+      "pattern": "\\.Use\\(\\s*(?P<name>[\\w.]+)\\("
+    }
+  ]
+}

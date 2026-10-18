@@ -36,6 +36,18 @@ func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	}
 }
 
+// TestDefaultIndexLanguagesIsAuto pins the default. It was ["go"], and a
+// Python repository with no config.json indexed nothing.
+func TestDefaultIndexLanguagesIsAuto(t *testing.T) {
+	cfg, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := []string{"auto"}; !equalStrings(cfg.Index.Languages, want) {
+		t.Errorf("languages = %v, want %v", cfg.Index.Languages, want)
+	}
+}
+
 func TestLoadJSONOverridesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, ".githints"), 0o755)

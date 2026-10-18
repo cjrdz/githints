@@ -1,0 +1,10 @@
+{
+  "facets": [
+    "route bun src/server.ts /",
+    "route bun src/server.ts /api/status",
+    "route elysia src/elysia.ts /ping GET",
+    "route elysia src/elysia.ts /v1/users GET",
+    "route elysia src/elysia.ts /v1/users POST"
+  ],
+  "edges": []
+}

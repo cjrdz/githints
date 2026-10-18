@@ -1,0 +1,21 @@
+{
+  "facets": [
+    "component react apps/web/app/_components/Header.tsx Header",
+    "component react apps/web/app/page.tsx Home",
+    "component react apps/web/pages/_app.tsx MyApp",
+    "component react apps/web/pages/legacy/about.tsx About",
+    "component react apps/web/src/components/pages/Promo.tsx Promo",
+    "middleware next apps/web/middleware.ts middleware",
+    "route next apps/web/app/(shop)/products/[id]/page.tsx /products/[id] page",
+    "route next apps/web/app/api/auth/[...nextauth]/route.ts /api/auth/[...nextauth] GET",
+    "route next apps/web/app/api/auth/[...nextauth]/route.ts /api/auth/[...nextauth] POST",
+    "route next apps/web/app/api/users/route.ts /api/users GET",
+    "route next apps/web/app/api/users/route.ts /api/users POST",
+    "route next apps/web/app/page.tsx / page",
+    "route next apps/web/pages/api/hello.ts /api/hello",
+    "route next apps/web/pages/legacy/about.tsx /legacy/about"
+  ],
+  "edges": [
+    "apps/web/app/page.tsx -> apps/web/app/_components/Header.tsx"
+  ]
+}

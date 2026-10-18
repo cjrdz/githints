@@ -1,0 +1,22 @@
+{
+  // Makefiles, selected by name. A target is a symbol and a variable a var.
+  // Make has no string syntax of its own (quotes belong to the shell in a
+  // recipe), so none is declared. Makefiles are graph nodes only when
+  // something links them.
+  "language": "makefile",
+  "extensions": [".mk"],
+  "filenames": ["Makefile", "makefile", "GNUmakefile"],
+  "depth_style": "none",
+  "graph": "linked",
+
+  "comments": { "line": ["#"] },
+
+  "symbols": [
+    { "kind": "func", "requires": ":", "pattern": "^(?P<name>[A-Za-z0-9_][\\w./-]*)\\s*:(?:[^=]|$)" },
+    { "kind": "var", "requires": "=", "pattern": "^(?P<name>[A-Za-z_][A-Za-z0-9_]*)\\s*(?:[:?+!]|::)?=" }
+  ],
+
+  "imports": [
+    { "requires": "include", "pattern": "^\\s*-?include\\s+(?P<path>\\S+)" }
+  ]
+}

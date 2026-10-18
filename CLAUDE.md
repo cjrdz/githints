@@ -129,18 +129,69 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   lacks used to abort the incremental scan — and the hook only warns, so the
   commit succeeded while the index silently stopped updating forever.
   `FullScan` and `VerifyIndex` stay strict; both call sites say why.
-- **A `keep_strings` detector rule must declare a `requires` gate, and the
-  gate is evaluated against the _code_ view.** Otherwise a rule matches its own
+- **A `keep_strings` detector rule must declare a `requires` (or
+  `requires_any`) gate, and the gate is evaluated against the _code_ view.** Otherwise a rule matches its own
   shape inside any string literal: a Go raw string containing `r.Get("/x", h)`
   was reported as a route.
-- **Framework detection is gated on imports or path.** `class X(Model)` is the
-  shape of every Python ORM; attributing one to the wrong framework is worse
-  than not detecting it. A detector declaring no gate is rejected at load.
+- **Framework detection is gated on imports, path or declared dependencies.**
+  `class X(Model)` is the shape of every Python ORM; attributing one to the
+  wrong framework is worse than not detecting it. A detector declaring no gate
+  is rejected at load. Manifests (`package.json`, `composer.json`,
+  `pyproject.toml`...) come from clones: `lang.Manifests` reads them through
+  `safefs.ReadRepoFile` and treats one that does not parse as declaring nothing.
+  Inside a multi-line statement, `requires` is checked on the lines the match
+  itself spans, not anywhere in the statement (`TestGateIsCheckedOnTheMatchLine`,
+  `TestWithinAndRequiresAny`).
 - **Batched and per-path ignore checks must agree.** `resolveIgnored` replaced
   one `git check-ignore` per path (1.3ms each, three quarters of a full scan)
-  with one pair of invocations. The two passes stay separate — that ordering is
-  what keeps `.githintsignore` subtract-only — and a differential test pins the
-  two implementations against each other.
+  with one pair of invocations. The two passes stay separate processes — which
+  keeps `.githintsignore` subtract-only — and run concurrently with their results
+  unioned, which equals running them in order because the second pass only adds
+  ignores; a differential test pins the two implementations against each other.
+  A full scan (and `index verify`) asks once for the whole tree instead:
+  `listIgnored` runs `git ls-files -c -o -i --exclude-standard --directory` per
+  pass, the same question `check-ignore --no-index` answers per path.
+  `TestIgnoreListingMatchesPerPathChecks` pins it against the per-path check
+  on a tree built to disagree (nested `.gitignore`, a negation, a force-added
+  tracked file under an ignored directory). When the listing fails, the
+  per-depth `ignoredDirs` answers, pinned by
+  `TestIgnoredDirsMatchesPerDirectoryChecks`.
+- **A scan's cost grows with what it covers, and the hook's with the commit.**
+  One git process per directory was two thirds of a full scan.
+  `TestScanCostModel` counts git ignore calls (two for a full scan, two for a
+  hook run), checks that an unchanged rescan rewrites no note and that the hook
+  recomputes no import keys; it counts rather than times, so it does not flake.
+  Anything the hook does for every indexed file is a regression: it used to
+  recompute every key (60 ms of 250 on Qt's source), compile every language's
+  and detector's patterns (they compile on first use now: `lazyDetector`,
+  `SpecParser.ready`), and walk the whole tree for TypeScript workspaces (now on
+  the first package import, `TestWorkspaceWalkIsLazy`). Keep new per-file work out of process starts and out of the
+  per-directory path, and keep detection inputs lazy (`DetectInput.Load*`): most
+  files match no detector and should never be blanked for one. Measure before
+  parallelizing: the render pool is capped at 4 (`maxRenderWorkers`) because
+  12 workers gave the same wall time for 10% more CPU. Scans pace the GC at
+  `GOGC=200` while they run (`beginScanGC`, reference-counted, never over a
+  user's own `GOGC`): measured −17% CPU for ~10 MB more peak memory; 400 was not
+  worth its memory. On a large tree that pacing kept three times the live heap,
+  so a soft `scanMemoryLimit` (256 MiB) applies too, never over a user's
+  `GOMEMLIMIT` or a lower limit: Qt's source peaked at 270 MB instead of 480. Worker pools go through `inParallel` (a bounded pool whose
+  workers claim indexes with an atomic counter); a channel per item measured 12%
+  slower. The per-file goroutine in `parseWithTimeout` stays: it is the
+  `parse_timeout_ms` guarantee and the parser-panic recovery, for ~2 ms a scan.
+  The blanker is the hot loop on a large tree (half the CPU on Qt's source):
+  it checks delimiters only at bytes in `Blanker.opens`, and
+  `TestOpensTableIsOnlyAShortcut` pins its output to the check-every-byte form.
+- **A full scan renders notes from memory while SQLite stores the rows.**
+  `memoryNotes` must group and order rows exactly as `loadBulkNotes`' queries do
+  (and list the files `AllIndexedFiles` would), or notes would change between a
+  full scan and `githints render`. `TestBulkAndPerFileNotesAreIdentical` pins it
+  over every pack sample; change an `ORDER BY` there and `memoryNotes` with it.
+  Only `INDEX.md` reads back from the database, after both finish.
+- **Judge a speed change by interleaved end-to-end runs, not a micro-benchmark.**
+  Keeping an `os.Root` open per note directory made an isolated render
+  benchmark 46% faster and a real `githints index` about 30 ms slower; it was
+  reverted (see the `safefs.Writer` comment). Alternate old and new binaries
+  over several rounds of `githints index --force` before keeping one.
 - **`setup` touches only githints' own entry.** Other servers are kept, an
   existing githints entry changes only with `-update`, JSONC is never rewritten,
   Codex's TOML is only appended to (and carries no `type`: Codex rejects unknown
@@ -150,6 +201,26 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   `default-src 'none'` with the inline script and style pinned by hash, graph
   data is a non-executed JSON block, and the viewer uses `textContent` only.
   `FuzzExportersEscape` covers the HTML and Mermaid outputs.
+- **Stored import keys must follow what they derive from.** The hook stores
+  the keys of the files a commit touched (`file_keys`) and looks every other
+  key up. A key can also change when a project file changes (`go.mod`,
+  `Cargo.toml`, `composer.json`, `pyproject.toml`...), so `importKeyFiles` and
+  the specs' `import_path_root_markers` (`Registry.AffectsImportKeys`) must
+  name every file an `ImportPath` reads; a commit touching one recomputes them
+  all. A new key style that reads a new file adds it there.
+  `TestStoredKeysTrackEveryChange` compares the stored keys with a full
+  recomputation after each kind of commit, and `index verify` reports a stale
+  one as drift.
+- **A full rebuild is one transaction.** `Store.rebuild` clears, inserts and
+  writes the metadata together, so a reader never sees an empty index, and
+  drops the secondary indexes for the insert (`rebuildIndexes`, kept equal to
+  the schema by `TestRebuildIndexesMatchSchema`): add an index to the schema
+  and to that list together.
+- **Embedded packs are validated by tests, not at load.** Specs and detectors
+  compile on first use, so a broken embedded pattern would surface only in a
+  scan; `TestEmbeddedSpecsAreValid` and `TestEmbeddedDetectorsAreValid`
+  compile every one. A spec a repository supplies in `.githints/langs/` is
+  still validated, and compiled, when it loads.
 - **Bump `index.ResolverVersion` when stored import keys change meaning.** The
   hook rescans only changed files, so old and new keys would mix silently.
 - **Scan results are merged in walk order.** Parsing runs across a worker pool;

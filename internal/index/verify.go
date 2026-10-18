@@ -30,12 +30,16 @@ type IndexReport struct {
 	// index rows, each with a reason: "gitignored", "too large", or
 	// "no symbols or imports".
 	Uncovered []UncoveredFile
+	// StaleKeys are files whose stored import key differs from the one
+	// computed now: a project file such as go.mod changed in a way the hook
+	// did not see. The notes link through these keys.
+	StaleKeys []string
 }
 
 // Drift reports whether the index disagrees with the repository: stale notes
 // or ghost rows. Uncovered files are informational and do not count as drift.
 func (r *IndexReport) Drift() bool {
-	return len(r.StaleNotes) > 0 || len(r.GhostFiles) > 0
+	return len(r.StaleNotes) > 0 || len(r.GhostFiles) > 0 || len(r.StaleKeys) > 0
 }
 
 // VerifyIndex compares the index database, the rendered notes, and the
@@ -83,6 +87,23 @@ func VerifyIndex(db *Store, opts lang.ScanOptions) (*IndexReport, error) {
 		return nil, fmt.Errorf("walk notes: %w", err)
 	}
 
+	// Stored import keys that no longer match: the hook keeps them current
+	// for the files a commit touches, so this is the check that it did.
+	if db.keysComplete() {
+		want := resolveImportPathsFor(files, opts.Root, registry)
+		stored, err := db.storedKeyMap()
+		if err != nil {
+			return nil, fmt.Errorf("read import keys: %w", err)
+		}
+		for _, f := range files {
+			w, wok := want.ofFile[f]
+			s, sok := stored[f]
+			if wok != sok || w != s {
+				report.StaleKeys = append(report.StaleKeys, f)
+			}
+		}
+	}
+
 	// Indexed files that no longer exist on disk.
 	for _, f := range files {
 		if _, err := os.Stat(filepath.Join(opts.Root, f)); os.IsNotExist(err) {
@@ -93,6 +114,13 @@ func VerifyIndex(db *Store, opts lang.ScanOptions) (*IndexReport, error) {
 	// Source files on disk in enabled languages with no index rows. The walk
 	// mirrors FullScan's (same skip rules), so the report explains every
 	// supported file the index does not cover.
+	ignores := scanIgnores(opts.Root)
+	ignoredDir := ignores.dirs
+	type uncovered struct {
+		rel  string
+		size int64
+	}
+	var missing []uncovered
 	if err := filepath.WalkDir(opts.Root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -114,7 +142,7 @@ func VerifyIndex(db *Store, opts lang.ScanOptions) (*IndexReport, error) {
 			if rel == ".git" {
 				return filepath.SkipDir
 			}
-			if shouldIgnoreFile(opts.Root, rel) {
+			if ignoredDir[rel] {
 				return filepath.SkipDir
 			}
 			return nil
@@ -129,17 +157,30 @@ func VerifyIndex(db *Store, opts lang.ScanOptions) (*IndexReport, error) {
 		if _, ok := indexed[rel]; ok {
 			return nil
 		}
-		reason := "no symbols or imports"
-		switch {
-		case shouldIgnoreFile(opts.Root, rel):
-			reason = "gitignored"
-		case info.Size() > opts.MaxFileSize:
-			reason = "too large"
-		}
-		report.Uncovered = append(report.Uncovered, UncoveredFile{Path: rel, Reason: reason})
+		missing = append(missing, uncovered{rel: rel, size: info.Size()})
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("walk source files: %w", err)
+	}
+	// The reasons. The listing answers for every file; when it failed, one
+	// batched check for the uncovered ones.
+	ignored := ignores.files
+	if ignored == nil {
+		rels := make([]string, len(missing))
+		for i, m := range missing {
+			rels[i] = m.rel
+		}
+		ignored = resolveIgnored(opts.Root, rels)
+	}
+	for _, m := range missing {
+		reason := "no symbols or imports"
+		switch {
+		case ignored[m.rel]:
+			reason = "gitignored"
+		case m.size > opts.MaxFileSize:
+			reason = "too large"
+		}
+		report.Uncovered = append(report.Uncovered, UncoveredFile{Path: m.rel, Reason: reason})
 	}
 	return report, nil
 }

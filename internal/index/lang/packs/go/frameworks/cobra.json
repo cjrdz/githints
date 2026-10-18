@@ -1,0 +1,19 @@
+{
+  // cobra commands: the first word of Use names the command.
+  "framework": "cobra",
+  "languages": [
+    "go"
+  ],
+  "when_imports": [
+    "github.com/spf13/cobra"
+  ],
+  "rules": [
+    {
+      "facet": "command",
+      "requires": "cobra.Command",
+      "keep_strings": true,
+      "lookahead": 6,
+      "pattern": "cobra\\.Command\\{\\s*(?:[^{}\\n]*\\n\\s*)*?Use:\\s*\\\"(?P<name>[\\w:.-]+)"
+    }
+  ]
+}

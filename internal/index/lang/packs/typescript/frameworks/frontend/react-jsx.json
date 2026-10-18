@@ -1,0 +1,36 @@
+{
+  // React with the automatic JSX runtime (React 17+), where a component file need
+  // not import React at all. Gated on the declared dependency and confined to
+  // .jsx and .tsx, so a capitalised helper in a .ts file of a React project is
+  // not taken for a component.
+  "framework": "react",
+  "languages": [
+    "typescript"
+  ],
+  "when_dependencies": [
+    "react"
+  ],
+  "rules": [
+    {
+      "facet": "component",
+      "requires": "function",
+      "pattern": "^\\s*(?:export\\s+)?(?:default\\s+)?function\\s+(?P<name>[A-Z]\\w*)\\s*\\(",
+      "path_pattern": "\\.(?:jsx|tsx)$"
+    },
+    {
+      "facet": "component",
+      "requires": "=>",
+      "pattern": "^\\s*(?:export\\s+)?(?:const|let)\\s+(?P<name>[A-Z]\\w*)\\s*(?::[^=]+)?=\\s*(?:async\\s+)?(?:\\([^)]*\\)|\\w+)\\s*(?::[^=]+)?=>",
+      "path_pattern": "\\.(?:jsx|tsx)$"
+    },
+    {
+      "facet": "component",
+      "requires_any": [
+        "memo",
+        "forwardRef"
+      ],
+      "pattern": "^\\s*(?:export\\s+)?(?:const|let)\\s+(?P<name>[A-Z]\\w*)\\s*(?::[^=]+)?=\\s*(?:React\\.)?(?:memo|forwardRef)(?:<[^>]*>)?\\(",
+      "path_pattern": "\\.(?:jsx|tsx)$"
+    }
+  ]
+}

@@ -113,7 +113,7 @@ func runChecks() []Result {
 	out = append(out, checkIntegrity(root, st)...)
 
 	if cfgErr == nil && cfg.Index.Enabled {
-		out = append(out, checkIndex(root))
+		out = append(out, checkIndex(root, cfg.Index.Languages))
 	}
 
 	out = append(out, checkMCP(root))
@@ -197,7 +197,7 @@ func checkIntegrity(root string, st *store.Store) []Result {
 	return out
 }
 
-func checkIndex(root string) Result {
+func checkIndex(root string, languages []string) Result {
 	dbPath := lang.IndexDBPath(root)
 	if _, err := os.Stat(dbPath); err != nil {
 		return Result{LevelWarn, "index", "enabled but never built", "githints index"}
@@ -214,6 +214,13 @@ func checkIndex(root string) Result {
 	age := time.Since(time.Unix(at, 0)).Round(time.Minute)
 	if v, err := db.IndexResolverVersion(); err == nil && v < index.ResolverVersion {
 		return Result{LevelWarn, "index", fmt.Sprintf("last indexed %s ago, by an older githints: import links may be missing", age), "githints index"}
+	}
+	// Lenient resolution, as on the hook path: an unknown name is a config
+	// problem the scan itself reports, not a reason to hide this check.
+	if parsers, _, err := lang.NewRegistryForRoot(root).ResolveKnownLanguages(languages); err == nil {
+		if why, err := db.LanguagesStaleness(lang.ParserNames(parsers)); err == nil && why != "" {
+			return Result{LevelWarn, "index", fmt.Sprintf("last indexed %s ago; the index was %s", age, why), "githints index"}
+		}
 	}
 	return Result{LevelOK, "index", fmt.Sprintf("last indexed %s ago", age), ""}
 }

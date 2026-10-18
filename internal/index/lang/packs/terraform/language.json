@@ -1,0 +1,38 @@
+{
+  // Terraform and OpenTofu. A module is a directory, so a file is named by
+  // its directory and every .tf file in it is one node, as a Go package's
+  // files are; `source = "./modules/vpc"` links to it. Registry and git
+  // module sources keep their address.
+  //
+  // Block labels are quoted (resource "aws_s3_bucket" "logs"), so the symbol
+  // rules read the view that keeps strings. A resource is named by its own
+  // label, with its type as the signature.
+  "language": "terraform",
+  "extensions": [".tf", ".tofu"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["#", "//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "\"", "close": "\"", "escape": "\\", "interp_open": "${", "interp_close": "}" }
+  ],
+
+  "import_path": "directory",
+
+  "symbols": [
+    { "kind": "type", "requires": "resource", "keep_strings": true,
+      "pattern": "^\\s*resource\\s+\"(?P<sig>[\\w-]+)\"\\s+\"(?P<name>[\\w-]+)\"" },
+    { "kind": "type", "requires": "module", "keep_strings": true,
+      "pattern": "^\\s*module\\s+\"(?P<name>[\\w-]+)\"" },
+    { "kind": "var", "requires": "variable", "keep_strings": true,
+      "pattern": "^\\s*variable\\s+\"(?P<name>[\\w-]+)\"" },
+    { "kind": "const", "requires": "output", "keep_strings": true,
+      "pattern": "^\\s*output\\s+\"(?P<name>[\\w-]+)\"" }
+  ],
+
+  "imports": [
+    { "requires": "source", "relative": true,
+      "pattern": "^\\s*source\\s*=\\s*\"(?P<path>\\.\\.?/[^\"]*)\"" },
+    { "requires": "source",
+      "pattern": "^\\s*source\\s*=\\s*\"(?P<path>[^\".][^\"]*)\"" }
+  ]
+}

@@ -54,8 +54,9 @@ func writeUnder(root, rel string, data []byte) error {
 var reservedNames = []string{"CHANGES", "INDEX"}
 
 // reservedDirs hold githints-managed files that a hint must never land in.
-// "index" holds the structural index notes; ".obsidian" the vault settings;
-// "notes" the notes agents and people write. A hint landing in notes/ would
+// "index" holds the structural index notes; ".obsidian" the vault settings
+// versions before the graph viewer seeded there, which may still hold a
+// user's own settings; "notes" the notes agents and people write. A hint landing in notes/ would
 // sit among them, where the notes reader would take it for one.
 var reservedDirs = []string{"index", ".obsidian", "notes"}
 

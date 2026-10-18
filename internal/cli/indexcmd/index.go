@@ -40,7 +40,6 @@ func Run(args []string) error {
 	}
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite the index even if a partial write is detected")
-	obsidian := fs.Bool("obsidian", false, "render Obsidian wikilinks in index notes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -77,7 +76,6 @@ func Run(args []string) error {
 		Languages:    cfg.Index.Languages,
 		MaxFileSize:  int64(cfg.Index.MaxFileSize),
 		ParseTimeout: time.Duration(cfg.Index.ParseTimeoutMS) * time.Millisecond,
-		Obsidian:     *obsidian || cfg.Index.ObsidianWikilinks,
 	}, *force, cfg.Index.MaxBytes); err != nil {
 		return fmt.Errorf("index: %w", err)
 	}
@@ -111,23 +109,37 @@ func Languages(args []string) error {
 	// list is still the correct answer to "what does this binary support".
 	enabled := map[string]bool{}
 	haveConfig := false
+	auto := false
 	root := ""
+	var configured []string
 	if found, err := gitutil.RepoRoot(); err == nil {
 		root = found
 		if cfg, err := config.Load(root); err == nil {
 			haveConfig = true
-			for _, name := range cfg.Index.Languages {
-				enabled[strings.ToLower(name)] = true
-			}
+			configured = cfg.Index.Languages
 		}
 	}
 	r := lang.NewRegistryForRoot(root)
+	if haveConfig {
+		// Resolved, not matched by name, so "auto" marks every language.
+		if parsers, _, err := r.ResolveKnownLanguages(configured); err == nil {
+			for _, name := range lang.ParserNames(parsers) {
+				enabled[name] = true
+			}
+		}
+		for _, name := range configured {
+			auto = auto || strings.EqualFold(name, lang.AutoLanguages)
+		}
+	}
 
 	fmt.Println("languages this githints binary can index:")
 	for _, name := range r.Languages() {
 		p := r.ForLanguage(name)
 		exts := append([]string(nil), p.Extensions()...)
 		sort.Strings(exts)
+		if nc, ok := p.(lang.NameClaimer); ok {
+			exts = append(exts, nc.FileNames()...)
+		}
 
 		line := fmt.Sprintf("  %-12s %s", name, strings.Join(exts, " "))
 		if r.Origin(name) == lang.OriginRepo {
@@ -147,6 +159,9 @@ func Languages(args []string) error {
 		// The set may have come from config.json, GITHINTS_INDEX_LANGUAGES, or
 		// the built-in default, so name the levers rather than claiming a source.
 		fmt.Println()
+		if auto {
+			fmt.Printf("%q enables every language above\n", lang.AutoLanguages)
+		}
 		fmt.Println(`change the enabled set with "index.languages" in .githints/config.json,`)
 		fmt.Println(`or the GITHINTS_INDEX_LANGUAGES environment variable`)
 	}
@@ -157,7 +172,7 @@ func Languages(args []string) error {
 // the rest, normalized across frameworks.
 func Facets(args []string) error {
 	fs := flag.NewFlagSet("index facets", flag.ExitOnError)
-	facet := fs.String("facet", "", "role to list: route, model, component, migration, job, test")
+	facet := fs.String("facet", "", "role to list: "+strings.Join(lang.KnownFacets(), ", "))
 	framework := fs.String("framework", "", "restrict to one framework, e.g. django")
 	file := fs.String("file", "", "restrict to one repo-relative file path")
 	limit := fs.Int("limit", 50, "maximum facets to list")
@@ -351,13 +366,19 @@ func Verify(args []string) error {
 	if len(report.StaleNotes) > 0 {
 		fmt.Printf("stale notes (source not indexed): %d\n", len(report.StaleNotes))
 		for _, s := range report.StaleNotes {
-			fmt.Printf("  - %s\n", s)
+			fmt.Printf("  - %s\n", textsafe.OneLine(s))
 		}
 	}
 	if len(report.GhostFiles) > 0 {
 		fmt.Printf("ghost rows (file deleted from disk): %d\n", len(report.GhostFiles))
 		for _, g := range report.GhostFiles {
-			fmt.Printf("  - %s\n", g)
+			fmt.Printf("  - %s\n", textsafe.OneLine(g))
+		}
+	}
+	if len(report.StaleKeys) > 0 {
+		fmt.Printf("stale import keys (a project file changed): %d\n", len(report.StaleKeys))
+		for _, k := range report.StaleKeys {
+			fmt.Printf("  - %s\n", textsafe.OneLine(k))
 		}
 	}
 	if len(report.Uncovered) > 0 {

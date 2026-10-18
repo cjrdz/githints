@@ -1,0 +1,14 @@
+{
+  "facets": [
+    "route crow src/main.cpp / GET",
+    "route crow src/main.cpp /api/health GET",
+    "route crow src/main.cpp /users POST",
+    "route crow src/main.cpp /users/<int> DELETE",
+    "route crow src/main.cpp /ws websocket"
+  ],
+  "edges": [
+    "src/main.cpp -> include/crow.h",
+    "src/main.cpp -> src/users.h",
+    "src/users.h -> include/crow.h"
+  ]
+}

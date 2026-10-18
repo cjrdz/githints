@@ -1,0 +1,50 @@
+{
+  // Dart (Flutter, server-side Dart).
+  //
+  // Files are named by their repository path. `import 'package:app/x.dart'`
+  // resolves through the nearest pubspec.yaml naming the package app to its
+  // lib/x.dart; a relative import is joined to the importing file's
+  // directory; dart: libraries and other packages keep their URI.
+  "language": "dart",
+  "extensions": [".dart"],
+  "depth_style": "brace",
+
+  "comments": { "line": ["//"], "block": [["/*", "*/"]] },
+  "strings": [
+    { "open": "'''", "close": "'''", "escape": "\\", "multiline": true, "interp_open": "${", "interp_close": "}" },
+    { "open": "\"\"\"", "close": "\"\"\"", "escape": "\\", "multiline": true, "interp_open": "${", "interp_close": "}" },
+    { "open": "'", "close": "'", "escape": "\\", "interp_open": "${", "interp_close": "}" },
+    { "open": "\"", "close": "\"", "escape": "\\", "interp_open": "${", "interp_close": "}" }
+  ],
+
+  "import_path": "dart",
+
+  // A Dart function has no keyword, so control flow and test DSL calls with
+  // a block argument have the shape of a declaration.
+  "ignore_names": ["if", "for", "while", "switch", "catch", "return", "else", "do", "try", "assert",
+                   "super", "this", "await", "yield", "setState", "test", "testWidgets", "group",
+                   "setUp", "tearDown", "setUpAll", "tearDownAll", "when"],
+
+  "symbols": [
+    { "kind": "type", "requires": "class",
+      "pattern": "^\\s*(?:(?:abstract|base|interface|final|sealed|mixin)\\s+)*class\\s+(?P<name>\\w+)" },
+    { "kind": "type", "requires": "mixin",
+      "pattern": "^\\s*(?:base\\s+)?mixin\\s+(?P<name>\\w+)" },
+    { "kind": "type", "requires": "enum", "pattern": "^\\s*enum\\s+(?P<name>\\w+)" },
+    { "kind": "type", "requires": "extension", "pattern": "^\\s*extension\\s+(?P<name>\\w+)\\s+on\\b" },
+    { "kind": "type", "requires": "typedef", "pattern": "^\\s*typedef\\s+(?P<name>\\w+)" },
+    {
+      // Widget build(BuildContext context) {, Future<void> load() async {,
+      // int get count => ... is not here: a getter has no parameter list.
+      "kind": "func",
+      "requires": "(",
+      "pattern": "^\\s*(?:@\\w+(?:\\([^)]*\\))?\\s+)*(?:(?:static|external|abstract|factory)\\s+)*(?:[\\w<>?,. ]+\\s+)?(?P<name>[A-Za-z_]\\w*)\\s*(?:<[^>]*>)?\\s*\\((?P<sig>[^)]*)\\)\\s*(?:async\\*?|sync\\*)?\\s*(?:\\{|=>)"
+    }
+  ],
+
+  "imports": [
+    { "requires": "import", "pattern": "^\\s*import\\s+['\"](?P<path>[^'\"]+)['\"]" },
+    { "requires": "export", "pattern": "^\\s*export\\s+['\"](?P<path>[^'\"]+)['\"]" },
+    { "requires": "part", "pattern": "^\\s*part\\s+['\"](?P<path>[^'\"]+)['\"]" }
+  ]
+}

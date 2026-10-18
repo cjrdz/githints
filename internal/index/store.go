@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -199,6 +200,7 @@ const dropDataSchema = `
 DROP TABLE IF EXISTS symbols;
 DROP TABLE IF EXISTS imports;
 DROP TABLE IF EXISTS facets;
+DROP TABLE IF EXISTS file_keys;
 `
 
 const dataSchema = `
@@ -239,6 +241,16 @@ CREATE TABLE IF NOT EXISTS facets (
 CREATE INDEX IF NOT EXISTS idx_facets_facet ON facets(facet);
 CREATE INDEX IF NOT EXISTS idx_facets_file ON facets(file_path);
 CREATE INDEX IF NOT EXISTS idx_facets_framework ON facets(framework);
+
+-- The key each indexed file is imported by, written by the scan that indexed
+-- it, so the hook looks keys up instead of recomputing one for every file.
+-- See keyLookup.
+CREATE TABLE IF NOT EXISTS file_keys (
+	file_path TEXT PRIMARY KEY,
+	import_key TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_keys_key ON file_keys(import_key);
 `
 
 func (s *Store) metaGet(key string) (string, error) {
@@ -254,7 +266,16 @@ func (s *Store) metaGet(key string) (string, error) {
 }
 
 func (s *Store) metaSet(key, value string) error {
-	_, err := s.db.Exec("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", key, value, value)
+	return metaSetOn(s.db, key, value)
+}
+
+// execer is what *sql.DB and *sql.Tx share, so a write can run on either.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func metaSetOn(e execer, key, value string) error {
+	_, err := e.Exec("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?", key, value, value)
 	return err
 }
 
@@ -264,7 +285,11 @@ func (s *Store) metaSet(key, value string) error {
 // keys computed now. An incremental scan only re-parses the files a commit
 // touched, so the mismatch would otherwise persist silently until a full
 // rebuild; doctor and the hook report it instead.
-const ResolverVersion = 2
+//
+// 3: Python's "from pkg import mod" also records pkg.mod when mod is a module.
+// 4: PHP files are keyed by their PSR-4 class name.
+// 5: C# files by their declared namespace, Rust files by their module path.
+const ResolverVersion = 5
 
 // IndexResolverVersion returns the resolver version of the last full scan, 0
 // for an index built before versions were recorded.
@@ -275,7 +300,66 @@ func (s *Store) IndexResolverVersion() (int, error) {
 // SetResolverVersion records that the index was fully built with the current
 // resolver.
 func (s *Store) SetResolverVersion() error {
-	return s.metaSet("resolver_version", fmt.Sprintf("%d", ResolverVersion))
+	return metaSetOn(s.db, "resolver_version", fmt.Sprintf("%d", ResolverVersion))
+}
+
+// IndexedLanguages returns the languages the last full scan ran with, sorted,
+// and false for an index built before they were recorded.
+//
+// The hook rescans only the files a commit touched, so a language enabled
+// after the last full scan (by config, or by the default becoming "auto")
+// would otherwise reach the index one edited file at a time.
+func (s *Store) IndexedLanguages() ([]string, bool, error) {
+	v, err := s.metaGet("indexed_languages")
+	if err != nil || v == "" {
+		return nil, false, err
+	}
+	return strings.Split(v, ","), true, nil
+}
+
+// SetIndexedLanguages records the languages a full scan ran with.
+func (s *Store) SetIndexedLanguages(names []string) error {
+	return setIndexedLanguagesOn(s.db, names)
+}
+
+func setIndexedLanguagesOn(e execer, names []string) error {
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	return metaSetOn(e, "indexed_languages", strings.Join(sorted, ","))
+}
+
+// LanguagesStaleness says whether the last full scan covered every language in
+// enabled. Empty means it did, and the index is not empty.
+//
+// An index built before languages were recorded cannot say which it covered;
+// it ran with whatever the older binary's config said, often just "go".
+func (s *Store) LanguagesStaleness(enabled []string) (string, error) {
+	n, err := s.FileCount()
+	if err != nil || n == 0 {
+		return "", err
+	}
+	indexed, ok, err := s.IndexedLanguages()
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "built before githints recorded which languages it indexed", nil
+	}
+	had := make(map[string]bool, len(indexed))
+	for _, name := range indexed {
+		had[name] = true
+	}
+	var missing []string
+	for _, name := range enabled {
+		if !had[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return "", nil
+	}
+	sort.Strings(missing)
+	return "not built with " + strings.Join(missing, ", "), nil
 }
 
 // LastIndexedAt returns the stored timestamp or 0 if never indexed.
@@ -297,6 +381,10 @@ func (s *Store) LastIndexedAt() (int64, error) {
 
 // SetMeta records the post-scan totals.
 func (s *Store) SetMeta(meta lang.IndexMeta) error {
+	return setMetaOn(s.db, meta)
+}
+
+func setMetaOn(e execer, meta lang.IndexMeta) error {
 	lc, err := lang.EncodeLanguageCounts(meta.LanguageCounts)
 	if err != nil {
 		return err
@@ -310,7 +398,7 @@ func (s *Store) SetMeta(meta lang.IndexMeta) error {
 		"unsupported_count": fmt.Sprintf("%d", meta.UnsupportedCount),
 	}
 	for k, v := range pairs {
-		if err := s.metaSet(k, v); err != nil {
+		if err := metaSetOn(e, k, v); err != nil {
 			return fmt.Errorf("set meta %s: %w", k, err)
 		}
 	}
@@ -368,7 +456,8 @@ func (s *Store) metaInt(key string) (int, error) {
 	return n, nil
 }
 
-// Clear deletes all symbol and import rows. Used before a full re-index.
+// Clear deletes every row a scan writes. Rebuild does the same inside its
+// transaction; this remains for callers clearing an index outright.
 func (s *Store) Clear() error {
 	if _, err := s.db.Exec("DELETE FROM symbols"); err != nil {
 		return fmt.Errorf("clear symbols: %w", err)
@@ -379,7 +468,10 @@ func (s *Store) Clear() error {
 	if _, err := s.db.Exec("DELETE FROM facets"); err != nil {
 		return fmt.Errorf("clear facets: %w", err)
 	}
-	return nil
+	if _, err := s.db.Exec("DELETE FROM file_keys"); err != nil {
+		return fmt.Errorf("clear import keys: %w", err)
+	}
+	return metaSetOn(s.db, metaKeysComplete, "")
 }
 
 // DeleteFile removes all symbols, imports and facets for a single file path.
@@ -392,6 +484,9 @@ func (s *Store) DeleteFile(path string) error {
 	}
 	if _, err := s.db.Exec("DELETE FROM facets WHERE file_path = ?", path); err != nil {
 		return fmt.Errorf("delete facets for %s: %w", path, err)
+	}
+	if _, err := s.db.Exec("DELETE FROM file_keys WHERE file_path = ?", path); err != nil {
+		return fmt.Errorf("delete import key for %s: %w", path, err)
 	}
 	return nil
 }
@@ -489,6 +584,27 @@ func (s *Store) SymbolsForFile(path string) ([]lang.Symbol, error) {
 	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature, language FROM symbols WHERE file_path = ? ORDER BY line_start, name", path)
 	if err != nil {
 		return nil, err
+	}
+	defer rows.Close()
+	var out []lang.Symbol
+	for rows.Next() {
+		var sym lang.Symbol
+		var kind string
+		if err := rows.Scan(&sym.Name, &kind, &sym.FilePath, &sym.LineStart, &sym.LineEnd, &sym.Signature, &sym.Language); err != nil {
+			return nil, err
+		}
+		sym.Kind = lang.SymbolKind(kind)
+		out = append(out, sym)
+	}
+	return out, rows.Err()
+}
+
+// AllSymbols returns every symbol ordered by file, then as SymbolsForFile
+// orders one file's, so grouping by file yields what it would return.
+func (s *Store) AllSymbols() ([]lang.Symbol, error) {
+	rows, err := s.db.Query("SELECT name, kind, file_path, line_start, line_end, signature, language FROM symbols ORDER BY file_path, line_start, name")
+	if err != nil {
+		return nil, fmt.Errorf("query symbols: %w", err)
 	}
 	defer rows.Close()
 	var out []lang.Symbol

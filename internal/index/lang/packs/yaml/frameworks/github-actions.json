@@ -1,0 +1,21 @@
+{
+  // GitHub Actions: each job of a workflow, the keys directly under jobs:.
+  "framework": "github-actions",
+  "languages": [
+    "yaml"
+  ],
+  "path_globs": [
+    ".github/workflows/*.yml",
+    ".github/workflows/*.yaml"
+  ],
+  "rules": [
+    {
+      "facet": "infra",
+      "requires": ":",
+      "inside": "^jobs:\\s*$",
+      "inside_children": true,
+      "pattern": "^\\s+(?P<name>[\\w.-]+):\\s*$",
+      "detail": "ci job"
+    }
+  ]
+}

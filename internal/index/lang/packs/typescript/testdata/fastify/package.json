@@ -1,0 +1,1 @@
+{ "name": "svc", "dependencies": { "fastify": "^5", "sequelize": "^6", "@mikro-orm/core": "^6" } }

@@ -1,0 +1,31 @@
+{
+  // Sequelize: classes extending Model, sequelize.define("Name", ...), and
+  // sequelize-typescript's @Table classes.
+  "framework": "sequelize",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "sequelize",
+    "sequelize-typescript"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "extends Model",
+      "pattern": "\\bclass\\s+(?P<name>\\w+)\\s+extends\\s+Model\\b"
+    },
+    {
+      "facet": "model",
+      "requires": ".define(",
+      "keep_strings": true,
+      "pattern": "\\.define\\(\\s*['\\\"](?P<name>\\w+)['\\\"]"
+    },
+    {
+      "facet": "model",
+      "requires": "@Table",
+      "lookahead": 8,
+      "pattern": "@Table\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "facets": [
+    "command cobra cmd/root.go serve",
+    "command cobra cmd/root.go svc",
+    "route net/http internal/api/routes.go /static/",
+    "route net/http internal/api/routes.go /users POST",
+    "route net/http internal/api/routes.go /users/{id} GET"
+  ],
+  "edges": [
+    "cmd/root.go -> internal/api/routes.go",
+    "internal/api/routes.go -> internal/store/store.go"
+  ]
+}

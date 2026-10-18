@@ -1,0 +1,29 @@
+{
+  "facets": [
+    "command laravel app/Console/Commands/SendDigest.php digest:send",
+    "controller laravel app/Http/Controllers/HomeController.php HomeController",
+    "controller laravel app/Http/Controllers/PostController.php PostController",
+    "controller laravel app/Http/Controllers/UserController.php UserController",
+    "job laravel app/Jobs/PublishPost.php PublishPost",
+    "middleware laravel app/Http/Middleware/EnsureTokenIsValid.php EnsureTokenIsValid",
+    "migration laravel database/migrations/2024_01_01_000000_create_posts_table.php 2024_01_01_000000_create_posts_table",
+    "model eloquent app/Models/Post.php Post",
+    "model eloquent app/Models/User.php User",
+    "route laravel routes/web.php / GET",
+    "route laravel routes/web.php /admin/posts/{post}/publish POST",
+    "route laravel routes/web.php /admin/users GET",
+    "route laravel routes/web.php /contact",
+    "route laravel routes/web.php photos resource",
+    "schema laravel app/Http/Requests/StorePostRequest.php StorePostRequest",
+    "service laravel app/Providers/AppServiceProvider.php AppServiceProvider"
+  ],
+  "edges": [
+    "app/Http/Controllers/PostController.php -> app/Http/Requests/StorePostRequest.php",
+    "app/Http/Controllers/PostController.php -> app/Jobs/PublishPost.php",
+    "app/Http/Controllers/PostController.php -> app/Models/Post.php",
+    "app/Http/Controllers/UserController.php -> app/Models/User.php",
+    "routes/web.php -> app/Http/Controllers/HomeController.php",
+    "routes/web.php -> app/Http/Controllers/PostController.php",
+    "routes/web.php -> app/Http/Controllers/UserController.php"
+  ]
+}

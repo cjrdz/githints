@@ -8,6 +8,7 @@
   --hairline: #e1e0d9;
   --edge: rgba(137, 135, 129, 0.35);
   --edge-hi: #52514e;
+  --edge-in: #2a78d6;
   --ring: rgba(11, 11, 11, 0.10);
   --other: #898781;
   --series-1: #2a78d6;
@@ -26,6 +27,7 @@
     --hairline: #2c2c2a;
     --edge: rgba(137, 135, 129, 0.30);
     --edge-hi: #c3c2b7;
+    --edge-in: #3987e5;
     --ring: rgba(255, 255, 255, 0.10);
     --other: #898781;
     --series-1: #3987e5;
@@ -110,6 +112,9 @@ aside li button {
 aside li button:hover { text-decoration: underline; }
 aside .ext { color: var(--muted); padding: 2px 0; overflow-wrap: anywhere; }
 .hint { color: var(--muted); }
+aside p.hint { margin: 0 0 8px; }
+.line-swatch { display: inline-block; width: 14px; height: 2px; margin-right: 6px; vertical-align: middle; border-radius: 1px; }
+.action { margin: 4px 0 2px; }
 #table-view { position: absolute; inset: 0; overflow: auto; background: var(--surface); padding: 0 16px 16px; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--hairline); }

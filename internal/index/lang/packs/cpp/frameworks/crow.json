@@ -1,0 +1,35 @@
+{
+  // Crow: CROW_ROUTE(app, "/users/<int>") with .methods(...) on the same or
+  // the next line (a route without one answers GET), and WebSocket routes. A
+  // blueprint's routes take its prefix, crow::Blueprint bp("api"); one
+  // registered inside another blueprint is not followed. Catch-all routes
+  // have no path and are not reported.
+  "framework": "crow",
+  "languages": ["cpp"],
+  "when_imports": ["crow", "crow.h", "crow_all.h"],
+  "when_dependencies": ["Crow", "crow"],
+  "prefixes": [
+    {
+      "requires": "Blueprint",
+      "keep_strings": true,
+      "pattern": "\\bcrow::Blueprint\\s+(?P<var>\\w+)\\s*[({]\\s*\"(?P<prefix>[^\"]*)\""
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires": "CROW_",
+      "keep_strings": true,
+      "lookahead": 1,
+      "detail": "GET",
+      "pattern": "\\bCROW_(?:BP_)?ROUTE\\(\\s*(?P<var>[\\w.]+)\\s*,\\s*\"(?P<name>[^\"]*)\"\\s*\\)(?:\\s*\\.\\s*methods\\(\\s*(?:crow::HTTPMethod::)?\"?(?P<detail>[A-Za-z]+))?"
+    },
+    {
+      "facet": "route",
+      "requires": "CROW_WEBSOCKET_ROUTE",
+      "keep_strings": true,
+      "detail": "websocket",
+      "pattern": "\\bCROW_WEBSOCKET_ROUTE\\(\\s*(?P<var>[\\w.]+)\\s*,\\s*\"(?P<name>[^\"]*)\""
+    }
+  ]
+}

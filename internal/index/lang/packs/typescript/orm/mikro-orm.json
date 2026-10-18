@@ -1,0 +1,18 @@
+{
+  // MikroORM: @Entity classes are models.
+  "framework": "mikro-orm",
+  "languages": [
+    "typescript"
+  ],
+  "when_imports": [
+    "@mikro-orm/*"
+  ],
+  "rules": [
+    {
+      "facet": "model",
+      "requires": "@Entity",
+      "lookahead": 8,
+      "pattern": "@Entity\\((?s:.)*?\\)\\s*(?:@\\w+(?:\\((?s:.)*?\\))?\\s*)*export\\s+(?:default\\s+)?(?:abstract\\s+)?class\\s+(?P<name>\\w+)"
+    }
+  ]
+}

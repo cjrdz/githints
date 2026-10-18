@@ -1,0 +1,29 @@
+{
+  // gorilla/mux. The method comes from a chained .Methods("GET"), and
+  // r.PathPrefix("/api").Subrouter() prefixes the subrouter's routes.
+  "framework": "gorilla",
+  "languages": [
+    "go"
+  ],
+  "when_imports": [
+    "github.com/gorilla/mux"
+  ],
+  "prefixes": [
+    {
+      "requires": ".PathPrefix(",
+      "keep_strings": true,
+      "pattern": "(?P<var>\\w+)\\s*:?=\\s*(?P<parent>\\w+)\\.PathPrefix\\(\\s*\\\"(?P<prefix>[^\\\"]*)\\\"\\s*\\)\\s*\\.Subrouter\\(\\)"
+    }
+  ],
+  "rules": [
+    {
+      "facet": "route",
+      "requires_any": [
+        ".HandleFunc(",
+        ".Handle("
+      ],
+      "keep_strings": true,
+      "pattern": "\\b(?P<var>\\w+)\\.(?:HandleFunc|Handle)\\(\\s*\"(?P<name>[^\"]*)\"(?:[^()]|\\([^()]*\\))*\\)(?:\\s*\\.Methods\\(\\s*\\\"(?P<detail>\\w+)\\\")?"
+    }
+  ]
+}

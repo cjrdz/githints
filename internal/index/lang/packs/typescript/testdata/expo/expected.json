@@ -1,0 +1,17 @@
+{
+  "facets": [
+    "component react app/(tabs)/index.tsx Home",
+    "component react app/(tabs)/settings.tsx Settings",
+    "component react app/+not-found.tsx NotFound",
+    "component react app/_layout.tsx RootLayout",
+    "component react app/users/[id].tsx User",
+    "component react components/ProfileCard.tsx ProfileCard",
+    "route expo-router app/(tabs)/index.tsx /",
+    "route expo-router app/(tabs)/settings.tsx /settings",
+    "route expo-router app/api/hello+api.ts /api/hello GET",
+    "route expo-router app/users/[id].tsx /users/[id]"
+  ],
+  "edges": [
+    "app/(tabs)/index.tsx -> components/ProfileCard.tsx"
+  ]
+}

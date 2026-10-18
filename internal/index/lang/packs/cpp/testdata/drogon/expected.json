@@ -1,0 +1,16 @@
+{
+  "facets": [
+    "controller drogon controllers/UserController.h ChatSocket",
+    "controller drogon controllers/UserController.h HealthController",
+    "controller drogon controllers/UserController.h UserController",
+    "middleware drogon filters/AuthFilter.h AuthFilter",
+    "route drogon controllers/UserController.h /api/users GET",
+    "route drogon controllers/UserController.h /api/users POST",
+    "route drogon controllers/UserController.h /chat websocket",
+    "route drogon controllers/UserController.h /health GET",
+    "route drogon main.cc /ping"
+  ],
+  "edges": [
+    "controllers/UserController.cc -> controllers/UserController.h"
+  ]
+}

@@ -1,0 +1,6 @@
+[project]
+name = "demo"
+dependencies = [
+    "fastapi[standard]>=0.115",  # web
+    "sqlmodel",
+]

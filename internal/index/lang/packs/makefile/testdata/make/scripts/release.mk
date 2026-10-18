@@ -1,0 +1,2 @@
+release: test
+	goreleaser release
