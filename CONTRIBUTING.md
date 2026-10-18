@@ -193,6 +193,13 @@ git push origin v0.2.1
   is one line there, so the tag body is where the story belongs.
 - **The release cannot publish unless CI passes on that commit.** `release.yml`
   runs `ci.yml` as a reusable workflow and the publish job needs it.
+- **Do not create the GitHub release by hand.** Pushing the tag is the whole
+  release: GoReleaser creates the release and uploads the binaries. A release
+  made first in the web UI has no binaries but becomes "latest", so `install.sh`
+  and `install.ps1` fail for everyone, CI's install step with them, and the
+  release workflow, which runs that CI, can then never publish. v0.2.4 hit
+  this; the fix was to delete the empty release (keeping the tag) and re-run
+  the release workflow.
 - Releases build exactly the committed module graph (no `go mod tidy` at release
   time), with pinned tool versions, without a restored build cache, and with
   build-provenance attestations.
