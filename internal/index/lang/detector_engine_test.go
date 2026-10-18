@@ -342,7 +342,10 @@ func TestDependenciesForUnionsAncestors(t *testing.T) {
 	write("apps/api/package.json", `{"dependencies":{"@nestjs/core":"10"}}`)
 	write("apps/api/requirements_test.txt", "pytest\n")
 
+	// Closed before TempDir's cleanup: the listing root is an open directory
+	// handle, and Windows will not delete an open directory.
 	m := NewManifests(root)
+	defer m.Close()
 	if got, want := m.DependenciesFor("apps/web/app/page.tsx"), []string{"next", "typescript"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("web deps = %v, want %v", got, want)
 	}
@@ -369,7 +372,9 @@ func TestManifestLinkIsNotRead(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "package.json")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if got := NewManifests(root).DependenciesFor("a.ts"); len(got) != 0 {
+	m := NewManifests(root)
+	defer m.Close() // an open handle would keep Windows from removing root
+	if got := m.DependenciesFor("a.ts"); len(got) != 0 {
 		t.Fatalf("read a linked manifest: %v", got)
 	}
 }
