@@ -72,7 +72,7 @@ sudo apk add --allow-untrusted githints_<version>_linux_amd64.apk   # Alpine
 
 ### From source
 
-Requires the Go version in `go.mod` (currently 1.26.7) or newer:
+Requires the Go version in `go.mod` (currently 1.26.10) or newer:
 
 ```sh
 go install github.com/cjrdz/githints@latest   # into $(go env GOPATH)/bin
