@@ -6,7 +6,7 @@ conventions and releases. The design is described in
 
 ## Requirements
 
-- The Go version in `go.mod` (currently 1.26.7) or later. The floor tracks
+- The Go version in `go.mod` (currently 1.26.10) or later. The floor tracks
   standard-library CVEs rather than language features, and `govulncheck` in CI
   enforces it; `os.Root.MkdirAll`, which the file-confinement code depends on,
   arrived in 1.25. CI reads the version from `go.mod`, so bumping it there is the

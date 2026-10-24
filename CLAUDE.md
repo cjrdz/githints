@@ -263,7 +263,7 @@ moved between them, so treat an upgrade as a real change with its own commit
 rather than a routine bump: build it, run the gate, and start the server to
 confirm `tools/list` still answers.
 
-`go.mod` requires Go 1.26.7. The floor exists to keep the standard-library CVEs
+`go.mod` requires Go 1.26.10. The floor exists to keep the standard-library CVEs
 out of release binaries — CI builds from this directive, so lowering it would
 ship against a vulnerable stdlib. `os.Root.MkdirAll`/`WriteFile`, which
 `internal/safefs` depends on, arrived in 1.25.
