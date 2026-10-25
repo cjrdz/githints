@@ -33,14 +33,11 @@ var sessionSuggestions = []struct {
 	tool string
 	why  string
 }{
-	{"get_recent_changes", "catch up on what changed since you were last here, including work from other agents or plain git commits"},
-	{"get_file_history", "before editing an unfamiliar file, find out why it is shaped the way it is"},
-	{"search_changes", "full-text search over past summaries and reasons when hunting for a specific decision"},
+	{"query_changes", "catch up on recent work by other agents or plain git commits; with file=..., read why a file is shaped the way it is before editing it"},
 	{"get_diff", "check the real unified diff when a recorded summary looks vague or wrong"},
-	{"get_changes_in_range", "timeline forensics for one window, e.g. what happened to auth.go last week"},
-	{"record_change", "record what you changed and why, right after each file edit"},
-	{"record_batch", "record several files at once when they changed in the same conceptual step"},
+	{"record_change", "record what you changed and why, right after each edit (changes[] for several files at once)"},
 	{"record_outcome", "record whether an earlier change worked, partly worked, failed or was reverted"},
+	{"search_notes", "look for a note before re-deriving a design choice, a plan or a hard bug"},
 }
 
 // maxSessionSuggestions caps how many suggestions are returned, so the

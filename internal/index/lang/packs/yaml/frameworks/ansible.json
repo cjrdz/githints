@@ -1,0 +1,45 @@
+{
+  // Ansible. A play is a top-level list item that names its hosts, which no
+  // workflow, compose file or Kubernetes manifest has: their top level is a
+  // mapping. A play is named by its name when it has one before hosts:, and
+  // by its hosts otherwise. A role is named by its directory, on each of its
+  // task files (roles/<role>/tasks/*.yml): a task file is a bare list, which
+  // declares no symbol, and without a facet it would not be indexed at all,
+  // nor reached by the import_tasks that includes it. A task file outside a
+  // role is linked only if it holds something else the index records.
+  // Playbooks have no conventional file name, so the gate is every YAML file
+  // and the shape decides, as for Kubernetes.
+  "framework": "ansible",
+  "languages": [
+    "yaml"
+  ],
+  "path_globs": [
+    "*.yml",
+    "*.yaml"
+  ],
+  "rules": [
+    {
+      // - name: Configure web servers
+      //   hosts: web
+      "facet": "infra",
+      "requires": "hosts:",
+      "keep_strings": true,
+      "lookahead": 8,
+      "pattern": "^-[ \\t]+name:[ \\t]*['\"]?(?P<name>[^'\"\\n]+?)['\"]?[ \\t]*\\n(?:[ \\t]+.*\\n)*?[ \\t]+hosts:[ \\t]*\\S",
+      "detail": "play"
+    },
+    {
+      // - hosts: databases
+      "facet": "infra",
+      "requires": "hosts:",
+      "keep_strings": true,
+      "pattern": "^-[ \\t]+hosts:[ \\t]*['\"]?(?P<name>[^'\"\\n]+?)['\"]?[ \\t]*$",
+      "detail": "play"
+    },
+    {
+      "facet": "infra",
+      "path_pattern": "(?:^|/)roles/(?P<name>[\\w.-]+)/tasks/(?:[^/]+/)*[^/]+\\.ya?ml$",
+      "detail": "role"
+    }
+  ]
+}

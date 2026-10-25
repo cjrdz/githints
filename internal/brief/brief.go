@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/index"
 	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/notes"
@@ -39,6 +40,7 @@ const (
 	maxNoteChars    = 200
 	maxFailedLines  = 10
 	maxPendingLines = 8
+	maxReviewLines  = 3
 	maxCommitLines  = 5
 	maxNoteLines    = 5
 	maxFilesPerLine = 4
@@ -79,6 +81,7 @@ func Build(st *store.Store, idx *index.Store, opt Options) (string, error) {
 	for _, build := range []func() (section, error){
 		func() (section, error) { return failedSection(st) },
 		func() (section, error) { return pendingSection(st) },
+		func() (section, error) { return reviewSection(st) },
 		func() (section, error) { return commitsSection(st) },
 	} {
 		sec, err := build()
@@ -206,6 +209,25 @@ func pendingSection(st *store.Store) (section, error) {
 	return sec, nil
 }
 
+// reviewSection lists review receipts no commit has used yet. Whether each
+// still matches what is staged needs `git write-tree`, which a session start
+// should not run; review_status says.
+func reviewSection(st *store.Store) (section, error) {
+	rows, err := st.Reviews(true, maxReviewLines)
+	if err != nil {
+		return section{}, err
+	}
+	sec := section{title: "Review receipts not yet used by a commit (review_status says whether one covers what is staged):"}
+	for _, c := range rows {
+		who := ""
+		if c.AgentID != "" {
+			who = " by " + text(c.AgentID, 40)
+		}
+		sec.lines = append(sec.lines, fmt.Sprintf("- #%d %s%s (%s)", c.ID, text(c.Summary, maxSummaryChars), who, day(c.RecordedAt)))
+	}
+	return sec, nil
+}
+
 func commitsSection(st *store.Store) (section, error) {
 	hashes, err := st.RecentCommitHashes(maxCommitLines)
 	if err != nil {
@@ -239,7 +261,7 @@ func commitsSection(st *store.Store) (section, error) {
 		if len(files) == 0 {
 			continue
 		}
-		line := fmt.Sprintf("- %s (%s): %s", short(h), day(when), listFiles(files, maxFilesPerLine))
+		line := fmt.Sprintf("- %s (%s): %s", gitutil.ShortHash(h), day(when), listFiles(files, maxFilesPerLine))
 		if summary != "" {
 			line += " — " + summary
 		}
@@ -287,25 +309,19 @@ func blastSection(idx *index.Store, root string, files []string) (section, bool)
 		if strings.HasSuffix(f, "_test.go") {
 			continue // nothing imports a test file
 		}
-		importPath, err := registry.ImportPath(root, f)
-		if err != nil || done[importPath] {
-			continue
+		importPath, files, err := idx.Dependents(registry, root, f)
+		if importPath == "" || done[importPath] {
+			continue // unresolvable, or a package already listed
 		}
 		done[importPath] = true
-		imps, err := idx.FilesImporting(importPath)
 		if err != nil {
 			return section{}, false
 		}
-		seen := map[string]bool{}
-		var names []string
-		for _, imp := range imps {
-			if imp.FilePath != f && !seen[imp.FilePath] {
-				seen[imp.FilePath] = true
-				names = append(names, text(imp.FilePath, 120))
-			}
+		names := make([]string, len(files))
+		for i, file := range files {
+			names[i] = text(file, 120)
 		}
 		if len(names) > 0 {
-			sort.Strings(names)
 			found = append(found, dependents{f, names})
 		}
 	}
@@ -374,13 +390,6 @@ func listFiles(names []string, n int) string {
 		return strings.Join(names, ", ")
 	}
 	return fmt.Sprintf("%s (+%d more)", strings.Join(names[:n], ", "), len(names)-n)
-}
-
-func short(h string) string {
-	if len(h) > 8 {
-		return h[:8]
-	}
-	return h
 }
 
 func day(unix int64) string {

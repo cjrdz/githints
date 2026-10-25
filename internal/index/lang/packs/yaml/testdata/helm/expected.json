@@ -1,0 +1,10 @@
+{
+  "facets": [
+    "infra helm charts/web/Chart.yaml web chart",
+    "infra helm charts/web/templates/deployment.yaml web Deployment",
+    "infra helm charts/web/templates/deployment.yaml web HorizontalPodAutoscaler",
+    "infra kubernetes charts/web/templates/configmap.yaml web-static ConfigMap",
+    "infra kubernetes docs/templates/example.yaml docs-example Namespace"
+  ],
+  "edges": []
+}

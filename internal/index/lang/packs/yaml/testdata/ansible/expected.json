@@ -1,0 +1,15 @@
+{
+  "facets": [
+    "infra ansible dbservers.yml databases play",
+    "infra ansible roles/nginx/tasks/install.yml nginx role",
+    "infra ansible roles/nginx/tasks/main.yml nginx role",
+    "infra ansible webservers.yml Configure web servers play",
+    "infra ansible webservers.yml Rotate certificates play",
+    "infra github-actions .github/workflows/deploy.yml ansible ci job"
+  ],
+  "edges": [
+    "roles/nginx/tasks/main.yml -> roles/nginx/tasks/install.yml",
+    "site.yml -> dbservers.yml",
+    "site.yml -> webservers.yml"
+  ]
+}

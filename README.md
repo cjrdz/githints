@@ -12,8 +12,7 @@ repository and **why**, plus a structural index of its code, and serves both to
 any agent over MCP or from the command line. The next agent (or person) to open
 the repository can catch up on intent instead of re-deriving it from diffs.
 
-Everything stays on your machine: no service, no account, no network access
-unless you opt in to a local Ollama model.
+Everything stays on your machine: no service, no account, no network access.
 
 ## Quick start
 
@@ -99,13 +98,13 @@ client setup are in the [usage guide](docs/usage.md).
 ```sh
 githints setup                  # set up the repo and register MCP clients
 githints doctor                 # check the whole setup; prints a fix for each problem
-githints status                 # store health, hooks, salt, pending records
-githints remove                 # stop tracking: remove hooks, keep data
+githints uninstall -keep-data   # stop tracking: remove hooks, keep data
 githints uninstall -force       # full removal: hooks, configs, .githints/, salt
 
 githints record -file=F -summary=S [-reason=R]   # record a change by hand
-githints history -file=F        # why a file looks the way it does
-githints recent | search -query=Q | diff -file=F | changes -since=T -until=T
+githints log [-file=F] [-query=Q] [-since=T] [-until=T]   # the change log; filters combine
+githints diff -file=F           # the real, redacted diff
+githints review                 # how deep a review the staged change needs; review record signs one
 githints outcome -id=N -state=failed -note=...   # how change #N turned out
 githints brief                  # the session-start digest
 githints note record|search|get|list             # markdown notes in .githints/notes/

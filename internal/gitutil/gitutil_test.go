@@ -56,7 +56,7 @@ func chdir(t *testing.T, dir string) func() {
 	}
 }
 
-// ChangedFiles and DiffStat place the commit-ish in argv before the "--"
+// ChangedFiles and CommitDiffStats place the commit-ish in argv before the "--"
 // separator, so an unvalidated value beginning with "-" would be parsed as a
 // git option. FileDiff and DiffHash always guarded this; these two did not.
 func TestCommitishGuardOnAllCallers(t *testing.T) {
@@ -71,8 +71,8 @@ func TestCommitishGuardOnAllCallers(t *testing.T) {
 			if _, err := ChangedFiles(bad); err == nil {
 				t.Errorf("ChangedFiles(%q) = nil error, want rejection", bad)
 			}
-			if got := DiffStat(bad, "main.go"); got != "" {
-				t.Errorf("DiffStat(%q) = %q, want empty", bad, got)
+			if _, err := CommitDiffStats(bad); err == nil {
+				t.Errorf("CommitDiffStats(%q) = nil error, want rejection", bad)
 			}
 			if _, err := FileDiff(bad, "main.go"); err == nil {
 				t.Errorf("FileDiff(%q) = nil error, want rejection", bad)
@@ -307,12 +307,12 @@ func TestDiffHashWorkingTree(t *testing.T) {
 
 	writeFile(t, dir, "main.go", "package main\n\nfunc Run() {}\n")
 
-	h, err := WorktreeDiffHash("main.go")
+	h, err := DiffHash("", "main.go")
 	if err != nil {
-		t.Fatalf("WorktreeDiffHash: %v", err)
+		t.Fatalf("DiffHash worktree: %v", err)
 	}
 	if h == "" {
-		t.Fatal("WorktreeDiffHash returned empty")
+		t.Fatal("DiffHash worktree returned empty")
 	}
 }
 
@@ -546,10 +546,56 @@ func TestDiffDoesNotRunExternalDiffOrTextconv(t *testing.T) {
 		t.Fatalf("FileDiff worktree: %v", err)
 	}
 	_, _ = DiffHash(hash, "main.go")
-	_ = DiffStat(hash, "main.go")
+	_, _ = CommitDiffStats(hash)
 	_ = WorktreeDiffStat("main.go")
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("a repository-configured diff driver was executed")
+	}
+}
+
+// The per-file form diffed against hash^, which a repository's first commit
+// does not have, so every file in it was recorded with no stat.
+func TestCommitDiffStats(t *testing.T) {
+	dir := makeRepo(t)
+	defer chdir(t, dir)()
+	writeFile(t, dir, "main.go", "package main\n\nfunc A() {}\n")
+	writeFile(t, dir, "blob.bin", "\x00\x01\x02")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "initial")
+	first, err := LastCommitHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err := CommitDiffStats(first)
+	if err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+	if got := stats["main.go"]; got != "+3 -0" {
+		t.Errorf("first commit main.go = %q, want +3 -0", got)
+	}
+	if got, ok := stats["blob.bin"]; !ok || got != "" {
+		t.Errorf("binary file = %q (present %v), want an empty stat", got, ok)
+	}
+
+	writeFile(t, dir, "main.go", "package main\n\nfunc B() {}\n")
+	runGit(t, dir, "mv", "blob.bin", "moved.bin")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "second")
+	second, err := LastCommitHash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err = CommitDiffStats(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stats["main.go"]; got != "+1 -1" {
+		t.Errorf("second commit main.go = %q, want +1 -1", got)
+	}
+	for _, p := range []string{"blob.bin", "moved.bin"} {
+		if _, ok := stats[p]; !ok {
+			t.Errorf("rename side %s missing: %v", p, stats)
+		}
 	}
 }
 
@@ -746,5 +792,41 @@ func TestChangedFilesNoRenamesListsBothPaths(t *testing.T) {
 	}
 	if _, err := ChangedFilesNoRenames("--output=/tmp/pwn"); err == nil {
 		t.Error("an option-looking hash was accepted")
+	}
+}
+
+// The tree write-tree gives for the index is the tree the next commit gets,
+// and CommitShapes reads it back with the parent, for any number of commits
+// in one process.
+func TestIndexTreeAndCommitShapes(t *testing.T) {
+	dir := makeRepo(t)
+	defer chdir(t, dir)()
+	writeFile(t, dir, "a.txt", "one\n")
+	runGit(t, dir, "add", "a.txt")
+	staged, err := IndexTree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "commit", "-m", "first")
+	first, _ := LastCommitHash()
+	writeFile(t, dir, "a.txt", "two\n")
+	runGit(t, dir, "commit", "-am", "second")
+	second, _ := LastCommitHash()
+
+	shapes, err := CommitShapes([]string{first, second, strings.Repeat("0", 40)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := shapes[first]; got.Tree != staged || got.Parent != "" || got.Missing {
+		t.Errorf("first = %+v, want tree %s and no parent", got, staged)
+	}
+	if got := shapes[second]; got.Parent != first || got.Tree == staged {
+		t.Errorf("second = %+v, want parent %s and a new tree", got, first)
+	}
+	if !shapes[strings.Repeat("0", 40)].Missing {
+		t.Error("an unknown commit was not reported missing")
+	}
+	if _, err := CommitShapes([]string{"--output=/tmp/x"}); err == nil {
+		t.Error("an option-shaped hash was accepted")
 	}
 }

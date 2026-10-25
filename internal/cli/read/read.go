@@ -1,5 +1,5 @@
-// Package read implements the CLI read commands: history, recent, search,
-// diff, and changes. They are the shell twins of the MCP read tools.
+// Package read implements the CLI read commands: log, diff and brief, the
+// shell twins of the MCP read tools.
 package read
 
 import (
@@ -8,109 +8,86 @@ import (
 	"fmt"
 	"strings"
 
-	"os"
-
 	"github.com/cjrdz/githints/internal/brief"
 	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/config"
 	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/index"
-	"github.com/cjrdz/githints/internal/index/lang"
-	"github.com/cjrdz/githints/internal/llm"
-	"github.com/cjrdz/githints/internal/mcpserver"
 	"github.com/cjrdz/githints/internal/recorder"
+	"github.com/cjrdz/githints/internal/secrets"
+	"github.com/cjrdz/githints/internal/store"
 )
 
-// maxCLILimit matches the MCP tools' limit ceiling.
-const maxCLILimit = 500
-
-func checkLimit(n int) error {
-	if n < 1 || n > maxCLILimit {
-		return fmt.Errorf("-limit must be between 1 and %d, got %d", maxCLILimit, n)
-	}
-	return nil
-}
-
-// History shows the recorded history for one file.
-func History(args []string) error {
-	fs := flag.NewFlagSet("history", flag.ExitOnError)
-	file := fs.String("file", "", "repo-relative path (required)")
+// Log reads the change log, newest first: the twin of the query_changes
+// tool. Its flags combine; with none it lists the latest changes. history,
+// recent, search and changes are aliases of it, and their flags are its own.
+func Log(args []string) error {
+	fs := flag.NewFlagSet("log", flag.ExitOnError)
+	file := fs.String("file", "", "one repo-relative file's history")
+	query := fs.String("query", "", "FTS5 MATCH expression over summaries and reasons")
+	sinceStr := fs.String("since", "", "start, inclusive (RFC3339, a date, or Unix seconds)")
+	untilStr := fs.String("until", "", "end, inclusive")
 	limit := fs.Int("limit", 20, "max entries (1-500)")
+	line := fs.Int("line", 0, "with -file: why this line is there")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *file == "" {
-		return errors.New("-file is required")
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-	if err := recorder.ValidateFilePath(*file); err != nil {
+	if *line != 0 {
+		if *file == "" || *query != "" || *sinceStr != "" || *untilStr != "" {
+			return errors.New("-line needs -file, and does not combine with -query, -since or -until")
+		}
+		if err := recorder.ValidateFilePath(*file); err != nil {
+			return err
+		}
+		_, st, err := core.OpenInitialized()
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		text, err := st.ExplainLine(*file, *line)
+		if err != nil {
+			return err
+		}
+		fmt.Print(text)
+		return nil
+	}
+	q := store.Query{File: *file, Text: strings.TrimSpace(*query), Limit: *limit}
+	if q.File != "" {
+		if err := recorder.ValidateFilePath(q.File); err != nil {
+			return err
+		}
+	}
+	if err := core.CheckLimit(q.Limit); err != nil {
 		return err
 	}
-	if err := checkLimit(*limit); err != nil {
-		return err
+	var err error
+	if *sinceStr != "" {
+		if q.Since, err = store.ParseTimestamp(*sinceStr); err != nil {
+			return fmt.Errorf("since: %w", err)
+		}
 	}
+	if *untilStr != "" {
+		if q.Until, err = store.ParseTimestamp(*untilStr); err != nil {
+			return fmt.Errorf("until: %w", err)
+		}
+	}
+
 	_, st, err := core.OpenInitialized()
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	changes, err := st.FileHistory(*file, *limit)
+	changes, err := st.QueryChanges(q)
 	if err != nil {
+		if q.Text != "" {
+			return fmt.Errorf("search (FTS5 syntax): %w", err)
+		}
 		return err
 	}
-	core.PrintChanges(changes, "no recorded history for "+*file, true)
-	return nil
-}
-
-// Recent shows the latest changes across the repo.
-func Recent(args []string) error {
-	fs := flag.NewFlagSet("recent", flag.ExitOnError)
-	limit := fs.Int("limit", 20, "max entries (1-500)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if err := checkLimit(*limit); err != nil {
-		return err
-	}
-	_, st, err := core.OpenInitialized()
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	changes, err := st.RecentChanges(*limit)
-	if err != nil {
-		return err
-	}
-	core.PrintChanges(changes, "no changes recorded yet", false)
-	return nil
-}
-
-// Search runs a full-text search over summaries and reasons.
-func Search(args []string) error {
-	fs := flag.NewFlagSet("search", flag.ExitOnError)
-	query := fs.String("query", "", "FTS5 MATCH expression (required)")
-	limit := fs.Int("limit", 20, "max entries (1-500)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if strings.TrimSpace(*query) == "" {
-		return errors.New("-query is required")
-	}
-	if len(*query) > mcpserver.MaxSearchQueryLen {
-		return fmt.Errorf("query too long: %d bytes (max %d)", len(*query), mcpserver.MaxSearchQueryLen)
-	}
-	if err := checkLimit(*limit); err != nil {
-		return err
-	}
-	_, st, err := core.OpenInitialized()
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	changes, err := st.Search(*query, *limit)
-	if err != nil {
-		return fmt.Errorf("search (FTS5 syntax): %w", err)
-	}
-	core.PrintChanges(changes, "no matches", true)
+	core.PrintChanges(changes, "no matching changes recorded", true)
 	return nil
 }
 
@@ -142,56 +119,7 @@ func Diff(args []string) error {
 		fmt.Println("no changes")
 		return nil
 	}
-	fmt.Println(mcpserver.TruncateDiff(llm.ScrubDiff(diff)))
-	return nil
-}
-
-// Changes queries the change log over a recorded_at time range. It accepts
-// RFC3339 timestamps or Unix seconds for -since and -until.
-func Changes(args []string) error {
-	fs := flag.NewFlagSet("changes", flag.ExitOnError)
-	sinceStr := fs.String("since", "", "start timestamp (RFC3339 or Unix seconds, required)")
-	untilStr := fs.String("until", "", "end timestamp (RFC3339 or Unix seconds, required)")
-	file := fs.String("file", "", "restrict to one repo-relative file (optional)")
-	limit := fs.Int("limit", 50, "max entries")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *sinceStr == "" || *untilStr == "" {
-		return fmt.Errorf("-since and -until are required")
-	}
-	if *file != "" {
-		if err := recorder.ValidateFilePath(*file); err != nil {
-			return err
-		}
-	}
-
-	_, st, err := core.OpenInitialized()
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	since, err := core.ParseTimestamp(*sinceStr)
-	if err != nil {
-		return fmt.Errorf("since: %w", err)
-	}
-	until, err := core.ParseTimestamp(*untilStr)
-	if err != nil {
-		return fmt.Errorf("until: %w", err)
-	}
-
-	// A negative LIMIT means "unbounded" in SQLite, which is not what
-	// -limit=-1 looks like it should do.
-	if *limit <= 0 {
-		return fmt.Errorf("-limit must be positive, got %d", *limit)
-	}
-
-	changes, err := st.ChangesInRange(since, until, *file, *limit)
-	if err != nil {
-		return fmt.Errorf("query: %w", err)
-	}
-	core.PrintChanges(changes, "no changes in range", false)
+	fmt.Println(secrets.DisplayDiff(diff))
 	return nil
 }
 
@@ -211,16 +139,13 @@ func Brief(args []string) error {
 	}
 	defer st.Close()
 
-	// The index is optional, and opening one that does not exist would create
-	// it, so only an existing file is opened.
+	// The index is optional.
 	var idx, notesDB *index.Store
-	if fi, err := os.Lstat(lang.IndexDBPath(root)); err == nil && fi.Mode().IsRegular() {
-		if db, err := index.Open(lang.IndexDBPath(root)); err == nil {
-			defer db.Close()
-			notesDB = db // the notes' tables are here whether or not indexing is on
-			if cfg, err := config.Load(root); err == nil && cfg.Index.Enabled {
-				idx = db
-			}
+	if db := core.OpenExistingIndex(root); db != nil {
+		defer db.Close()
+		notesDB = db // the notes' tables are here whether or not indexing is on
+		if cfg, err := config.Load(root); err == nil && cfg.Index.Enabled {
+			idx = db
 		}
 	}
 

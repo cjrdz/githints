@@ -1,0 +1,8 @@
+# An inventory names hosts too, under a mapping: not a play.
+all:
+  hosts:
+    web1.example.com:
+  children:
+    databases:
+      hosts:
+        db1.example.com:

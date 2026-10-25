@@ -41,12 +41,13 @@ func TestCLIReadCommandsValidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, err := range map[string]error{
-		"history without file": History(nil),
-		"history traversal":    History([]string{"-file=../x"}),
-		"recent limit 0":       Recent([]string{"-limit=0"}),
-		"search empty":         Search(nil),
-		"search too long":      Search([]string{"-query=" + strings.Repeat("a", 501)}),
-		"diff flag as hash":    Diff([]string{"-file=a.go", "-hash=--output=/tmp/x"}),
+		"traversal":         Log([]string{"-file=../x"}),
+		"limit 0":           Log([]string{"-limit=0"}),
+		"limit 501":         Log([]string{"-limit=501"}),
+		"query too long":    Log([]string{"-query=" + strings.Repeat("a", 501)}),
+		"bad since":         Log([]string{"-since=yesterday"}),
+		"stray argument":    Log([]string{"a.go"}),
+		"diff flag as hash": Diff([]string{"-file=a.go", "-hash=--output=/tmp/x"}),
 	} {
 		if err == nil {
 			t.Errorf("%s: accepted", name)
@@ -55,8 +56,14 @@ func TestCLIReadCommandsValidate(t *testing.T) {
 	if err := record.Record([]string{"-file=a.go", "-summary=rotate signing key", "-reason=security"}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := clitest.CaptureStdout(t, func() error { return Search([]string{"-query=signing"}) })
+	if err := record.Record([]string{"-file=b.go", "-summary=signing docs"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := clitest.CaptureStdout(t, func() error { return Log([]string{"-query=signing", "-file=a.go"}) })
 	if err != nil || !strings.Contains(out, "rotate signing key") || !strings.Contains(out, "why: security") {
-		t.Fatalf("search: %v\n%s", err, out)
+		t.Fatalf("log: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "signing docs") {
+		t.Errorf("-file did not narrow the search:\n%s", out)
 	}
 }

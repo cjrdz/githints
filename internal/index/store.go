@@ -297,12 +297,6 @@ func (s *Store) IndexResolverVersion() (int, error) {
 	return s.metaInt("resolver_version")
 }
 
-// SetResolverVersion records that the index was fully built with the current
-// resolver.
-func (s *Store) SetResolverVersion() error {
-	return metaSetOn(s.db, "resolver_version", fmt.Sprintf("%d", ResolverVersion))
-}
-
 // IndexedLanguages returns the languages the last full scan ran with, sorted,
 // and false for an index built before they were recorded.
 //
@@ -315,11 +309,6 @@ func (s *Store) IndexedLanguages() ([]string, bool, error) {
 		return nil, false, err
 	}
 	return strings.Split(v, ","), true, nil
-}
-
-// SetIndexedLanguages records the languages a full scan ran with.
-func (s *Store) SetIndexedLanguages(names []string) error {
-	return setIndexedLanguagesOn(s.db, names)
 }
 
 func setIndexedLanguagesOn(e execer, names []string) error {
@@ -652,6 +641,28 @@ func (s *Store) FindSymbolsByName(name string, limit int) ([]lang.Symbol, error)
 
 // FilesImporting returns the reverse lookup: files that import the given path
 // and the import statement in that file.
+// Dependents resolves file's import path and lists the other files that
+// import it, sorted and without repeats: the blast radius of changing file.
+// The brief, get_dependents and risk scoring all ask this question.
+func (s *Store) Dependents(registry *lang.Registry, root, file string) (importPath string, files []string, err error) {
+	importPath, err = registry.ImportPath(root, file)
+	if err != nil {
+		return "", nil, err
+	}
+	imps, err := s.FilesImporting(importPath)
+	if err != nil {
+		return importPath, nil, err
+	}
+	seen := map[string]bool{file: true}
+	for _, imp := range imps {
+		if !seen[imp.FilePath] {
+			seen[imp.FilePath] = true
+			files = append(files, imp.FilePath)
+		}
+	}
+	return importPath, files, nil // FilesImporting orders by file_path
+}
+
 func (s *Store) FilesImporting(importPath string) ([]lang.Import, error) {
 	rows, err := s.db.Query("SELECT file_path, imported_path FROM imports WHERE imported_path = ? ORDER BY file_path", importPath)
 	if err != nil {
@@ -730,19 +741,12 @@ func (s *Store) ImportsForFile(file string) ([]lang.Import, error) {
 	return out, rows.Err()
 }
 
-// Vacuum optimizes the index database after large writes/deletes.
-func (s *Store) Vacuum() error {
-	_, err := s.db.Exec("VACUUM")
-	return err
-}
-
 // ReclaimSpace returns pages freed by the previous scan's Clear to the
 // filesystem.
 //
 // A full VACUUM rewrites the entire database file, which a scan does not need:
 // it clears and refills the same tables, so the page count barely changes.
-// Incremental vacuum reuses the freelist instead. `githints index --vacuum`
-// still offers the full rewrite for a database that has genuinely shrunk.
+// Incremental vacuum reuses the freelist instead.
 func (s *Store) ReclaimSpace() error {
 	if _, err := s.db.Exec("PRAGMA incremental_vacuum"); err != nil {
 		return fmt.Errorf("incremental vacuum: %w", err)

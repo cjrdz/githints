@@ -4,14 +4,10 @@ package record
 import (
 	"flag"
 	"fmt"
-	"path/filepath"
-	"strconv"
-	"time"
 
 	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/hint"
 	"github.com/cjrdz/githints/internal/integrity"
-	"github.com/cjrdz/githints/internal/managed"
 	"github.com/cjrdz/githints/internal/recorder"
 	"github.com/cjrdz/githints/internal/textsafe"
 )
@@ -95,74 +91,6 @@ func Outcome(args []string) error {
 		return err
 	}
 	fmt.Printf("recorded outcome %s for change #%d (%s)\n", o.OutcomeState, o.TargetID, textsafe.OneLine(o.FilePath))
-	return nil
-}
-
-// Status prints a quick health/dashboard view of the githints store.
-func Status() error {
-	root, st, err := core.OpenInitialized()
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	fmt.Printf("store: %s\n", filepath.Join(root, ".githints", "store.db"))
-
-	hooksOK := true
-	statuses, err := managed.CheckHooks(root)
-	if err != nil {
-		fmt.Printf("hooks: %v\n", err)
-		hooksOK = false
-	} else {
-		for _, r := range statuses {
-			if r.Level != managed.HookOK {
-				hooksOK = false
-				fmt.Printf("hooks: %s (fix: %s)\n", r.Detail, r.Fix)
-			}
-		}
-	}
-	if hooksOK {
-		fmt.Println("hooks: installed")
-	}
-	if _, path, err := integrity.ExistingKey(root); err != nil {
-		fmt.Printf("salt: %v\n", err)
-	} else {
-		fmt.Printf("salt: %s\n", path)
-	}
-
-	total, err := st.Count()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("total changes: %d\n", total)
-
-	pending, err := st.UncommittedCount()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("uncommitted: %d\n", pending)
-
-	if lastRecorded, _ := st.MetaGet("last_recorded_at"); lastRecorded != "" {
-		if ts, err := strconv.ParseInt(lastRecorded, 10, 64); err == nil {
-			fmt.Printf("last recorded: %s\n", time.Unix(ts, 0).Format(time.RFC3339))
-		}
-	}
-
-	if lastVerify, _ := st.MetaGet("last_verify_at"); lastVerify != "" {
-		if ts, err := strconv.ParseInt(lastVerify, 10, 64); err == nil {
-			fmt.Printf("last verified: %s\n", time.Unix(ts, 0).Format(time.RFC3339))
-		}
-	}
-
-	recent, err := st.RecentChanges(1)
-	if err != nil {
-		return err
-	}
-	if len(recent) > 0 && recent[0].Branch != "" {
-		fmt.Printf("latest branch: %s\n", textsafe.OneLine(recent[0].Branch))
-	}
-
-	fmt.Println("(run `githints doctor` for a full health check)")
 	return nil
 }
 

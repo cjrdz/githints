@@ -70,7 +70,7 @@ type SecretScanResult struct {
 // ScanSecrets checks text against the known secret patterns. The pattern
 // field is the regex source of the first match, or "" when nothing matched.
 // The pattern list lives in internal/secrets so this check and the diff
-// scrubber in internal/llm cannot drift apart.
+// scrubber beside it cannot drift apart.
 func ScanSecrets(text string) SecretScanResult {
 	pattern, matched := secrets.Scan(text)
 	return SecretScanResult{Matched: matched, Pattern: pattern}
@@ -115,7 +115,7 @@ func RecordChange(st *store.Store, root string, key []byte, in Input) (store.Cha
 }
 
 // BatchRecord inserts multiple changes and renders each affected file and
-// the changelog exactly once. Use this from the record_batch MCP tool to
+// the changelog exactly once. Use this from record_change with changes[] to
 // avoid N redundant render passes.
 //
 // All rows land or none do. Previously a failure at item K left items 0..K-1
@@ -134,7 +134,14 @@ func BatchRecord(st *store.Store, root string, key []byte, inputs []Input) error
 	rows := make([]store.Change, len(inputs))
 	stamped := make([]bool, len(inputs))
 	files := make(map[string]struct{}, len(inputs))
+	branch := ""
+	if b, err := gitutil.CurrentBranch(); err == nil {
+		branch = b // one git process for the batch, not one per row
+	}
 	for i, in := range inputs {
+		if in.Branch == "" {
+			in.Branch = branch
+		}
 		c, err := prepare(st, in)
 		if err != nil {
 			return fmt.Errorf("changes[%d]: %w", i, err)
@@ -220,7 +227,7 @@ func prepare(st *store.Store, in Input) (store.Change, error) {
 
 	// Terminal escapes, bidi overrides and zero-width characters are removed
 	// before anything else looks at the text: they can rewrite a terminal
-	// when `githints changes` prints the row, and they can split a credential
+	// when `githints log` prints the row, and they can split a credential
 	// so the secret scan below no longer recognizes it. Newlines survive in
 	// summary and reason (renderers flatten them); agent_id is one line.
 	in.Summary = textsafe.StripControls(in.Summary)
@@ -251,11 +258,7 @@ func prepare(st *store.Store, in Input) (store.Change, error) {
 	// with no HEAD yet) leave diff_hash empty rather than blocking the
 	// record.
 	if in.DiffHash == "" {
-		if in.CommitHash == "" {
-			in.DiffHash, _ = gitutil.WorktreeDiffHash(in.FilePath)
-		} else {
-			in.DiffHash, _ = gitutil.DiffHash(in.CommitHash, in.FilePath)
-		}
+		in.DiffHash, _ = gitutil.DiffHash(in.CommitHash, in.FilePath)
 	}
 
 	// Stamp the current branch on every row. Failures here (detached HEAD,

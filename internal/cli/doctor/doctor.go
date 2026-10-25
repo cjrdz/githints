@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/integrity"
 	"github.com/cjrdz/githints/internal/managed"
+	"github.com/cjrdz/githints/internal/risk"
 	"github.com/cjrdz/githints/internal/store"
 )
 
@@ -95,6 +97,17 @@ func runChecks() []Result {
 		add(LevelFail, "config", cfgErr.Error(), "fix or delete .githints/config.json")
 	} else {
 		add(LevelOK, "config", "parsed", "")
+		// Strict here; the commit path skips a bad rule with a warning instead.
+		for i, r := range cfg.Review.Rules {
+			if err := risk.CheckRule(r); err != nil {
+				add(LevelWarn, "review", fmt.Sprintf("review.rules[%d] is ignored: %v", i, err), "fix it in .githints/config.json")
+			}
+		}
+		switch cfg.Review.Gate {
+		case "", "warn", "block":
+		default:
+			add(LevelWarn, "review", fmt.Sprintf("review.gate %q is not off, warn or block; it is ignored", cfg.Review.Gate), `set "gate" to "warn" or "block", or remove it`)
+		}
 	}
 
 	st, err := store.Open(dbPath)
@@ -174,9 +187,20 @@ func checkIntegrity(root string, st *store.Store) []Result {
 	case core.KeyChangedHint(rows, errs) != "":
 		email, _ := gitutil.UserEmail()
 		out = append(out, Result{LevelFail, "chain", fmt.Sprintf("every row fails: the key changed (user.email is now %q, or the salt was replaced)", email),
-			"restore the old user.email or salt; otherwise `githints rotate-salt -force`"})
+			"restore the old user.email or salt; otherwise `githints salt rotate -force`"})
 	default:
 		out = append(out, Result{LevelFail, "chain", fmt.Sprintf("%d problem(s) in %d row(s)", len(errs), len(rows)), "githints verify (shows each one)"})
+	}
+	// What `githints status` used to print; status is now this command.
+	if total, err := st.Count(); err == nil {
+		pending, _ := st.UncommittedCount() // 0 on error: the count above already read the table
+		detail := fmt.Sprintf("%d change(s), %d not yet committed", total, pending)
+		if last, _ := st.MetaGet("last_recorded_at"); last != "" { // a missing stamp is not a problem
+			if ts, err := strconv.ParseInt(last, 10, 64); err == nil {
+				detail += ", last recorded " + time.Unix(ts, 0).Format(time.RFC3339)
+			}
+		}
+		out = append(out, Result{LevelOK, "log", detail, ""})
 	}
 
 	// The anchors are what catches a log that was edited and re-signed with
@@ -193,6 +217,16 @@ func checkIntegrity(root string, st *store.Store) []Result {
 		out = append(out, Result{LevelWarn, "anchors", "no Merkle anchors in refs/notes/githints yet", "they are written by the post-commit hook; check the hooks above"})
 	case rep.Notes > 0:
 		out = append(out, Result{LevelOK, "anchors", fmt.Sprintf("%d note(s) match the log", rep.Checked), ""})
+	}
+	// Offline on purpose: doctor compares with what `anchors push` last sent
+	// rather than asking the remote, which could hang or prompt.
+	if local := gitutil.RefHash(gitutil.AnchorsRef); local != "" {
+		if remotes, _ := gitutil.Remotes(); len(remotes) > 0 { // no remotes: nothing to push to
+			if pushed, _ := st.MetaGet(store.MetaAnchorsPushed); pushed != local {
+				out = append(out, Result{LevelWarn, "anchors", "the newest anchors exist only on this machine",
+					"githints anchors push (git does not push notes by default)"})
+			}
+		}
 	}
 	return out
 }

@@ -9,6 +9,7 @@
     "infra github-actions .github/workflows/release.yml publish ci job",
     "infra gitlab-ci .gitlab-ci.yml build ci job",
     "infra gitlab-ci .gitlab-ci.yml deploy prod ci job",
+    "infra helm charts/app/templates/service.yaml app Service",
     "infra kubernetes k8s/deployment.yaml api Deployment",
     "infra kubernetes k8s/deployment.yaml api-svc Service"
   ],

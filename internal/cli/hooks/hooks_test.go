@@ -1,11 +1,8 @@
 package hooks
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 
 	"github.com/cjrdz/githints/internal/cli/core"
@@ -118,48 +115,6 @@ func TestHookRunWritesFallbackWhenAgentDidNotDescribeFile(t *testing.T) {
 	}
 	if rows[0].Source != "fallback" {
 		t.Errorf("source = %q, want fallback", rows[0].Source)
-	}
-}
-
-// The post-commit hook must never send a diff to Ollama, even when it is
-// enabled: the commit path does not wait on a model.
-func TestHookRunNeverCallsOllama(t *testing.T) {
-	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		_, _ = w.Write([]byte(`{"response":"Added a main function to main.go"}`))
-	}))
-	defer srv.Close()
-	t.Setenv("GITHINTS_OLLAMA_ENABLED", "1")
-	t.Setenv("GITHINTS_OLLAMA_ENDPOINT", srv.URL)
-
-	dir := clitest.ChdirTempRepo(t)
-	if err := initialize.Init(nil); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	disableInstalledHooks(t, dir)
-
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	clitest.RunGit(t, dir, "add", "main.go")
-	clitest.RunGit(t, dir, "commit", "-m", "initial")
-	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	clitest.RunGit(t, dir, "add", "main.go")
-	clitest.RunGit(t, dir, "commit", "-m", "second")
-
-	if err := HookRun(); err != nil {
-		t.Fatalf("HookRun: %v", err)
-	}
-	if n := calls.Load(); n != 0 {
-		t.Errorf("hook made %d Ollama requests, want 0", n)
-	}
-	rows := commitRows(t, dir)
-	if len(rows) != 1 || rows[0].Source != "fallback" {
-		t.Fatalf("rows = %+v, want one fallback row", rows)
 	}
 }
 

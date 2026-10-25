@@ -19,7 +19,10 @@ import (
 	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/integrity"
 	"github.com/cjrdz/githints/internal/recorder"
+	"github.com/cjrdz/githints/internal/risk"
+	"github.com/cjrdz/githints/internal/secrets"
 	"github.com/cjrdz/githints/internal/store"
+	"github.com/cjrdz/githints/internal/textsafe"
 )
 
 // hookSummaryFor decides what text the post-commit hook should record when
@@ -66,6 +69,16 @@ func HookRun() error {
 		return fmt.Errorf("integrity key: %w", err)
 	}
 
+	// One git process for the whole commit, not one per fallback file. A
+	// failure costs only the stats: every fallback row is then unverifiable.
+	stats, err := gitutil.CommitDiffStats(hash)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "githints: diff stats: %v\n", err)
+	}
+
+	// Resolved once for the commit rather than by each fallback row.
+	branch, _ := gitutil.CurrentBranch() // detached HEAD or an old git: rows carry no branch
+
 	rendered := false
 	for _, f := range files {
 		if f == "" || strings.HasPrefix(f, ".githints/") {
@@ -108,24 +121,30 @@ func HookRun() error {
 			continue
 		}
 
-		diffStat := gitutil.DiffStat(hash, f)
+		diffStat := stats[f]
 		_, _, verifiable := gitutil.ParseDiffStat(diffStat)
 
-		// The hook never calls an LLM: a commit must not wait on a model, and
-		// the diff would leave the process on the commit path. Summaries come
-		// from the agent (record_change) or, on demand, from the MCP
-		// summarize flags.
+		// Summaries come from the agent (record_change); the hook records
+		// only that the file changed, and never sends a diff anywhere.
 		err = recorder.Record(st, root, key, recorder.Input{
 			FilePath:   f,
 			Summary:    hookSummaryFor(verifiable),
 			Source:     "fallback",
 			DiffStat:   diffStat,
 			CommitHash: hash,
+			Branch:     branch,
 		})
 		if err != nil {
 			return fmt.Errorf("record %s: %w", f, err)
 		}
 		rendered = true
+	}
+
+	// A receipt for exactly this commit's tree and parent is now used up.
+	// Before the anchor below, which then covers it. Like revert detection, a
+	// failure costs only this step.
+	if err := burnReviews(st, hash); err != nil {
+		fmt.Fprintf(os.Stderr, "githints: review receipts: %v\n", err)
 	}
 
 	// Detection is a convenience on top of the record, never a reason to lose
@@ -183,11 +202,35 @@ func HookRun() error {
 			// is an optional external anchor.
 			fmt.Fprintf(os.Stderr, "githints: could not add Merkle note: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "githints: anchored Merkle root %s for commit %s\n", anchor.CommitRoot, core.ShortCommitHash(hash))
+			fmt.Fprintf(os.Stderr, "githints: anchored Merkle root %s for commit %s\n", anchor.CommitRoot, gitutil.ShortHash(hash))
 		}
 	}
 
 	return nil
+}
+
+// burnReviews stamps hash on every unused review receipt for the tree and
+// parent this commit has, so none of them is ever valid again.
+func burnReviews(st *store.Store, hash string) error {
+	pending, err := st.Reviews(true, 1)
+	if err != nil || len(pending) == 0 {
+		return err // the common case: no receipts, and no git call to make
+	}
+	shapes, err := gitutil.CommitShapes([]string{hash})
+	if err != nil {
+		return err
+	}
+	shape := shapes[hash]
+	if shape.Missing {
+		return fmt.Errorf("commit %s not found", gitutil.ShortHash(hash))
+	}
+	return st.WithTx(func(tx *sql.Tx) error {
+		n, err := store.ClaimReviewsTx(tx, hash, shape.Tree, shape.Parent)
+		if err == nil && n > 0 {
+			fmt.Fprintf(os.Stderr, "githints: commit %s used %d review receipt(s)\n", gitutil.ShortHash(hash), n)
+		}
+		return err
+	})
 }
 
 // PreCommit is invoked by .git/hooks/pre-commit. For each staged file
@@ -223,6 +266,54 @@ func preCommitCheck() error {
 	}
 	defer st.Close()
 
+	if err := secretGate(); err != nil {
+		return err
+	}
+	if err := recordGate(st); err != nil {
+		return err
+	}
+	return reviewGate(root, st)
+}
+
+// maxSecretLines bounds how many findings the hook lists.
+const maxSecretLines = 20
+
+// secretGate warns when a line the commit adds looks like a credential, and
+// with GITHINTS_SECRET_BLOCK=1 stops the commit. It names the file and line,
+// never the value. .githintsignore does not apply: a key is a key wherever it
+// is. githints' own output is skipped; it refuses secrets when it is written.
+func secretGate() error {
+	diff, err := gitutil.StagedDiff()
+	if err != nil {
+		return fmt.Errorf("read staged diff: %w", err)
+	}
+	var found []secrets.Finding
+	for _, f := range secrets.ScanDiff(diff) {
+		if !strings.HasPrefix(f.File, ".githints/") {
+			found = append(found, f)
+		}
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, "githints: staged lines that look like credentials (values not shown):")
+	for i, f := range found {
+		if i == maxSecretLines {
+			fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(found)-i)
+			break
+		}
+		fmt.Fprintf(os.Stderr, "  - %s:%d\n", textsafe.OneLine(f.File), f.Line)
+	}
+	fmt.Fprintln(os.Stderr, "githints: move them to a secret store or an ignored file; GITHINTS_SECRET_BLOCK=1 makes this stop the commit.")
+	if os.Getenv("GITHINTS_SECRET_BLOCK") == "1" {
+		return fmt.Errorf("%w: %d possible credential(s) staged", errPrecommitBlocked, len(found))
+	}
+	return nil
+}
+
+// recordGate warns about staged files nobody described, and blocks the
+// commit for them under GITHINTS_PRECOMMIT_BLOCK=1.
+func recordGate(st *store.Store) error {
 	staged, err := gitutil.StagedFiles()
 	if err != nil {
 		return fmt.Errorf("list staged files: %w", err)
@@ -248,13 +339,63 @@ func preCommitCheck() error {
 
 	fmt.Fprintln(os.Stderr, "githints: staged files with no pending record_change (no 'why' will be attached):")
 	for _, f := range missing {
-		fmt.Fprintf(os.Stderr, "  - %s\n", f)
+		// A path from the repository: printed raw, an escape in it could
+		// rewrite the terminal.
+		fmt.Fprintf(os.Stderr, "  - %s\n", textsafe.OneLine(f))
 	}
 	fmt.Fprintln(os.Stderr, "call record_change for each before committing, or set GITHINTS_PRECOMMIT_BLOCK=1 to enforce.")
 
 	if os.Getenv("GITHINTS_PRECOMMIT_BLOCK") == "1" {
 		return fmt.Errorf("%w: %d unrecorded file(s); set GITHINTS_PRECOMMIT_BLOCK=0 to warn only", errPrecommitBlocked, len(missing))
 	}
-	_ = root // root reserved for future pre-commit rendering hooks
+	return nil
+}
+
+// reviewGate is review.gate in config.json: when the staged change is high
+// risk and no approved receipt covers exactly what is staged, it warns, or
+// with "block" stops the commit. GITHINTS_REVIEW=0 turns it off: whether to
+// review is the user's choice, never a cloned repository's.
+func reviewGate(root string, st *store.Store) error {
+	if os.Getenv("GITHINTS_REVIEW") == "0" {
+		return nil
+	}
+	cfg, err := config.Load(root)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	gate := cfg.Review.Gate
+	if gate != "warn" && gate != "block" {
+		return nil // off, or a value doctor reports
+	}
+	paths, err := risk.Staged()
+	if err != nil || len(paths) == 0 {
+		return err
+	}
+	in := risk.Inputs{Store: st, Root: root, Config: cfg.Review}
+	if cfg.Index.Enabled {
+		if idx := core.OpenExistingIndex(root); idx != nil {
+			defer idx.Close()
+			in.Index = idx
+		}
+	}
+	rep, err := risk.Assess(in, paths)
+	if err != nil {
+		return err
+	}
+	if rep.Level < risk.High {
+		return nil
+	}
+	receipts, err := risk.CurrentReceipts(st, root, rep.Level)
+	if err != nil {
+		return err
+	}
+	if receipts.Valid {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "githints: this change is high risk and has no approved review: %s.\n", receipts.Why)
+	fmt.Fprintln(os.Stderr, "githints: run `githints review` to see why, review it by all four lenses, then record it with record_review.")
+	if gate == "block" {
+		return fmt.Errorf("%w: high-risk change without an approved review (GITHINTS_REVIEW=0 turns review off)", errPrecommitBlocked)
+	}
 	return nil
 }

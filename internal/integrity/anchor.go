@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/store"
 )
 
@@ -258,4 +259,54 @@ func short(h string) string {
 		return h[:12]
 	}
 	return h
+}
+
+// VerifyReviews checks review receipts against git. A used receipt is bound
+// to the commit stamped on it: that commit's tree must be the tree the review
+// covered, and its parent the base it was staged on. Otherwise the receipt was
+// moved to a commit it never saw. The HMAC chain cannot catch that move, since
+// commit_hash is set after signing; the anchor of the commit it was moved to
+// catches it as well, once that commit is anchored. All commits are read in
+// one git process.
+func VerifyReviews(rows []store.Change) ([]string, error) {
+	var problems []string
+	var used []store.Change
+	for _, c := range rows {
+		if c.Kind != store.KindReview {
+			continue
+		}
+		if !store.ValidVerdict(c.Verdict) {
+			problems = append(problems, fmt.Sprintf("review #%d: unknown verdict %q", c.ID, c.Verdict))
+		}
+		if c.CandidateTree == "" || !gitutil.IsValidCommitish(c.CandidateTree) ||
+			(c.BaseCommit != "" && !gitutil.IsValidCommitish(c.BaseCommit)) {
+			problems = append(problems, fmt.Sprintf("review #%d: malformed tree or base", c.ID))
+			continue
+		}
+		if c.CommitHash != "" {
+			if !gitutil.IsValidCommitish(c.CommitHash) {
+				problems = append(problems, fmt.Sprintf("review #%d: malformed commit %q", c.ID, c.CommitHash))
+				continue
+			}
+			used = append(used, c)
+		}
+	}
+	hashes := make([]string, 0, len(used))
+	for _, c := range used {
+		hashes = append(hashes, c.CommitHash)
+	}
+	shapes, err := gitutil.CommitShapes(hashes)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range used {
+		s := shapes[c.CommitHash]
+		switch {
+		case s.Missing:
+			problems = append(problems, fmt.Sprintf("review #%d: used by commit %s, which is not in this repository", c.ID, short(c.CommitHash)))
+		case s.Tree != c.CandidateTree || s.Parent != c.BaseCommit:
+			problems = append(problems, fmt.Sprintf("review #%d: commit %s is not the change it reviewed (tree or parent differs)", c.ID, short(c.CommitHash)))
+		}
+	}
+	return problems, nil
 }

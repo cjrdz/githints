@@ -38,6 +38,12 @@
 *.xml text eol=lf
 Gemfile text eol=lf
 *.tf text eol=lf
+*.hcl text eol=lf
+*.tfvars text eol=lf
+*.bash text eol=lf
+*.zsh text eol=lf
+*.ksh text eol=lf
+.bashrc text eol=lf
 *.mk text eol=lf
 *.dockerfile text eol=lf
 Dockerfile text eol=lf

@@ -8,6 +8,128 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+## [0.3.0] - 2026-10-24
+
+Risk-scaled review comes to githints: it says how deep a review a staged change
+needs, from what the change touches rather than how big it is, and keeps a
+signed, one-time receipt of the review. The MCP tools and CLI commands are
+consolidated, the optional Ollama integration is gone (githints opens no network
+connections), the pre-commit hook scans what a commit adds for credentials, the
+Merkle anchors can be pushed, and the index understands shell, Helm, Ansible
+and Terragrunt.
+
+### Upgrade notes
+
+- Run `githints index` once so existing YAML and Terraform files gain the new
+  Ansible and Terragrunt links, and shell scripts are indexed.
+- **MCP tools and CLI commands were consolidated; the old names keep working for
+  one release.** `query_changes(file, query, since, until)` replaces
+  `get_file_history`, `get_recent_changes`, `search_changes` and
+  `get_changes_in_range`, and its arguments combine (a search within one file's
+  history, after a date). `record_change(changes=[...])` replaces
+  `record_batch`, `find_symbol(file=...)` replaces `list_symbols`, and
+  `get_dependents()` with no file replaces `get_index_summary`. On the command
+  line, `githints log` replaces `history`, `recent`, `search` and `changes`;
+  `doctor` replaces `status` (and now counts the log); `salt rotate` replaces
+  `rotate-salt`; `uninstall -keep-data` replaces `remove`; `setup -print
+  -clients=NAME` replaces `mcp-config`. Run `githints init` to refresh the
+  managed block in `AGENTS.md`, and restart MCP servers. The tool list an agent
+  reads every session is about 10% smaller now and 25% smaller once the old
+  names go.
+- **The optional Ollama summarization is removed.** The `summarize` argument of
+  `get_diff` and `get_recent_changes` is ignored, the `ollama` block of
+  `config.json` is ignored (a file that still has one loads as before), and the
+  `GITHINTS_OLLAMA_*` variables do nothing. githints opens no network
+  connections. Diffs are still redacted on every path.
+
+### Added
+
+- **Risk-scaled review.** `githints review` and the `review_status` MCP tool
+  say how deep a review the staged change (or the paths given) needs — low
+  (none), medium (one lens) or high (risk, resilience, readability and
+  reliability) — and why. The level comes from what changed, not how much: the
+  path's class (docs and tests; code; security, CI, infrastructure, migrations,
+  hooks, dependency manifests), the framework facets in it, how many files
+  import it (15 or more is high), and whether a recent change to it failed or
+  was reverted. Files that usually change with these but are not staged are
+  listed to read first. `review.rules` in `config.json` can mark more paths as
+  a class; it cannot lower a level. githints never runs the review or calls a
+  model.
+- **Review receipts.** `record_review` and `githints review record` sign a
+  receipt (approved, escalated or inconclusive, with findings and the lenses
+  covered) for exactly the staged tree into the change log. The commit of that
+  tree uses it up and its Merkle anchor covers it; a used receipt never applies
+  again, and `verify` checks each one against its commit. `review.gate` set to
+  `warn` or `block` makes the pre-commit hook warn about, or stop, a high-risk
+  commit without an approval that covers its level; `GITHINTS_REVIEW=0` turns
+  review off. The brief lists receipts not yet used. Export packs carry the
+  three new columns and a `reviews` view.
+
+- **`githints anchors push|fetch [REMOTE]`** carries the Merkle anchors in
+  `refs/notes/githints` to and from a configured remote (default `origin`),
+  never forcing. Until they are pushed they protect history only on the
+  machine that wrote them; `githints doctor` now warns about that, without
+  contacting the remote.
+
+- **The pre-commit hook looks for credentials in what a commit adds.** Each
+  added line is checked against the credential shapes `record_change` refuses,
+  after removing invisible characters that could split a key; the hook names
+  the file and line, never the value. It warns by default;
+  `GITHINTS_SECRET_BLOCK=1` stops the commit.
+
+- **Why is this line here?** `query_changes(file, line)` and `githints log
+  -file=F -line=N` name the commit that last changed the line (following
+  renames), what was recorded for the file in it with its outcome, and the
+  review receipt that commit used; a line changed in the working tree shows
+  what is recorded for it so far.
+
+- **Infrastructure in the index.** A `shell` language (`.sh`, `.bash`, `.zsh`,
+  `.ksh`, `.bashrc`/`.zshrc`/`.envrc`...): functions and capitalised globals
+  are symbols, and `source`/`.` of a relative path, or one built from `dirname
+  "$0"` or `BASH_SOURCE`, links to the sourced file. Helm and Ansible detectors
+  report `infra` facets for charts (`Chart.yaml`), templated objects in a
+  chart's `templates/`, and Ansible plays and roles; `import_playbook`,
+  `import_tasks` and `include_tasks` link the files they name. Terraform reads
+  `terragrunt.hcl` and links its `source` and dependency `config_path`. These
+  facets feed risk scoring, so a change to a chart or playbook is high risk.
+
+### Changed
+
+- The search query cap (500 bytes) is enforced inside the store's search
+  itself rather than by each caller.
+- `-limit` outside 1–500 is refused by every CLI command; `index facets`
+  clamped it silently and `changes` had no maximum.
+- `record_batch` and the post-commit hook look up the current branch once
+  instead of once per row.
+
+### Security
+
+- The review gate checks a receipt's signature before trusting it: an approval
+  written into `store.db` by hand is refused at commit time, not only reported
+  by `verify` afterwards.
+- The pre-commit hook printed staged file names to the terminal as they were;
+  a name with an escape sequence could rewrite the screen.
+- `get_dependents` and the index summary printed file and import paths from
+  the index without neutralizing control characters; they now go through the
+  same escaping as every other listing.
+
+### Fixed
+
+- `githints index` (and `index status`, `verify`, `facets`) created
+  `.githints/` in a repository where `githints init` never ran. They now refuse,
+  like every other command but `init`.
+- `githints rotate-salt` read the change log before the transaction that
+  re-signs it, so a change recorded in between (by a running MCP server) kept
+  the old key and failed `verify` afterwards. A refused rotation also no longer
+  leaves a staged `.salt.new` behind.
+- **Security:** language specs in `.githints/langs/` were read through the
+  directory without checking it: a clone committing `.githints/langs` as a link
+  loaded specs from wherever it pointed. The directory, and `.githints/`, must
+  now be plain directories.
+- The post-commit hook gave every file in a repository's first commit an empty
+  diff stat. It now reads the stats of the whole commit with one git process
+  instead of one per file.
+
 ## [0.2.4] - 2026-10-17
 
 The index now covers the common web, mobile and desktop stacks out of the box

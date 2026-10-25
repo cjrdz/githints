@@ -1,0 +1,43 @@
+{
+  // Helm charts. Chart.yaml names the chart. A template under the chart's
+  // templates/ directory is reported by the chart it belongs to (the
+  // directory above templates/, which is the chart's name by convention)
+  // with the object's kind as the detail, but only when the object's name is
+  // templated (name: {{ include "app.fullname" . }}): kubernetes.json reports
+  // an object whose name is written out, and skips a templated one, so each
+  // object is reported once. Only paths a chart uses open the gate; a
+  // templates/ directory elsewhere yields facets only when its manifests are
+  // written as Helm templates.
+  "framework": "helm",
+  "languages": [
+    "yaml"
+  ],
+  "path_globs": [
+    "Chart.yaml",
+    "templates/**/*.yaml",
+    "templates/**/*.yml"
+  ],
+  "rules": [
+    {
+      "facet": "infra",
+      "path_pattern": "(?:^|/)Chart\\.yaml$",
+      "requires": "name:",
+      "keep_strings": true,
+      "pattern": "^name:\\s*['\"]?(?P<name>[\\w.-]+)['\"]?\\s*$",
+      "detail": "chart"
+    },
+    {
+      // The value may be quoted ("{{ .Release.Name }}-web"), so the pattern
+      // reads the view that keeps strings; the kind: gate is still checked
+      // on code. An Ansible role's templates/ holds Jinja, whose {{ }} looks
+      // the same, and is left out.
+      "facet": "infra",
+      "path_exclude": "(?:^|/)roles/[^/]+/templates/",
+      "path_pattern": "(?:^|/)(?P<name>[\\w.-]+)/templates/(?:[^/]+/)*[^/]+\\.ya?ml$",
+      "requires": "kind:",
+      "keep_strings": true,
+      "lookahead": 8,
+      "pattern": "^kind:\\s*(?P<detail>[A-Z]\\w*)\\s*\\n(?:.*\\n)*?metadata:\\s*\\n(?:[ \\t]+.*\\n)*?[ \\t]+name:\\s*['\\\"]?[\\w.-]*\\{\\{"
+    }
+  ]
+}

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/safefs"
 	"github.com/cjrdz/githints/internal/store"
 	"github.com/cjrdz/githints/internal/textsafe"
@@ -118,7 +119,7 @@ func renderFileContent(changes []store.Change, srcPath string) []byte {
 			fmt.Fprintf(&b, " · branch: `%s`", codeSpan(c.Branch))
 		}
 		if c.CommitHash != "" {
-			fmt.Fprintf(&b, " · commit: `%s`", codeSpan(shortHash(c.CommitHash)))
+			fmt.Fprintf(&b, " · commit: `%s`", codeSpan(gitutil.ShortHash(c.CommitHash)))
 		} else {
 			fmt.Fprintf(&b, " · uncommitted")
 		}
@@ -207,14 +208,7 @@ func headingFor(c store.Change) string {
 	if c.CommitHash == "" {
 		return when + " · uncommitted"
 	}
-	return fmt.Sprintf("%s · `%s`", when, codeSpan(shortHash(c.CommitHash)))
-}
-
-func shortHash(h string) string {
-	if len(h) > 8 {
-		return h[:8]
-	}
-	return h
+	return fmt.Sprintf("%s · `%s`", when, codeSpan(gitutil.ShortHash(c.CommitHash)))
 }
 
 // VerifyRendered checks that every committed markdown file under .githints/

@@ -70,17 +70,51 @@ type Change struct {
 	TargetDiffHash string
 	OutcomeState   string
 
+	// A review receipt (KindReview) says a review of one exact staged tree
+	// reached Verdict. CandidateTree is the tree `git write-tree` gave for
+	// the index and BaseCommit the HEAD it was staged on. The post-commit hook
+	// stamps commit_hash on every receipt whose tree and base the commit
+	// matches, which uses it up: a receipt is never valid twice. Signed like
+	// the outcome fields, and omitted from the payload when empty.
+	CandidateTree string
+	BaseCommit    string
+	Verdict       string
+
 	// LatestOutcome is display-only: the newest outcome row recorded for this
 	// change, attached by the readers that list changes. It is never stored
 	// or signed.
 	LatestOutcome *Change
 }
 
+// MetaAnchorsPushed holds the anchors ref as `githints anchors push` last
+// sent it, so doctor can tell whether newer anchors are still only local
+// without asking the remote.
+const MetaAnchorsPushed = "anchors_pushed"
+
 // Row kinds.
 const (
 	KindChange  = "change"
 	KindOutcome = "outcome"
+	KindReview  = "review"
 )
+
+// Review verdicts. Only an approval lets a high-risk change through the
+// pre-commit gate; escalated means a person must decide, inconclusive that the
+// review did not finish.
+const (
+	VerdictApproved     = "approved"
+	VerdictEscalated    = "escalated"
+	VerdictInconclusive = "inconclusive"
+)
+
+// ValidVerdict reports whether s is a verdict a review receipt may carry.
+func ValidVerdict(s string) bool {
+	switch s {
+	case VerdictApproved, VerdictEscalated, VerdictInconclusive:
+		return true
+	}
+	return false
+}
 
 // Outcome states, in the order they are documented to agents.
 const (
@@ -102,7 +136,7 @@ func ValidOutcome(s string) bool {
 
 // changeColumns is the one column list every reader selects, in the order
 // scanChanges reads it. Queries alias the table as c.
-const changeColumns = `c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at, c.kind, c.target_id, c.target_diff_hash, c.outcome`
+const changeColumns = `c.id, c.file_path, COALESCE(c.commit_hash,''), COALESCE(c.branch,''), c.source, c.summary, COALESCE(c.reason,''), COALESCE(c.diff_stat,''), COALESCE(c.diff_hash,''), COALESCE(c.agent_id,''), c.recorded_at, COALESCE(c.hmac,''), COALESCE(c.prev_hmac,''), c.clock_tamper_warning, c.created_at, c.kind, c.target_id, c.target_diff_hash, c.outcome, c.candidate_tree, c.base_commit, c.verdict`
 
 const schema = `
 CREATE TABLE IF NOT EXISTS changes (
@@ -166,6 +200,9 @@ ALTER TABLE changes ADD COLUMN target_id INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE changes ADD COLUMN target_diff_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE changes ADD COLUMN outcome TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_changes_target ON changes(target_id);
+ALTER TABLE changes ADD COLUMN candidate_tree TEXT NOT NULL DEFAULT '';
+ALTER TABLE changes ADD COLUMN base_commit TEXT NOT NULL DEFAULT '';
+ALTER TABLE changes ADD COLUMN verdict TEXT NOT NULL DEFAULT '';
 `
 
 // pragma sets the connection-level options that make SQLite safe for the
@@ -398,17 +435,26 @@ func (s *Store) Insert(c Change) (int64, error) {
 		return 0, fmt.Errorf("update meta: %w", err)
 	}
 
-	res, err := s.db.Exec(
-		`INSERT INTO changes (file_path, commit_hash, branch, source, summary, reason, diff_stat, diff_hash, agent_id, recorded_at, hmac, prev_hmac, clock_tamper_warning, kind, target_id, target_diff_hash, outcome)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.FilePath, c.CommitHash, c.Branch, c.Source, c.Summary, c.Reason, c.DiffStat, c.DiffHash,
-		c.AgentID, c.RecordedAt, c.HMAC, c.PrevHMAC, boolToInt(c.ClockTamperWarning),
-		kindOrDefault(c.Kind), c.TargetID, c.TargetDiffHash, c.OutcomeState,
-	)
+	res, err := s.db.Exec(insertSQL, insertArgs(c)...)
 	if err != nil {
 		return 0, fmt.Errorf("insert change: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// insertSQL and insertArgs are the one INSERT both Insert and InsertTx run.
+// There were two copies, and a column added to one would have been silently
+// dropped by the other.
+const insertSQL = `INSERT INTO changes (file_path, commit_hash, branch, source, summary, reason, diff_stat, diff_hash, agent_id, recorded_at, hmac, prev_hmac, clock_tamper_warning, kind, target_id, target_diff_hash, outcome, candidate_tree, base_commit, verdict)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+func insertArgs(c Change) []any {
+	return []any{
+		c.FilePath, c.CommitHash, c.Branch, c.Source, c.Summary, c.Reason, c.DiffStat, c.DiffHash,
+		c.AgentID, c.RecordedAt, c.HMAC, c.PrevHMAC, boolToInt(c.ClockTamperWarning),
+		kindOrDefault(c.Kind), c.TargetID, c.TargetDiffHash, c.OutcomeState,
+		c.CandidateTree, c.BaseCommit, c.Verdict,
+	}
 }
 
 func kindOrDefault(k string) string {
@@ -435,58 +481,81 @@ const noDuplicateFallback = `c.kind = 'change' AND NOT (c.source = 'fallback' AN
 	  AND c2.kind = 'change'
 ))`
 
-func (s *Store) FileHistory(filePath string, limit int) ([]Change, error) {
+// Query selects recorded changes. Every field is optional and they combine:
+// File restricts to one path, Text is an FTS5 MATCH over summary and reason,
+// and Since/Until (Unix seconds, inclusive, 0 for unbounded) restrict
+// recorded_at. Rows come newest first, each with its latest outcome.
+type Query struct {
+	File         string
+	Commit       string // only rows a commit claimed
+	Text         string
+	Since, Until int64
+	Limit        int
+}
+
+// MaxSearchQueryLen bounds the FTS5 MATCH expression. The query is
+// parameterized (no injection), but FTS5 MATCH is a query language and
+// pathological expressions are a cheap CPU amplifier.
+const MaxSearchQueryLen = 500
+
+// QueryChanges runs q. The text cap is enforced here, so no caller can
+// forget it.
+func (s *Store) QueryChanges(q Query) ([]Change, error) {
+	if len(q.Text) > MaxSearchQueryLen {
+		return nil, fmt.Errorf("query too long: %d bytes (max %d)", len(q.Text), MaxSearchQueryLen)
+	}
+	from := `changes AS c`
+	where := []string{noDuplicateFallback}
+	var args []any
+	if q.Text != "" {
+		from = `changes_fts f JOIN changes c ON c.id = f.rowid`
+		where = append(where, `changes_fts MATCH ?`)
+		args = append(args, q.Text)
+	}
+	if q.File != "" {
+		where = append(where, `c.file_path = ?`)
+		args = append(args, q.File)
+	}
+	if q.Commit != "" {
+		where = append(where, `c.commit_hash = ?`)
+		args = append(args, q.Commit)
+	}
+	if q.Since != 0 {
+		where = append(where, `c.recorded_at >= ?`)
+		args = append(args, q.Since)
+	}
+	if q.Until != 0 {
+		where = append(where, `c.recorded_at <= ?`)
+		args = append(args, q.Until)
+	}
+	args = append(args, q.Limit)
 	return s.queryWithOutcomes(
-		`SELECT `+changeColumns+`
-		 FROM changes AS c
-		 WHERE c.file_path = ? AND `+noDuplicateFallback+`
-		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
-		filePath, limit,
+		`SELECT `+changeColumns+` FROM `+from+
+			` WHERE `+strings.Join(where, ` AND `)+
+			` ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
+		args...,
 	)
+}
+
+// FileHistory returns one file's changes, newest first.
+func (s *Store) FileHistory(filePath string, limit int) ([]Change, error) {
+	return s.QueryChanges(Query{File: filePath, Limit: limit})
 }
 
 // RecentChanges returns the most recent changes across the whole repo.
 func (s *Store) RecentChanges(limit int) ([]Change, error) {
-	return s.queryWithOutcomes(
-		`SELECT `+changeColumns+`
-		 FROM changes AS c
-		 WHERE `+noDuplicateFallback+`
-		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
-		limit,
-	)
+	return s.QueryChanges(Query{Limit: limit})
 }
 
 // Search runs an FTS5 query over summary + reason text.
 func (s *Store) Search(query string, limit int) ([]Change, error) {
-	return s.queryWithOutcomes(
-		`SELECT `+changeColumns+`
-		 FROM changes_fts f
-		 JOIN changes c ON c.id = f.rowid
-		 WHERE changes_fts MATCH ? AND `+noDuplicateFallback+`
-		 ORDER BY c.recorded_at DESC LIMIT ?`,
-		query, limit,
-	)
+	return s.QueryChanges(Query{Text: query, Limit: limit})
 }
 
 // ChangesInRange returns changes with recorded_at between since and until
 // (inclusive), optionally filtered to one file. Newest first.
 func (s *Store) ChangesInRange(since, until int64, filePath string, limit int) ([]Change, error) {
-	if filePath != "" {
-		return s.queryWithOutcomes(
-			`SELECT `+changeColumns+`
-		     FROM changes AS c
-		     WHERE c.file_path = ? AND c.recorded_at >= ? AND c.recorded_at <= ? AND `+noDuplicateFallback+`
-		     ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
-			filePath, since, until, limit,
-		)
-	}
-	return s.queryWithOutcomes(
-		`SELECT `+changeColumns+`
-		 FROM changes AS c
-		 WHERE c.recorded_at >= ? AND c.recorded_at <= ? AND `+noDuplicateFallback+`
-		 ORDER BY c.recorded_at DESC, c.id DESC LIMIT ?`,
-		since, until, limit,
-	)
+	return s.QueryChanges(Query{File: filePath, Since: since, Until: until, Limit: limit})
 }
 
 // ChangesForCommit returns all rows associated with one commit hash.
@@ -501,10 +570,20 @@ func (s *Store) ChangesForCommit(commitHash string) ([]Change, error) {
 // AllChanges returns every row ordered by id (the natural chain order).
 // Used for HMAC verification and Merkle-root computation.
 func (s *Store) AllChanges() ([]Change, error) {
-	return s.query(
-		`SELECT ` + changeColumns + `
-		 FROM changes AS c ORDER BY c.id ASC`,
-	)
+	return s.query(allChangesQuery)
+}
+
+const allChangesQuery = `SELECT ` + changeColumns + ` FROM changes AS c ORDER BY c.id ASC`
+
+// AllChangesTx is AllChanges inside a transaction, for a caller that rewrites
+// the rows it read and must not miss one inserted in between.
+func AllChangesTx(tx *sql.Tx) ([]Change, error) {
+	rows, err := tx.Query(allChangesQuery)
+	if err != nil {
+		return nil, fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+	return scanChanges(rows)
 }
 
 // HasPendingAgentRecord reports whether there is at least one agent-recorded
@@ -710,6 +789,7 @@ func scanChanges(rows *sql.Rows) ([]Change, error) {
 			&c.Summary, &c.Reason, &c.DiffStat, &c.DiffHash, &c.AgentID,
 			&c.RecordedAt, &c.HMAC, &c.PrevHMAC, &warning, &c.CreatedAt,
 			&c.Kind, &c.TargetID, &c.TargetDiffHash, &c.OutcomeState,
+			&c.CandidateTree, &c.BaseCommit, &c.Verdict,
 		); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
@@ -795,13 +875,7 @@ func (s *Store) WithTx(fn func(*sql.Tx) error) error {
 // cannot be rolled back with the transaction; callers should use Insert for
 // normal agent recordings and InsertTx only inside the post-commit hook.
 func InsertTx(tx *sql.Tx, c Change) (int64, error) {
-	res, err := tx.Exec(
-		`INSERT INTO changes (file_path, commit_hash, branch, source, summary, reason, diff_stat, diff_hash, agent_id, recorded_at, hmac, prev_hmac, clock_tamper_warning, kind, target_id, target_diff_hash, outcome)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		c.FilePath, c.CommitHash, c.Branch, c.Source, c.Summary, c.Reason, c.DiffStat, c.DiffHash,
-		c.AgentID, c.RecordedAt, c.HMAC, c.PrevHMAC, boolToInt(c.ClockTamperWarning),
-		kindOrDefault(c.Kind), c.TargetID, c.TargetDiffHash, c.OutcomeState,
-	)
+	res, err := tx.Exec(insertSQL, insertArgs(c)...)
 	if err != nil {
 		return 0, fmt.Errorf("insert change: %w", err)
 	}
@@ -809,6 +883,33 @@ func InsertTx(tx *sql.Tx, c Change) (int64, error) {
 		return 0, fmt.Errorf("update meta: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// Reviews returns review receipts, newest first: only the ones no commit has
+// used yet when pending is true.
+func (s *Store) Reviews(pending bool, limit int) ([]Change, error) {
+	q := `SELECT ` + changeColumns + ` FROM changes AS c WHERE c.kind = 'review'`
+	if pending {
+		q += ` AND c.commit_hash = ''`
+	}
+	return s.query(q+` ORDER BY c.id DESC LIMIT ?`, limit)
+}
+
+// ClaimReviewsTx stamps commitHash on every unused receipt for exactly the
+// tree and parent this commit has. That is what uses a receipt up: a stamped
+// receipt is never valid again, even if the same tree is staged on the same
+// base later (a revert of a revert). The stamp puts the receipt under the
+// commit's Merkle anchor.
+func ClaimReviewsTx(tx *sql.Tx, commitHash, tree, parent string) (int64, error) {
+	res, err := tx.Exec(
+		`UPDATE changes SET commit_hash = ?
+		 WHERE kind = 'review' AND commit_hash = '' AND candidate_tree = ? AND base_commit = ?`,
+		commitHash, tree, parent,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("claim reviews: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 func AgentRecordsForCommitTx(tx *sql.Tx, filePath, commitHash string) ([]Change, error) {
@@ -881,7 +982,8 @@ func LastHMACTx(tx *sql.Tx) (string, error) {
 // recorded change, ordered alphabetically. Used by the markdown integrity
 // verifier to know which per-file hint files should exist.
 func (s *Store) FilesWithHistory() ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT file_path FROM changes ORDER BY file_path`)
+	// A review receipt is about a whole change set and has no file.
+	rows, err := s.db.Query(`SELECT DISTINCT file_path FROM changes WHERE kind != 'review' ORDER BY file_path`)
 	if err != nil {
 		return nil, fmt.Errorf("query files: %w", err)
 	}
@@ -930,27 +1032,4 @@ func (s *Store) Count() (int, error) {
 		return 0, fmt.Errorf("count changes: %w", err)
 	}
 	return n, nil
-}
-
-// CoalesceFallbacks removes fallback rows that duplicate an agent-described
-// change for the same file and commit. It keeps fallback rows that have no
-// agent sibling, so the hook's "nobody described this" entries are preserved.
-// Order is preserved.
-func CoalesceFallbacks(rows []Change) []Change {
-	type key struct{ file, hash string }
-	hasAgent := make(map[key]bool, len(rows))
-	for _, r := range rows {
-		if r.Source == "agent" {
-			hasAgent[key{r.FilePath, r.CommitHash}] = true
-		}
-	}
-
-	out := make([]Change, 0, len(rows))
-	for _, r := range rows {
-		if r.Source == "fallback" && hasAgent[key{r.FilePath, r.CommitHash}] {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out
 }

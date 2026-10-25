@@ -30,6 +30,7 @@ func Setup(args []string) error {
 	chain := fset.Bool("chain", false, "passed to init: keep existing git hooks and run them first")
 	update := fset.Bool("update", false, "replace githints' existing entries (e.g. after putting githints on PATH); other servers are never touched")
 	list := fset.Bool("list", false, "list the supported clients and whether each is detected, then exit")
+	printOnly := fset.Bool("print", false, "print the entry for the one client named in -clients, write nothing")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
@@ -39,6 +40,13 @@ func Setup(args []string) error {
 	root, err := gitutil.RepoRoot()
 	if err != nil {
 		return fmt.Errorf("not inside a git repo: %w", err)
+	}
+
+	if *printOnly {
+		if *clients == "" || strings.Contains(*clients, ",") || *clients == "all" {
+			return fmt.Errorf("-print needs exactly one client: githints setup -print -clients=NAME")
+		}
+		return mcpcfg.MCPConfig([]string{*clients})
 	}
 
 	if *list {

@@ -13,7 +13,7 @@ below. In this repository it usually is not: githints runs as the binary built
 at the repository root, so use the CLI from the root:
 
     go build -o githints .        # after pulling or changing githints' code
-    ./githints status
+    ./githints brief
 
 Every MCP read tool has a CLI twin with the same limits; the table below pairs
 them.
@@ -26,18 +26,19 @@ Use them instead of the CLI twins.
 | Tool | When to call it |
 | --- | --- |
 | `get_session_context()` | **At the start of every session**, before reading files or editing. Ends with a brief: failed or reverted attempts, uncommitted work, recent commits, blast radius, co-changing files. |
-| `record_change(file, summary, reason)` | **Right after editing a file.** Summaries must be specific; reason is optional but valuable. |
-| `record_batch(changes=[...])` | When several files changed in one conceptual step. Atomic: all land or none. |
+| `record_change(file, summary, reason)` | **Right after editing a file.** Summaries must be specific; reason is optional but valuable. Pass `changes=[...]` instead for several files changed in one step: all land or none. |
 | `record_outcome(change_id, outcome, note)` | When you learn how an earlier change turned out: `worked`, `partial`, `failed`, `reverted`, `unknown`. Changes are listed with a `#id`; a note is required unless the outcome is worked or unknown. |
 | `record_note(title, body, tags, related_files)` | When you work something out that the change log cannot hold (a design choice, a plan, a hard bug). Notes are private to this machine and not integrity-checked. |
 | `search_notes(query, file, tag, name)` | Before re-deriving something that took effort. `name` reads one note in full. |
-| `get_file_history(file)` | Before editing a file you have not touched this session. |
-| `get_recent_changes(limit=20)` | To catch up on work done by another agent, teammate, or manual commit. |
+| `query_changes(file, query, since, until)` | The change log, newest first; arguments combine. No arguments: catch up on other agents, teammates and manual commits. `file`: before editing a file you have not touched this session. |
 | `get_diff(file, hash)` | When a recorded summary does not match what you see in the file. |
-| `search_changes(query)` | Full-text search over recorded summaries and reasons. |
-| `get_changes_in_range(since, until, file)` | Timeline forensics over a recorded_at range. |
-| `list_symbols(file)`, `find_symbol(name)`, `get_dependents(file)`, `get_dependency_graph(file, depth)` | Explore the structural index before changing unfamiliar code. |
-| `find_facets(facet)`, `get_index_summary(limit=10)` | Higher-level views of the codebase structure. |
+| `review_status(paths)`, `record_review(verdict, findings, lenses)` | Before committing: how deep a review the staged change needs, and a signed receipt of the review. |
+| `find_symbol(name)` or `find_symbol(file)`, `get_dependents(file)`, `get_dependency_graph(file, depth)` | Explore the structural index before changing unfamiliar code. `get_dependents()` with no file gives totals and hub files. |
+| `find_facets(facet)` | Routes, models, components and the rest, across frameworks. |
+
+The tools these replaced (`get_file_history`, `get_recent_changes`,
+`search_changes`, `get_changes_in_range`, `record_batch`, `list_symbols`,
+`get_index_summary`) still answer under their old names for one release.
 
 If no MCP server is registered in your client, use the CLI twins below.
 
@@ -45,16 +46,16 @@ If no MCP server is registered in your client, use the CLI twins below.
 
 | | MCP | CLI |
 | --- | --- | --- |
-| Orient yourself | `get_session_context()` | `./githints brief` (then `./githints status`) |
-| Recent work by others | `get_recent_changes(limit=20)` | `./githints recent` |
+| Orient yourself | `get_session_context()` | `./githints brief` (then `./githints doctor`) |
+| Recent work by others | `query_changes()` | `./githints log` |
 
 ## Rule: record every change after editing
 
     record_change(file="<repo-relative path>", summary="<what changed>", reason="<why>")
     ./githints record -file="<repo-relative path>" -summary="<what changed>" -reason="<why>"
 
-Use `record_batch(changes=[...])` for several files changed in one conceptual
-step; it is atomic, so if it fails nothing was recorded.
+Pass `changes=[...]` to `record_change` for several files changed in one
+conceptual step; it is atomic, so if it fails nothing was recorded.
 
 When you find out how a change turned out, record that too, so the next agent
 does not repeat an approach that failed:
@@ -67,6 +68,23 @@ Outcomes are appended, never edited; record a new one if the result changes.
 `summary` must be specific: "Replaced the linear scan in FindUser with a map
 lookup", not "Updated function". `reason` is optional but is the part future
 readers need most.
+
+## Rule: review a high-risk change before it is committed
+
+Stage the change, then ask how deep a review it needs:
+
+    review_status()                       ./githints review
+
+Low needs nothing. Medium: review it by one lens. High: by all four (risk,
+resilience, readability, reliability). Then record the result for exactly what
+is staged:
+
+    record_review(verdict="approved", lenses=["risk","resilience","readability","reliability"], findings="...")
+    ./githints review record -verdict=approved -lenses=risk,resilience,readability,reliability -findings="..."
+
+Use `escalated` when a person must decide, with findings that say why. An
+approval never commits: the person commits. Changing what is staged after the
+review leaves the receipt behind; review again.
 
 ## Rule: leave notes for what a change log cannot hold
 
@@ -83,15 +101,16 @@ is refused, and `./githints note list` reports files it left out and why.
 
 | Question | MCP | CLI |
 | --- | --- | --- |
-| Why is this file shaped this way? | `get_file_history(file)` | `./githints history -file=F` |
-| What is defined here? | `list_symbols(file)` | `.githints/index/<file>.md` |
+| Why is this file shaped this way? | `query_changes(file)` | `./githints log -file=F` |
+| Why is this line here? | `query_changes(file, line)` | `./githints log -file=F -line=N` |
+| What is defined here? | `find_symbol(file)` | `.githints/index/<file>.md` |
 | What breaks if I change it? | `get_dependents(file)` | the note's "Imported by" |
 | Where is X defined? | `find_symbol(name)` | `.githints/index/` notes |
 | Its neighbourhood | `get_dependency_graph(file, depth=1)` | `./githints index graph -focus=F -format=mermaid` |
-| Totals and hub files | `get_index_summary(limit=10)` | `.githints/INDEX.md` |
+| Totals and hub files | `get_dependents()` | `.githints/INDEX.md` |
 | Routes, models, components... | `find_facets(facet="route")` | `./githints index facets -facet=route` |
-| Where did we change X? | `search_changes(query)` | `./githints search -query=Q` |
-| What changed in a period? | `get_changes_in_range(since, until)` | `./githints changes -since=T -until=T` |
+| Where did we change X? | `query_changes(query)` | `./githints log -query=Q` |
+| What changed in a period? | `query_changes(since, until)` | `./githints log -since=T -until=T` |
 
 Ask the index before reading files to find something: one `find_facets` or
 `find_symbol` call costs far fewer tokens than searching file contents.
@@ -132,8 +151,8 @@ Exceeding a limit is an error, never a silent truncation:
   50 related changes, 100 wikilinks; at most 500 notes. Names are lowercase
   letters, digits and hyphens. `search_notes` query: 500 bytes, 20 words.
 - `agent_id`: 128 bytes. `file`: repo-relative, no `..`, no control characters.
-- `record_batch`: at most 100 changes. `search_changes` query: 500 characters
-  (an FTS5 `MATCH` expression). Every `limit`: 1 to 500.
+- `record_change` with `changes=[...]`: at most 100 changes. `query_changes`
+  query: 500 characters (an FTS5 `MATCH` expression). Every `limit`: 1 to 500.
 
 ## Do not
 

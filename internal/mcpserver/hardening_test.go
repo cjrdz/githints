@@ -74,13 +74,12 @@ func gitRepoWithSecret(t *testing.T) string {
 	return dir
 }
 
-// ScrubDiff used to run only inside SummarizeDiff, so the default get_diff
-// path — and the only path when Ollama is disabled, which is also the default
-// — returned credential files verbatim to the model.
+// ScrubDiff used to run only inside an optional summarize path, so the
+// default get_diff path returned credential files verbatim to the model.
 func TestHandleGetDiffScrubsSecrets(t *testing.T) {
 	gitRepoWithSecret(t)
 
-	resp, err := handleGetDiff(nil)(context.Background(), reqWith(map[string]any{"file": ".env"}))
+	resp, err := handleGetDiff()(context.Background(), reqWith(map[string]any{"file": ".env"}))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -93,31 +92,6 @@ func TestHandleGetDiffScrubsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(body, "REDACTED") {
 		t.Errorf("expected a redaction marker in the diff:\n%s", body)
-	}
-}
-
-func TestTruncateDiff(t *testing.T) {
-	short := "diff --git a/a b/a\n+one line\n"
-	if got := TruncateDiff(short); got != short {
-		t.Errorf("short diff was altered: %q", got)
-	}
-
-	long := strings.Repeat("+padding line to make this long\n", maxDiffResultBytes/8)
-	got := TruncateDiff(long)
-	if len(got) >= len(long) {
-		t.Fatalf("long diff not truncated: %d >= %d", len(got), len(long))
-	}
-	if !strings.Contains(got, "[truncated:") {
-		t.Error("expected a truncation marker")
-	}
-	// The kept portion must be a prefix of the original that ends on a line
-	// boundary, not mid-line.
-	body := got[:strings.Index(got, "\n[truncated:")]
-	if !strings.HasPrefix(long, body) {
-		t.Error("retained text is not a prefix of the original diff")
-	}
-	if long[len(body)] != '\n' {
-		t.Errorf("truncation cut mid-line: next byte is %q", long[len(body)])
 	}
 }
 
@@ -134,7 +108,7 @@ func TestHandleRecordBatchRejectsOversizedBatch(t *testing.T) {
 		changes[i] = map[string]any{"file": fmt.Sprintf("f%d.go", i), "summary": "x"}
 	}
 
-	resp, err := handleRecordBatch(dir, st)(context.Background(), reqWith(map[string]any{"changes": changes}))
+	resp, err := handleRecordChange(dir, st)(context.Background(), reqWith(map[string]any{"changes": changes}))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -164,7 +138,7 @@ func TestHandleRecordBatchIsAtomic(t *testing.T) {
 	}
 	defer st.Close()
 
-	resp, err := handleRecordBatch(dir, st)(context.Background(), reqWith(map[string]any{
+	resp, err := handleRecordChange(dir, st)(context.Background(), reqWith(map[string]any{
 		"changes": []any{
 			map[string]any{"file": "good.go", "summary": "fine"},
 			map[string]any{"file": "../escape.go", "summary": "bad"},
@@ -194,7 +168,7 @@ func TestHandleSearchRejectsOversizedQuery(t *testing.T) {
 	}
 	defer st.Close()
 
-	resp, err := handleSearch(st)(context.Background(),
+	resp, err := handleQueryChanges(st)(context.Background(),
 		reqWith(map[string]any{"query": strings.Repeat("a", maxSearchQueryLen+1)}))
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -228,7 +202,7 @@ func TestFormatChangesMarksOutputAsData(t *testing.T) {
 // The instructions string is the only guidance some clients ever surface, so
 // it must name the tools an agent is expected to call.
 func TestInstructionsNameTheCoreTools(t *testing.T) {
-	for _, want := range []string{"get_session_context", "record_change", "record_batch", "get_file_history", "get_diff"} {
+	for _, want := range []string{"get_session_context", "record_change", "query_changes", "get_diff", "record_outcome"} {
 		if !strings.Contains(instructions, want) {
 			t.Errorf("instructions do not mention %s", want)
 		}

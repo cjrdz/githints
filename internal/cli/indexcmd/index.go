@@ -45,29 +45,14 @@ func Run(args []string) error {
 	}
 	// flag.Parse stops at the first non-flag argument and leaves it in Args(),
 	// so without this a mistyped subcommand ("index langauges") silently falls
-	// through to a full rebuild — which clears the index and VACUUMs the file.
+	// through to a full rebuild — which clears and rebuilds the index.
 	if rest := fs.Args(); len(rest) > 0 {
 		return fmt.Errorf("unknown index subcommand: %s", rest[0])
 	}
 
-	root, err := gitutil.RepoRoot()
-	if err != nil {
+	root, cfg, db, err := openIndex()
+	if err != nil || db == nil {
 		return err
-	}
-
-	cfg, err := config.Load(root)
-	if err != nil {
-		return err
-	}
-	if !cfg.Index.Enabled {
-		fmt.Println("indexing is disabled in .githints/config.json")
-		return nil
-	}
-
-	dbPath := lang.IndexDBPath(root)
-	db, err := index.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("open index db: %w", err)
 	}
 	defer db.Close()
 
@@ -182,23 +167,13 @@ func Facets(args []string) error {
 	if rest := fs.Args(); len(rest) > 0 {
 		return fmt.Errorf("unknown argument: %s", rest[0])
 	}
-
-	root, err := gitutil.RepoRoot()
-	if err != nil {
+	if err := core.CheckLimit(*limit); err != nil {
 		return err
 	}
-	cfg, err := config.Load(root)
-	if err != nil {
-		return err
-	}
-	if !cfg.Index.Enabled {
-		fmt.Println("indexing is disabled in .githints/config.json")
-		return nil
-	}
 
-	db, err := index.Open(lang.IndexDBPath(root))
-	if err != nil {
-		return fmt.Errorf("open index db: %w", err)
+	_, _, db, err := openIndex()
+	if err != nil || db == nil {
+		return err
 	}
 	defer db.Close()
 
@@ -206,7 +181,7 @@ func Facets(args []string) error {
 		Facet:     *facet,
 		Framework: *framework,
 		File:      *file,
-		Limit:     clampCLILimit(*limit),
+		Limit:     *limit,
 	})
 	if err != nil {
 		return err
@@ -233,16 +208,28 @@ func Facets(args []string) error {
 	return nil
 }
 
-// clampCLILimit keeps a CLI limit in the same range the MCP tools enforce, so
-// the two surfaces cannot disagree about what is allowed.
-func clampCLILimit(n int) int {
-	if n < 1 {
-		return 1
+// openIndex opens the index of an initialized repository. A nil store with a
+// nil error means indexing is disabled, which has already been reported.
+// index.Open creates .githints/ when it is missing, so the init check comes
+// first: only init may create it.
+func openIndex() (root string, cfg config.Config, db *index.Store, err error) {
+	root, err = core.InitializedRoot()
+	if err != nil {
+		return "", cfg, nil, err
 	}
-	if n > 500 {
-		return 500
+	cfg, err = config.Load(root)
+	if err != nil {
+		return "", cfg, nil, err
 	}
-	return n
+	if !cfg.Index.Enabled {
+		fmt.Println("indexing is disabled in .githints/config.json")
+		return root, cfg, nil, nil
+	}
+	db, err = index.Open(lang.IndexDBPath(root))
+	if err != nil {
+		return "", cfg, nil, fmt.Errorf("open index db: %w", err)
+	}
+	return root, cfg, db, nil
 }
 
 // Status prints a quick dashboard of the structural index.
@@ -251,24 +238,9 @@ func Status(args []string) error {
 		return fmt.Errorf("unknown index subcommand: %s", args[0])
 	}
 
-	root, err := gitutil.RepoRoot()
-	if err != nil {
+	root, _, db, err := openIndex()
+	if err != nil || db == nil {
 		return err
-	}
-
-	cfg, err := config.Load(root)
-	if err != nil {
-		return err
-	}
-	if !cfg.Index.Enabled {
-		fmt.Println("indexing is disabled in .githints/config.json")
-		return nil
-	}
-
-	dbPath := lang.IndexDBPath(root)
-	db, err := index.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("open index db: %w", err)
 	}
 	defer db.Close()
 
@@ -290,7 +262,7 @@ func Status(args []string) error {
 		return err
 	}
 
-	fmt.Printf("index db: %s\n", dbPath)
+	fmt.Printf("index db: %s\n", lang.IndexDBPath(root))
 	if dbSize := db.Size(); dbSize >= 0 {
 		fmt.Printf("index db size: %d bytes\n", dbSize)
 	}
@@ -332,23 +304,9 @@ func Verify(args []string) error {
 		return fmt.Errorf("unknown index subcommand: %s", args[0])
 	}
 
-	root, err := gitutil.RepoRoot()
-	if err != nil {
+	root, cfg, db, err := openIndex()
+	if err != nil || db == nil {
 		return err
-	}
-
-	cfg, err := config.Load(root)
-	if err != nil {
-		return err
-	}
-	if !cfg.Index.Enabled {
-		fmt.Println("indexing is disabled in .githints/config.json")
-		return nil
-	}
-
-	db, err := index.Open(lang.IndexDBPath(root))
-	if err != nil {
-		return fmt.Errorf("open index db: %w", err)
 	}
 	defer db.Close()
 

@@ -28,7 +28,7 @@ pattern never matches inside a comment or a string.
 Imports become edges in the dependency graph when the target resolves to a file
 in the repository. Each language decides how one of its files is named by the
 files that import it (its **import path**); see
-[How imports are resolved](usage.md#how-imports-are-resolved) for what the
+[How imports are resolved](index.md#how-imports-are-resolved) for what the
 shipped languages do.
 
 | Piece | Where |
@@ -77,9 +77,9 @@ binary and validated when it loads. A minimal example:
 | `depth_style` | How nesting is read: `brace` (C family), `indent` (Python family) or `none`. Declarations inside a function body are skipped. A body whose brace is on a line below the header (Allman style, or after a C++ initializer list) is found too. |
 | `comments.line` | Line-comment openers, e.g. `["//", "#"]`. |
 | `comments.block` | Block-comment pairs, e.g. `[["/*", "*/"]]`. |
-| `filenames` | Base names, or base-name globs, the language takes whatever their extension: `Dockerfile`, `Dockerfile.*`, `Makefile`. A spec needs `extensions` or `filenames`. |
+| `filenames` | Base names, or base-name globs, the language takes whatever their extension: `Dockerfile`, `Dockerfile.*`, `Makefile`, `.bashrc`, `terragrunt.hcl`. A spec needs `extensions` or `filenames`. |
 | `exclude_filenames` | Base-name globs not taken even with one of the language's extensions: `pnpm-lock.yaml`. |
-| `graph` | `linked` makes the language's files dependency-graph nodes only when an import links them (YAML, Dockerfile, Makefile). |
+| `graph` | `linked` makes the language's files dependency-graph nodes only when an import links them (YAML, Dockerfile, Makefile, shell). |
 | `comments.not_line` | Sequences that start like a line comment but are code, e.g. PHP's `["#["]` for attributes while `#` stays a comment. Each must extend a `line` entry. |
 | `strings` | String rules: `open`, `close`, `escape` (one byte or empty), `multiline`, `continue_on_escape`, and `interp_open` / `interp_close` for interpolation that should be read as code. |
 | `regex_literals` | Treat `/.../` as a literal to blank (JavaScript-style). |
@@ -111,7 +111,7 @@ resolved against the importing file during a scan.
    importing it (`TestPythonImportPathRoundTrip` is the pattern).
 4. A line in `.gitattributes` for the extension, so CRLF checkouts on Windows do
    not skew line numbers.
-5. The language table in [docs/usage.md](usage.md#languages).
+5. The language table in [docs/usage.md](index.md#languages).
 
 No Go code and no registry edit is needed; the registry loads every embedded
 spec.
@@ -236,7 +236,7 @@ Facets are deduplicated within a file on facet, framework, name and detail.
    `GITHINTS_UPDATE_PACKS=1 go test ./internal/index -run TestPackSamples`
    writes `expected.json` from the current output; read every line of the diff
    before committing it.
-3. The detector list in [docs/usage.md](usage.md#framework-facets).
+3. The detector list in [docs/usage.md](index.md#framework-facets).
 
 ## Repository-supplied languages
 
@@ -356,6 +356,24 @@ makes "every HTTP route in this repository" answerable without knowing the stack
 - **PHP heredocs and docblock annotations are not read.** A heredoc body is
   treated as code, and `@Route` in a docblock is a comment; Symfony's
   attributes are what is detected.
+- **Shell is read line by line.** A string rule cannot express a
+  here-document, whose terminator is chosen per use, so its body is read as
+  code (a `name() {` line inside one would be a symbol). Strings end at the
+  end of a line, so an apostrophe in a here-document cannot hide the rest of
+  the file. A comment begins at any `#`, so `$#` and `foo#bar` end the line
+  for the matcher; `${...}` is a literal, so `${#items[@]}` does not. A
+  script without an extension (`bin/deploy`) is not recognised: a file name
+  cannot show its shebang.
+- **A file that records nothing is not a graph node.** An Ansible task file is
+  a bare list, with no top-level key to be a symbol; one inside a role is a
+  role facet and so is linked, one elsewhere is not. A shell script that only
+  runs commands is linked only through what it sources.
+- **Helm templates are partly YAML.** An object in a chart's `templates/`
+  whose name is a template (`{{ include "app.fullname" . }}`) is reported by
+  the `helm` detector under its chart, and one with a written-out name by
+  `kubernetes`, so each object is reported once; an object whose `kind` is
+  itself templated is not reported. A `templates/` directory of an Ansible
+  role holds Jinja, which looks the same, and is excluded.
 - **Name-based matching.** An import names a module, not a project, so two
   projects in one repository exporting the same module name share it.
 - **Everything under `.githints/index/` is regenerated** and stale notes are

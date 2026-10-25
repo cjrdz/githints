@@ -62,7 +62,7 @@ func TestSessionContextOnFreshSession(t *testing.T) {
 		"recorded changes in store: 1",
 		"githints tools used this session: none yet",
 		"Suggested next steps:",
-		"get_recent_changes",
+		"query_changes",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("context missing %q:\n%s", want, text)
@@ -75,18 +75,18 @@ func TestSessionContextReflectsCalledTools(t *testing.T) {
 	seedChange(t, st)
 
 	session := NewSessionTracker(st)
-	session.MarkToolCalled("get_recent_changes")
+	session.MarkToolCalled("query_changes")
 
 	text := contextText(t, st, session)
-	if !strings.Contains(text, "githints tools used this session: get_recent_changes") {
+	if !strings.Contains(text, "githints tools used this session: query_changes") {
 		t.Errorf("context does not report the called tool:\n%s", text)
 	}
 	// A tool that has already run must not be suggested again.
 	suggestions := text[strings.Index(text, "Suggested next steps:"):]
-	if strings.Contains(suggestions, "get_recent_changes") {
+	if strings.Contains(suggestions, "query_changes") {
 		t.Errorf("already-called tool was suggested again:\n%s", suggestions)
 	}
-	if !strings.Contains(suggestions, "get_file_history") {
+	if !strings.Contains(suggestions, "get_diff") {
 		t.Errorf("expected the next un-called tool to be suggested:\n%s", suggestions)
 	}
 }

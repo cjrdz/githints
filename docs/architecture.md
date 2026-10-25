@@ -16,7 +16,7 @@ how it works.
 
 Two writers feed the same store:
 
-- **Agent-driven** — the `record_change`/`record_batch` MCP tools or the
+- **Agent-driven** — the `record_change` MCP tool or the
   `githints record` CLI command.
 - **Hook-driven fallback** — the `post-commit` hook runs after each commit to
   claim pending agent rows and to add fallback entries for files the agent did
@@ -52,6 +52,7 @@ Each row is one recorded change.
 | `kind` | `"change"` (default) or `"outcome"`. An outcome row is a later statement about a change, in the same table so it shares the chain. |
 | `target_id` / `target_diff_hash` | For an outcome: the id of the change it is about and that change's `diff_hash` when the outcome was recorded. `0` / empty for changes. |
 | `outcome` | For an outcome: `worked`, `partial`, `failed`, `reverted` or `unknown`. Empty for changes. |
+| `candidate_tree` / `base_commit` / `verdict` | For a review receipt (`kind = "review"`): the tree `git write-tree` gave for the index, the HEAD it was staged on, and `approved`, `escalated` or `inconclusive`. Empty otherwise. |
 
 Indexes exist on `file_path`, `commit_hash`, `branch`, `recorded_at` and
 `target_id`.
@@ -67,10 +68,33 @@ The four outcome fields are part of the signed payload but are `omitempty`, and
 marshals to the same bytes and keeps its HMAC and its anchored roots. Outcomes
 are append-only; the newest outcome per change is what readers attach.
 
+A review receipt is the third kind, with the same arrangement: its three fields
+are signed and `omitempty`, after the outcome ones. It has no file. Its summary
+is a fixed form, `<verdict>; risk <level>; lenses <list>`, with the level
+githints computed (the reviewer never supplies one) and the lenses the reviewer
+claimed; its reason holds the findings. The post-commit hook stamps
+`commit_hash` on every unused receipt whose tree and base equal the new
+commit's tree and parent (`ClaimReviewsTx`), before the anchor is written, so
+the anchor covers it. A stamped receipt is never valid again, which is what
+makes it one-time even when the same tree is staged on the same base later.
+`verify` reads the tree and parent of every receipt's commit with one `git
+cat-file --batch` and reports a receipt whose commit is not the change it
+reviewed.
+
+The gate and `review_status` recompute a receipt's HMAC with the repository
+key before believing it, so an approval written into the database by hand is
+refused at commit time rather than reported by `verify` afterwards.
+
+Threat model: a receipt is as strong as the HMAC key, like every row. It is
+evidence that a review was recorded for that tree, by whoever held the key, not
+proof that the review was thorough. Whether review applies is the user's choice
+(`GITHINTS_REVIEW=0`); a repository can turn the gate on and add classes to
+paths, never lower a level.
+
 ### `changes_fts`
 
 A virtual FTS5 table over `summary` and `reason`. It is kept in sync by an
-`AFTER INSERT` trigger, so `search_changes` is always current.
+`AFTER INSERT` trigger, so a `query_changes` search is always current.
 
 ### Notes tables (in `index.db`)
 
@@ -93,8 +117,8 @@ Small key/value table for durable metadata:
 
 ### Agent path
 
-`record_change` and `record_batch` accept a repo-relative file path, summary,
-and optional reason. Before insertion the recorder:
+`record_change` accepts a repo-relative file path, summary and optional
+reason, or `changes=[...]` of them, recorded in one transaction. Before insertion the recorder:
 
 1. Validates the path: repo-relative, local (`filepath.IsLocal`), and free of
    control or invisible formatting characters.
@@ -123,7 +147,7 @@ After a commit, `githints hook-run` (the `post-commit` hook):
    - Loads the agent rows already recorded for that file/hash.
    - If the agent already described the file for this commit, no fallback is
      written.
-   - Otherwise, writes a generic fallback row. The hook never calls Ollama.
+   - Otherwise, writes a generic fallback row.
 4. Looks for reverts (see [Revert detection](#revert-detection)).
 5. Re-renders markdown for any touched file.
 6. Writes a Merkle anchor for this commit as a `refs/notes/githints` git
@@ -146,11 +170,15 @@ and any failure is printed and skipped: detection never fails the hook.
 
 ### Pre-commit gate
 
-`githints hook-precommit` lists staged files and checks that each has a pending
-agent row. If not, it prints a warning. Setting `GITHINTS_PRECOMMIT_BLOCK=1`
+`githints hook-precommit` first scans the lines the staged diff adds for
+credential shapes (`secrets.ScanDiff`, the same list the recorder refuses),
+reporting file and line only; `GITHINTS_SECRET_BLOCK=1` makes a finding block.
+It then lists staged files and checks that each has a pending agent row. If not, it prints a warning. Setting `GITHINTS_PRECOMMIT_BLOCK=1`
 makes the hook return a non-zero exit code and abort the commit. That is the
-only outcome that can fail a commit: any internal error (a locked store, a bad
-config) is printed and the commit proceeds.
+only outcome that can fail a commit besides the review gate: with
+`review.gate` set to `block`, a high-risk staged change (see `internal/risk`)
+with no approved receipt for its exact tree also aborts it. Any internal error
+(a locked store, a bad config) is printed and the commit proceeds.
 
 ### Hook installation
 
@@ -187,26 +215,14 @@ the repository. A source path whose hint would overwrite githints' own output
 (`CHANGES`, `INDEX`, `index/`, `notes/`, and `.obsidian/`, where releases
 before the graph viewer wrote vault settings) is skipped with a warning.
 
-## Local Ollama integration
+## Diff redaction
 
-The optional `internal/llm` package provides a stdlib-only Ollama client for
-`/api/generate`. It is created only when `ollama.enabled` is true; otherwise
-`NewClient` returns `nil` and no HTTP client is allocated. The post-commit hook
-does not use it.
-
-Before any content leaves the process, `ScrubDiff` redacts lines from files
-matching common secret patterns (`.env`, `*.pem`, `id_rsa*`, etc.) and lines
-containing high-signal credential shapes. The scrubbed diff is then truncated
-to `max_diff_bytes` before the JSON payload is built.
-
-The client enforces a strict per-request timeout and an in-memory circuit
-breaker: after three consecutive failures or timeouts it stops calling Ollama
-for the rest of the process lifetime. Model output is sanitized (one line, no
-control characters, no shell metacharacters, bounded length) before it is
-returned. On any failure the caller returns the unsummarized result.
-
-The MCP server exposes the integration through optional `summarize` flags on
-`get_diff` and `get_recent_changes`.
+`get_diff` and `githints diff` hand back a diff through one function,
+`secrets.DisplayDiff`: `ScrubDiff` first redacts every content line of files
+matching common secret names (`.env`, `*.pem`, `id_rsa*`, etc.) and any line
+containing a high-signal credential shape, then the result is truncated at
+`MaxDiffResultBytes` with a marker. Headers are kept so the reader still sees
+which files changed. No githints package imports `net`.
 
 ## Untrusted input
 
@@ -239,8 +255,7 @@ A repository is attacker-controlled input: a clone can ship symlinks, a
   a repository's `.gitattributes` cannot make githints run a diff driver. Every
   git call has a timeout and a capped buffer, and every commit-ish is checked
   with `IsValidCommitish` before it reaches argv.
-- **Repository config is bounded.** `config.json` limits have ceilings, and a
-  repository that enables Ollama is announced on stderr.
+- **Repository config is bounded.** `config.json` limits have ceilings.
 
 ## Notes
 
@@ -403,8 +418,10 @@ rather than that every row was tampered with.
   locates the salt file, because that user can read the salt and recompute valid
   HMACs. For that actor the external check is the Merkle anchor stored as a
   `refs/notes/githints` git note, which `githints verify` compares against the
-  log. Git does not push notes by default; push `refs/notes/githints` if the
-  anchor should survive the machine.
+  log. Git does not push notes by default; `githints anchors push` sends
+  `refs/notes/githints` to a configured remote (never forced) if the anchor
+  should survive the machine, and `doctor` warns, without contacting the
+  remote, while the newest anchors have not been pushed.
 
 ### HMAC chain
 
@@ -479,7 +496,7 @@ The second is why pushing `refs/notes/githints` matters.
 
 ### Salt rotation
 
-`githints rotate-salt` generates a new salt, re-signs every existing row with
+`githints salt rotate` generates a new salt, re-signs every existing row with
 the new key, and replaces the old salt. The existing chain is verified first
 unless `-force` is passed.
 
@@ -493,30 +510,29 @@ Tools:
   much history exists, which tools have been used this session, and suggested
   next steps, then the brief (see [The session brief](usage.md#the-session-brief)).
   Intended as the first call of a session.
-- `record_change` — record one file change.
-- `record_batch` — record several file changes in one call.
+- `record_change` — record one file change, or `changes=[...]` atomically.
 - `record_outcome` — record how an earlier change turned out, by its `#id`.
 - `record_note` — write a markdown note (not integrity-checked).
 - `search_notes` — find notes by words, file or tag, or read one by `name`.
-- `get_file_history` — history for one file.
-- `get_recent_changes` — recent repo-wide changes; optional `summarize` flag.
-- `search_changes` — FTS search over summaries and reasons.
-- `get_diff` — unified diff for a file (committed or working tree); optional
-  `summarize` flag.
-- `get_changes_in_range` — timeline query by `recorded_at`.
-- `list_symbols` — symbols defined in a source file, including line ranges and
-  signatures; includes `last_indexed_at` so the agent can assess freshness.
-- `find_symbol` — exact and prefix symbol search across the repo.
-- `get_dependents` — reverse import lookup: which files import a given one.
+- `query_changes` — the change log through one `store.QueryChanges`: a file's
+  history, recent changes, FTS search over summaries and reasons, and a
+  `recorded_at` range, combined as given.
+- `get_diff` — redacted unified diff for a file (committed or working tree).
+- `find_symbol` — prefix symbol search across the repo, or with `file`, the
+  symbols one file defines with line ranges and signatures.
+- `get_dependents` — reverse import lookup: which files import a given one;
+  with no file, the index totals and the hub files by import in-degree.
 - `get_dependency_graph` — the file/package import graph (`index.BuildGraph`),
   optionally around one file, as JSON or Mermaid. The same graph backs
   `githints index graph`, whose exporters live in `internal/index/graphexport`
   (JSON, DOT, Mermaid, and a self-contained HTML viewer pinned by a hash-based
   Content-Security-Policy).
-- `get_index_summary` — structural index totals and top hub files by import
-  in-degree.
 - `find_facets` — framework constructs by role (`route`, `model`,
   `component`, ...), across frameworks.
+
+The seven tools these replaced keep answering under their old names for one
+release, each registered with a one-line "Deprecated: use X" description and
+the new tool's handler.
 
 Every structural index tool response includes the timestamp of the last full
 or incremental index scan so the agent can decide whether the data is fresh
@@ -546,7 +562,7 @@ own change: build, run the gate, and check `tools/list` still answers.
 
 ### Client registration
 
-`githints setup` (`internal/cli/setup`) and `mcp-config` (`internal/cli/mcpcfg`) write the server entry into
+`githints setup` (`internal/cli/setup`, with the client table in `internal/cli/mcpcfg`) writes the server entry into
 each MCP client's config from one table describing every client: its file, the
 top-level key, the entry shape, whether the root must be pinned, and how to
 detect it. Formats were checked against each vendor's documentation. Only
@@ -572,16 +588,16 @@ internal/
     core/              # shared CLI helpers: OpenInitialized, PrintChanges, ErrVerifyFailed, ...
     initialize/        # githints init
     hooks/             # githints hook-run, hook-precommit
-    record/            # githints record, status, render
+    record/            # githints record, outcome, render
     verify/            # githints verify
-    read/              # githints history, recent, search, diff, changes
+    read/              # githints log, diff, brief
     graph/             # githints index graph
     indexcmd/          # githints index and subcommands
-    salt/              # githints rotate-salt, salt
+    salt/              # githints salt (path, export, import, rotate)
     doctor/            # githints doctor
-    mcpcfg/            # githints mcp-config and the MCP client table
+    mcpcfg/            # the MCP client table, and setup -print
     setup/             # githints setup
-    teardown/          # githints remove, uninstall
+    teardown/          # githints uninstall (and -keep-data)
     serve/             # githints serve (MCP stdio server)
   managed/             # managed hooks, managed-block primitives, agent instruction blocks
   clitest/             # shared test helpers for the CLI packages
@@ -596,8 +612,7 @@ internal/
   gitutil/             # git invocations: timeouts, output caps, notes, hooks dir
   safefs/              # os.Root-confined, size-capped file I/O for githints' files
   textsafe/            # the one escaper: control characters, markdown, code spans
-  secrets/             # the one credential-pattern list
-  llm/                 # optional local Ollama client and diff scrubbing
+  secrets/             # the one credential-pattern list and diff redaction
   index/               # structural index: store, scan, render, verify, graph
     lang/              #   parsers, language specs, detectors, import resolution
     graphexport/       #   JSON, DOT, Mermaid and the HTML viewer
