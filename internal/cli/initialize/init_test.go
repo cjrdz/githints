@@ -100,7 +100,7 @@ func TestInitWritesAgentFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read AGENTS.md: %v", err)
 	}
-	for _, want := range []string{"record_change", "get_session_context", "get_file_history"} {
+	for _, want := range []string{"record_change", "get_session_context", "query_changes"} {
 		if !strings.Contains(string(agents), want) {
 			t.Errorf("AGENTS.md missing %q:\n%s", want, agents)
 		}

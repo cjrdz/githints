@@ -1,0 +1,2 @@
+- name: Dump the database
+  ansible.builtin.command: pg_dumpall -f /var/backups/all.sql

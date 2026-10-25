@@ -1,0 +1,10 @@
+name: deploy
+on: push
+jobs:
+  ansible:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run the playbook
+        run: ansible-playbook site.yml
+        env:
+          hosts: web

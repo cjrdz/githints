@@ -79,9 +79,6 @@ func (c Client) Note() string { return c.note }
 // Detect reports whether the client looks in use for the given repository.
 func (c Client) Detect(root string) bool { return c.detect != nil && c.detect(root) }
 
-// IsTOML reports whether the client's config is TOML rather than JSON.
-func (c Client) IsTOML() bool { return c.toml }
-
 // serveArgs is ["serve"], plus -root when the client's working directory is
 // not documented to be the project. root may be a client-side variable such
 // as ${workspaceFolder}.
@@ -302,7 +299,7 @@ var clientList = []Client{
 	{
 		name: "jetbrains", title: "JetBrains AI Assistant", scope: ScopeManual,
 		note: "AI Assistant has no config file to write. In Settings > Tools > AI Assistant > Model Context Protocol,\n" +
-			"add a server with command %[1]s and arguments: serve -root=%[2]s\n(or use `githints mcp-config junie -write` for Junie).",
+			"add a server with command %[1]s and arguments: serve -root=%[2]s\n(or use `githints setup -clients=junie` for Junie).",
 	},
 }
 
@@ -642,7 +639,7 @@ func MCPConfig(args []string) error {
 	}
 	client, ok := LookupClient(name)
 	if !ok {
-		return fmt.Errorf("usage: githints mcp-config <%s> [-write]", ClientNames())
+		return fmt.Errorf("usage: githints setup -print -clients=<%s>", ClientNames())
 	}
 	root, err := gitutil.RepoRoot()
 	if err != nil {

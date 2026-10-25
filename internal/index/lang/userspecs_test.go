@@ -3,6 +3,7 @@ package lang
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -185,6 +186,37 @@ func TestLoadUserSpecsRejectsSymlink(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("symlinked spec was not rejected: %v", errs)
+	}
+}
+
+// The spec files were Lstat'd, but the directory holding them was not: a
+// committed .githints/langs link loaded specs from wherever it pointed.
+func TestLoadUserSpecsRejectsLinkedDirectory(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "rubyish.json"), []byte(rubyishSpec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".githints"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, filepath.FromSlash(UserSpecDir))
+	if err := os.Symlink(outside, link); err != nil {
+		if runtime.GOOS != "windows" {
+			t.Fatalf("symlink: %v", err)
+		}
+		// A junction needs no elevation, which makes it the more exposed case.
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, outside).CombinedOutput(); err != nil {
+			t.Skipf("mklink /J: %v: %s", err, out)
+		}
+	}
+
+	parsers, errs := LoadUserSpecs(root)
+	if len(parsers) != 0 {
+		t.Errorf("loaded %d specs through a linked %s", len(parsers), UserSpecDir)
+	}
+	if len(errs) == 0 {
+		t.Error("a linked spec directory was not reported")
 	}
 }
 

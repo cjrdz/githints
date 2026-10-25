@@ -1,5 +1,5 @@
-// Package teardown implements the `githints remove` and `githints uninstall`
-// commands.
+// Package teardown implements `githints uninstall`, whose -keep-data form was
+// `githints remove`.
 package teardown
 
 import (

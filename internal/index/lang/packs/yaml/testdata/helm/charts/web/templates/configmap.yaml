@@ -1,0 +1,6 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-static
+data:
+  note: "kind: Secret is only text here"

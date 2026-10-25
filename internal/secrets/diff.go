@@ -1,18 +1,41 @@
-// Package llm contains the local Ollama integration and the diff scrubbing
-// that runs before any repository content is sent off-process. All code here
-// uses only the Go standard library.
-package llm
+package secrets
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
-	"github.com/cjrdz/githints/internal/secrets"
+	"github.com/cjrdz/githints/internal/textsafe"
 )
 
-// secretLineMarker replaces lines that are too sensitive to ship to the local
-// model. It is the same marker the rest of githints would want for any stored
-// caption: it hides the value without changing the structure of the diff.
+// MaxDiffResultBytes caps a diff handed back to an agent (get_diff, `githints
+// diff`). gitutil already caps what it buffers from git; this is the smaller,
+// model-facing limit so one call on a generated file can't flood a context.
+const MaxDiffResultBytes = 128 << 10
+
+// DisplayDiff is the one path from a git diff to an agent: redacted first,
+// then truncated. Both the MCP tool and the CLI use it, so neither can return
+// a diff that skipped the scrub.
+func DisplayDiff(diff string) string {
+	return TruncateDiff(ScrubDiff(diff))
+}
+
+// TruncateDiff bounds diff at MaxDiffResultBytes, cutting at a line boundary
+// and saying how much was left out.
+func TruncateDiff(diff string) string {
+	if len(diff) <= MaxDiffResultBytes {
+		return diff
+	}
+	cut := MaxDiffResultBytes
+	// Prefer a line boundary so the tail isn't a mangled hunk line.
+	if i := strings.LastIndexByte(diff[:cut], '\n'); i > 0 {
+		cut = i
+	}
+	return diff[:cut] + fmt.Sprintf("\n[truncated: diff is %d bytes, showing first %d]\n", len(diff), cut)
+}
+
+// secretLineMarker replaces lines too sensitive to hand back. It hides the
+// value without changing the structure of the diff.
 const secretLineMarker = "[REDACTED SECRET LINE]"
 
 // secretFileGlobs matches file paths whose entire diff content should be
@@ -79,7 +102,7 @@ func ScrubDiff(diff string) string {
 			continue
 		}
 
-		for _, p := range secrets.ValuePatterns {
+		for _, p := range ValuePatterns {
 			if p.MatchString(line) {
 				lines[i] = secretLineMarker
 				break
@@ -171,4 +194,59 @@ func isSecretFile(path string) bool {
 		}
 	}
 	return false
+}
+
+// Finding is a credential shape on an added line of a diff. It never holds
+// the value: Pattern is the regular expression that matched.
+type Finding struct {
+	File    string
+	Line    int
+	Pattern string
+}
+
+// ScanDiff looks for credential shapes on the lines a unified diff adds,
+// after removing the control and zero-width characters that could split a key
+// so no pattern recognizes it. Removed and context lines are not scanned: the
+// question is what this change would put into the repository.
+//
+// Like ScrubDiff, a "+++" line is a header only before the current file's
+// first "@@"; inside a hunk it is an added line that starts with "++".
+func ScanDiff(diff string) []Finding {
+	var out []Finding
+	file, inHunk, line := "", false, 0
+	for _, l := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(l, "diff --git "):
+			file, inHunk = "", false
+		case !inHunk && strings.HasPrefix(l, "+++ "):
+			file = strings.TrimPrefix(strings.TrimPrefix(l, "+++ "), "b/")
+		case strings.HasPrefix(l, "@@"):
+			inHunk = true
+			line = hunkStart(l)
+		case inHunk && strings.HasPrefix(l, "+"):
+			if p, ok := Scan(textsafe.StripControls(l[1:])); ok {
+				out = append(out, Finding{File: file, Line: line, Pattern: p})
+			}
+			line++
+		case inHunk && strings.HasPrefix(l, " "):
+			line++ // context, when the diff has any
+		}
+	}
+	return out
+}
+
+// hunkStart reads the new-file start line from "@@ -a,b +c,d @@".
+func hunkStart(header string) int {
+	i := strings.Index(header, " +")
+	if i < 0 {
+		return 0
+	}
+	n := 0
+	for _, r := range header[i+2:] {
+		if r < '0' || r > '9' {
+			break
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }

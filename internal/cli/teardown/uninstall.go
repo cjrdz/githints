@@ -22,17 +22,22 @@ func Remove(args []string) error {
 	if fset.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fset.Arg(0))
 	}
+	return removeHooksOnly(*dryRun)
+}
+
+// removeHooksOnly is `uninstall -keep-data` (and the old `remove`).
+func removeHooksOnly(dryRun bool) error {
 	root, err := gitutil.RepoRoot()
 	if err != nil {
 		return fmt.Errorf("not inside a git repo: %w", err)
 	}
 
-	hookRes, err := removeHooks(root, *dryRun)
+	hookRes, err := removeHooks(root, dryRun)
 	if err != nil {
 		return err
 	}
 	for _, r := range hookRes {
-		printRemoveResult(root, r, *dryRun)
+		printRemoveResult(root, r, dryRun)
 	}
 
 	fmt.Println()
@@ -49,11 +54,18 @@ func Uninstall(args []string) error {
 	fset := flag.NewFlagSet("uninstall", flag.ExitOnError)
 	dryRun := fset.Bool("dry-run", false, "show what would be done, do nothing")
 	force := fset.Bool("force", false, "actually delete the store and salt; required because uninstall is destructive")
+	keepData := fset.Bool("keep-data", false, "only stop tracking: remove the git hooks and keep everything else")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
 	if fset.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fset.Arg(0))
+	}
+	if *keepData {
+		if *force {
+			return fmt.Errorf("-keep-data deletes nothing; -force does not apply")
+		}
+		return removeHooksOnly(*dryRun)
 	}
 	if !*dryRun && !*force {
 		return fmt.Errorf("uninstall deletes the change log and salt; re-run with -force to confirm, or -dry-run to preview")

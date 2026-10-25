@@ -894,28 +894,3 @@ func TestOpenSetsTrustedSchemaOffOnEveryConnection(t *testing.T) {
 		_ = c.Close()
 	}
 }
-
-func TestCoalesceFallbacksRemovesDuplicateFallbackRows(t *testing.T) {
-	rows := []Change{
-		{FilePath: "a.go", CommitHash: "abc", Source: "agent", Summary: "agent a"},
-		{FilePath: "a.go", CommitHash: "abc", Source: "fallback", Summary: "fallback a"},
-		{FilePath: "b.go", CommitHash: "abc", Source: "fallback", Summary: "fallback b"},
-		{FilePath: "c.go", CommitHash: "abc", Source: "agent", Summary: "agent c"},
-		{FilePath: "c.go", CommitHash: "def", Source: "fallback", Summary: "fallback c-other"},
-	}
-	got := CoalesceFallbacks(rows)
-	want := []Change{
-		{FilePath: "a.go", CommitHash: "abc", Source: "agent", Summary: "agent a"},
-		{FilePath: "b.go", CommitHash: "abc", Source: "fallback", Summary: "fallback b"},
-		{FilePath: "c.go", CommitHash: "abc", Source: "agent", Summary: "agent c"},
-		{FilePath: "c.go", CommitHash: "def", Source: "fallback", Summary: "fallback c-other"},
-	}
-	if len(got) != len(want) {
-		t.Fatalf("got %d rows, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i].FilePath != want[i].FilePath || got[i].CommitHash != want[i].CommitHash || got[i].Source != want[i].Source {
-			t.Errorf("row %d: got %v, want %v", i, got[i], want[i])
-		}
-	}
-}

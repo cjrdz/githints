@@ -29,14 +29,6 @@ module called `app` share that name, so an import can attach to the wrong one.
 Resolving relative to the importing project, as relative imports already are,
 would fix it.
 
-### Pushing the Merkle anchors
-
-Each commit's anchor lives in `refs/notes/githints`, which git does not push by
-default, so the anchors only protect history on the machine that wrote them
-until someone pushes them. Options: push notes from the hook when a remote is
-configured, or a CI check that they were pushed. This is the highest-value item
-here for integrity, and a prerequisite for any shared store.
-
 ## Later
 
 ### Cross-repository view
@@ -69,14 +61,6 @@ A bundled database engine or an embeddings index would add a runtime dependency
 (and cgo for most of them) to a tool whose point is to stay small, local and
 pure Go; FTS5 in the existing SQLite covers note search.
 
-### Per-agent Ollama settings in the repository
-
-The Ollama endpoint, model and timeout can be overridden per process with
-`GITHINTS_OLLAMA_*` environment variables. A tracked file of per-agent settings
-would arrive in clones, which is exactly the place a hostile repository should
-not get to steer where diff content is sent. Ollama is also no longer called from
-the post-commit hook; only the `summarize` flags use it.
-
 ### OS keychain for the salt
 
 On headless Linux most keyring backends need a desktop session or D-Bus, which is
@@ -85,6 +69,14 @@ same user session, so it does not change the same-user threat model. The real
 defense against a same-user attacker is an external anchor (pushed or signed
 Merkle roots) or a passphrase-derived key. Revisit if passphrase or team keys
 arrive.
+
+### Pushing anchors from the hook
+
+`githints anchors push` sends `refs/notes/githints` on request, and `doctor`
+says when the newest anchors are still local. Pushing from the post-commit hook
+would put a network call, and possibly a credential prompt, on the commit path,
+and adding a push refspec to the user's git config would change what a plain
+`git push` sends. Both were left out.
 
 ### A local web server for the graph
 

@@ -2,7 +2,8 @@
   // YAML: CI workflows, docker-compose files, Kubernetes manifests, and every
   // other configuration file. A top-level key is a symbol. YAML files are
   // graph nodes only when something links them: a GitHub workflow calling a
-  // reusable workflow in the repository (uses: ./.github/workflows/x.yml).
+  // reusable workflow in the repository (uses: ./.github/workflows/x.yml),
+  // an Ansible playbook importing another or a task file.
   // Lock files are generated, not written, and are not indexed.
   "language": "yaml",
   "extensions": [".yml", ".yaml"],
@@ -28,6 +29,13 @@
     // uses: ./.github/workflows/build.yml -- a reusable workflow in the repo.
     { "requires": "uses:", "pattern": "^\\s*-?\\s*uses:\\s*['\"]?\\./(?P<path>[^@'\"\\s]+?)(?:\\.ya?ml)?['\"]?\\s*$" },
     // uses: actions/checkout@v4 -- an action, named without its version.
-    { "requires": "uses:", "pattern": "^\\s*-?\\s*uses:\\s*['\"]?(?P<path>[\\w.-]+/[\\w./-]+)@" }
+    { "requires": "uses:", "pattern": "^\\s*-?\\s*uses:\\s*['\"]?(?P<path>[\\w.-]+/[\\w./-]+)@" },
+    // Ansible: - import_playbook: web.yml, - include_tasks: install.yml.
+    // Both name a file relative to the one that includes it; a templated
+    // name ({{ ... }}) is not followed.
+    { "requires": "import_playbook:", "relative": true,
+      "pattern": "^\\s*-?\\s*(?:ansible\\.builtin\\.)?import_playbook:\\s*['\"]?(?P<path>[^'\"\\s{}]+\\.ya?ml)['\"]?\\s*$" },
+    { "requires": "_tasks:", "relative": true,
+      "pattern": "^\\s*-?\\s*(?:ansible\\.builtin\\.)?(?:import|include)_tasks:\\s*['\"]?(?P<path>[^'\"\\s{}]+\\.ya?ml)['\"]?\\s*$" }
   ]
 }

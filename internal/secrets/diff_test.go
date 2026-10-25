@@ -1,4 +1,4 @@
-package llm
+package secrets
 
 import (
 	"strings"
@@ -181,5 +181,59 @@ func TestScrubDiffHeadersPreserved(t *testing.T) {
 	}
 	if !strings.Contains(got, "@@ -1 +1 @@") {
 		t.Error("hunk header missing")
+	}
+}
+
+func TestTruncateDiff(t *testing.T) {
+	short := "diff --git a/a b/a\n+one line\n"
+	if got := TruncateDiff(short); got != short {
+		t.Errorf("short diff was altered: %q", got)
+	}
+
+	long := strings.Repeat("+padding line to make this long\n", MaxDiffResultBytes/8)
+	got := TruncateDiff(long)
+	if len(got) >= len(long) {
+		t.Fatalf("long diff not truncated: %d >= %d", len(got), len(long))
+	}
+	if !strings.Contains(got, "[truncated:") {
+		t.Error("expected a truncation marker")
+	}
+	// The kept portion must be a prefix of the original that ends on a line
+	// boundary, not mid-line.
+	body := got[:strings.Index(got, "\n[truncated:")]
+	if !strings.HasPrefix(long, body) {
+		t.Error("retained text is not a prefix of the original diff")
+	}
+	if long[len(body)] != '\n' {
+		t.Errorf("truncation cut mid-line: next byte is %q", long[len(body)])
+	}
+}
+
+func TestScanDiffFindsAddedSecretsOnly(t *testing.T) {
+	key := "AKIA" + "ABCDEFGHIJKLMNOP"
+	diff := "diff --git a/cfg.go b/cfg.go\n" +
+		"--- a/cfg.go\n" +
+		"+++ b/cfg.go\n" +
+		"@@ -10,1 +10,3 @@\n" +
+		"-old := \"" + key + "\"\n" + // removed: not what this change adds
+		"+a := 1\n" +
+		"+k := \"AKIA\u200b" + "ABCDEFGHIJKLMNOP\"\n" + // a zero-width space must not hide it
+		"++++ \"" + key + "\"\n" + // an added line starting "+++" inside a hunk
+		"diff --git a/b.md b/b.md\n" +
+		"--- a/b.md\n" +
+		"+++ b/b.md\n" +
+		"@@ -0,0 +1 @@\n" +
+		"+nothing here\n"
+	got := ScanDiff(diff)
+	if len(got) != 2 {
+		t.Fatalf("findings = %+v, want two in cfg.go", got)
+	}
+	for i, wantLine := range []int{11, 12} {
+		if got[i].File != "cfg.go" || got[i].Line != wantLine {
+			t.Errorf("finding %d = %+v, want cfg.go:%d", i, got[i], wantLine)
+		}
+		if strings.Contains(got[i].Pattern, "ABCDEFGH") {
+			t.Errorf("a finding carries the value: %q", got[i].Pattern)
+		}
 	}
 }

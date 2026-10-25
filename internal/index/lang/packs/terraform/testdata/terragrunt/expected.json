@@ -1,0 +1,11 @@
+{
+  "facets": [
+    "infra terraform modules/app/main.tf app aws_security_group",
+    "infra terraform modules/vpc/main.tf main aws_vpc"
+  ],
+  "edges": [
+    "live/prod/app/terragrunt.hcl -> live/prod/vpc/terragrunt.hcl",
+    "live/prod/app/terragrunt.hcl -> modules/app/main.tf",
+    "live/prod/vpc/terragrunt.hcl -> modules/vpc/main.tf"
+  ]
+}

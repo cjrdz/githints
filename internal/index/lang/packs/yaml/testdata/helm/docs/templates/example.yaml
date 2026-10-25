@@ -1,0 +1,6 @@
+# A templates/ directory that is not a chart: a plain manifest, reported by
+# kubernetes.json only.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: docs-example

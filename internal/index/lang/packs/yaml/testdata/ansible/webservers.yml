@@ -1,0 +1,12 @@
+---
+- name: Configure web servers
+  hosts: web
+  become: true
+  roles:
+    - nginx
+
+- name: "Rotate certificates"
+  hosts: web:&production
+  tasks:
+    - name: Renew
+      ansible.builtin.command: certbot renew

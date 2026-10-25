@@ -1,0 +1,8 @@
+- hosts: databases
+  vars:
+    pg_version: 16
+  tasks:
+    - include_tasks: tasks/backup.yml
+    - name: Install postgres
+      ansible.builtin.package:
+        name: postgresql

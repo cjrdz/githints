@@ -143,6 +143,8 @@ func FuzzBlankerLineCount(f *testing.F) {
 		f.Add([]byte(src))
 	}
 	f.Add([]byte("<?php\n#[Route('/x',\n  methods: ['GET'])]\n# c\n#['\n"))
+	// Shell: an escaped newline in "..." and $'...', ${ left open, $#.
+	f.Add([]byte("echo \"a\\\nb\" $'c\\\nd' ${x\n[ $# -gt 0 ] && echo '\nf() { :; }\n"))
 	// Every shipped spec, not only TypeScript: each declares its own
 	// delimiters (PHP's "#[" is code while "#" is a comment), and each is a
 	// different way to swallow a newline.

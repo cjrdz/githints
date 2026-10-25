@@ -93,6 +93,9 @@ func RecordOutcome(st *store.Store, root string, key []byte, in OutcomeInput) (s
 	if target.Kind == store.KindOutcome {
 		return store.Change{}, fmt.Errorf("id %d is an outcome, not a change; record the outcome against the change it describes (id %d)", target.ID, target.TargetID)
 	}
+	if target.Kind == store.KindReview {
+		return store.Change{}, fmt.Errorf("id %d is a review receipt, not a change; outcomes describe changes", target.ID)
+	}
 
 	c := store.Change{
 		FilePath:       target.FilePath,

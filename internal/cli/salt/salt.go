@@ -1,4 +1,5 @@
-// Package salt implements the rotate-salt and salt CLI commands.
+// Package salt implements the salt CLI command: path, export, import and
+// rotate (rotate-salt is a hidden alias of the last).
 package salt
 
 import (
@@ -15,7 +16,7 @@ import (
 // change row so the HMAC chain remains valid under the new key. The existing
 // chain is verified first unless -force is passed.
 func RotateSalt(args []string) error {
-	fs := flag.NewFlagSet("rotate-salt", flag.ExitOnError)
+	fs := flag.NewFlagSet("salt rotate", flag.ExitOnError)
 	force := fs.Bool("force", false, "rotate even if the existing chain has integrity problems")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -37,9 +38,12 @@ func RotateSalt(args []string) error {
 // outside the repository on purpose, which means moving to a new machine or
 // recovering a backup needs a way to carry it across.
 func Salt(args []string) error {
-	const usage = "usage: githints salt path | export [-o FILE] | import [-force] FILE"
+	const usage = "usage: githints salt path | export [-o FILE] | import [-force] FILE | rotate [-force]"
 	if len(args) == 0 {
 		return errors.New(usage)
+	}
+	if args[0] == "rotate" {
+		return RotateSalt(args[1:])
 	}
 	root, err := gitutil.RepoRoot()
 	if err != nil {

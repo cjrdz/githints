@@ -1,8 +1,9 @@
 // Package secrets holds the one canonical list of credential shapes githints
-// recognizes. Two independent controls consume it: recorder refuses to persist
-// a summary that matches, and llm redacts matching lines before a diff leaves
-// the process. The list used to be duplicated in both packages and drifting
-// silently was only a matter of time.
+// recognizes, and the diff redaction built on it. Two independent controls
+// consume the list: recorder refuses to persist a summary that matches, and
+// ScrubDiff redacts matching lines before a diff is handed to an agent. The
+// list used to be duplicated in two packages and drifting silently was only a
+// matter of time.
 //
 // The list is deliberately short — well-known shapes with a fixed, distinctive
 // prefix, chosen so a match is almost never an ordinary word or identifier.

@@ -1,0 +1,10 @@
+{
+  "facets": [],
+  "edges": [
+    ".bashrc -> lib/log.sh",
+    "bin/deploy.sh -> bin/checks.sh",
+    "bin/deploy.sh -> lib/env.sh",
+    "bin/deploy.sh -> lib/log.sh",
+    "lib/log.sh -> lib/colors.bash"
+  ]
+}

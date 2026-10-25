@@ -46,9 +46,10 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
 - **Nothing but JSON-RPC on stdout in `serve` mode.** A stray `fmt.Println`
   anywhere reachable from `internal/cli/serve.Run` corrupts the framing for every client.
   Diagnostics go to stderr.
-- **`get_diff` scrubs unconditionally.** `llm.ScrubDiff` must run on the
-  default path, not only when `summarize=true` — Ollama is off by default, so
-  the summarize path is the rare one.
+- **Every diff handed to an agent is scrubbed.** `get_diff` and `githints
+  diff` go through `secrets.DisplayDiff`, which runs `ScrubDiff` before
+  truncating. It once ran only on an optional summarize path, so the default
+  returned `.env` files verbatim.
 - **`clock_tamper_warning` is inside the HMAC payload.** That is why
   `store.CheckClockTamper` runs in `recorder.prepare` *before* the row is
   signed, rather than inside `Insert`. Move it back and clearing the flag in
@@ -106,6 +107,16 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   single-quoted variable; Go's `%q` is not shell quoting.
 - **The pre-commit hook fails a commit only for `errPrecommitBlocked`.** Any
   internal error is printed and the commit proceeds.
+- **A repository can raise review risk, never lower it.** `review.rules` in
+  `config.json` (which travels in clones) only adds classes, applied after the
+  built-in default, so naming `internal/auth/**` or ordinary code `docs`
+  changes nothing (`TestRepositoryRulesOnlyRaise`). githints computes the level
+  a receipt records; the reviewer never supplies it. Turning review off is
+  `GITHINTS_REVIEW=0`, environment only.
+- **A review receipt is used once.** The post-commit hook stamps matching
+  receipts (`ClaimReviewsTx`) *before* the anchor is written, so the anchor
+  covers them, and a stamped receipt never applies again
+  (`TestCommitUsesTheReceiptUp`). An approval never commits anything.
 - **Only `init` creates `.githints/`.** Every other command goes through
   `core.OpenInitialized` and refuses in an uninitialized repository.
 - **Every `hash` argument is checked with `IsValidCommitish`** before reaching
@@ -113,7 +124,7 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   separator, so an unchecked one is parsed as a git option.
 - **Caps stay enforced in Go**, not just declared in the tool schema:
   `recorder.MaxSummaryLen`, `MaxReasonLen`, `MaxAgentIDLen`, `MaxBatchSize`,
-  `clampLimit`, `maxSearchQueryLen`, `maxSymbolNameLen`, `maxDiffResultBytes`,
+  `clampLimit`, `store.MaxSearchQueryLen`, `maxSymbolNameLen`, `secrets.MaxDiffResultBytes`,
   `maxGraphNodesMCP`, `gitutil.MaxOutputBytes`, the `config.json` index ceilings.
 - **`BatchRecord` is one transaction.** A partial batch leaves the caller
   unable to tell what landed.
@@ -245,7 +256,7 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   saying why. `.golangci.yml` excludes only the idiomatic `defer Close()` and
   `fmt.Fprint*` cases.
 - `internal/secrets` holds the single credential-pattern list. It exists
-  because that list used to be duplicated in `recorder` and `llm`; do not
+  because that list used to be duplicated in two packages; do not
   reintroduce a second copy.
 - `internal/mcpserver` is the only package that imports `mark3labs/mcp-go`.
   Keep it that way, and read arguments through the library's
@@ -258,7 +269,7 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
 
 ### Dependency pins
 
-`mcp-go` is at `v1.1.x` (see `go.mod`). It was on a pre-release for a long time and its API
+`mcp-go` is at `v1.3.x` (see `go.mod`). It was on a pre-release for a long time and its API
 moved between them, so treat an upgrade as a real change with its own commit
 rather than a routine bump: build it, run the gate, and start the server to
 confirm `tools/list` still answers.
@@ -281,7 +292,7 @@ client. When changing the server, remember:
   `AGENTS.md`; Claude-specific guidance and guidance for developing githints
   itself go in this file below the managed block; documentation for people using
   githints goes in `docs/usage.md`, and design in `docs/architecture.md`.
-- `setup` / `mcp-config` write each client's config from `mcpClientList` in
+- `setup` writes each client's config from `mcpClientList` in
   `internal/cli/mcpcfg/mcpcfg.go`, verified against vendor docs. When a client changes its
   format, change the table and `TestClientEntryShapes` together.
 - Tool descriptions and the `instructions` string are the only guidance some

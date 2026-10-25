@@ -7,8 +7,16 @@
   // Block labels are quoted (resource "aws_s3_bucket" "logs"), so the symbol
   // rules read the view that keeps strings. A resource is named by its own
   // label, with its type as the signature.
+  //
+  // Terragrunt's terragrunt.hcl is read too, by name: its `source` and a
+  // dependency's `config_path` link it to the module directories it deploys
+  // and depends on. Other .hcl files are not claimed: Packer, Nomad, Vault
+  // and Consul write the same syntax with blocks of their own, and
+  // .terraform.lock.hcl is generated. Neither are .tfvars files, which
+  // assign values and declare nothing this spec indexes.
   "language": "terraform",
   "extensions": [".tf", ".tofu"],
+  "filenames": ["terragrunt.hcl"],
   "depth_style": "brace",
 
   "comments": { "line": ["#", "//"], "block": [["/*", "*/"]] },
@@ -33,6 +41,9 @@
     { "requires": "source", "relative": true,
       "pattern": "^\\s*source\\s*=\\s*\"(?P<path>\\.\\.?/[^\"]*)\"" },
     { "requires": "source",
-      "pattern": "^\\s*source\\s*=\\s*\"(?P<path>[^\".][^\"]*)\"" }
+      "pattern": "^\\s*source\\s*=\\s*\"(?P<path>[^\".][^\"]*)\"" },
+    // Terragrunt: dependency "vpc" { config_path = "../vpc" }.
+    { "requires": "config_path", "relative": true,
+      "pattern": "^\\s*config_path\\s*=\\s*\"(?P<path>\\.\\.?/[^\"]*)\"" }
   ]
 }

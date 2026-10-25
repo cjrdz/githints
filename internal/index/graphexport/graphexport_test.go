@@ -2,6 +2,8 @@ package graphexport
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"regexp"
 	"strings"
@@ -79,7 +81,7 @@ func TestHTMLCSPHashesMatch(t *testing.T) {
 	script := regexp.MustCompile(`(?s)<script>(.*?)</script>`).FindStringSubmatch(out)[1]
 	style := regexp.MustCompile(`(?s)<style>(.*?)</style>`).FindStringSubmatch(out)[1]
 	for name, body := range map[string]string{"script": script, "style": style} {
-		if !strings.Contains(out, cspHash(body)) {
+		if !strings.Contains(out, sha256CSP(body)) {
 			t.Errorf("CSP does not pin the inline %s", name)
 		}
 	}
@@ -146,4 +148,11 @@ func TestWriteRejectsUnknownFormat(t *testing.T) {
 	if err := Write(&bytes.Buffer{}, graphNamed("a"), "svg"); err == nil {
 		t.Fatal("unknown format accepted")
 	}
+}
+
+// sha256CSP is the CSP source expression for body, computed here rather than
+// with the function under test.
+func sha256CSP(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
 }

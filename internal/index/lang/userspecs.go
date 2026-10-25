@@ -1,11 +1,15 @@
 package lang
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/cjrdz/githints/internal/safefs"
 )
 
 // UserSpecDir is where a repository may put its own language specs, relative
@@ -32,12 +36,21 @@ const (
 // hook, and a repository's own file must never be able to fail someone's
 // commit or stop the languages that do work from being indexed.
 func LoadUserSpecs(root string) ([]*SpecParser, []error) {
-	dir := filepath.Join(root, filepath.FromSlash(UserSpecDir))
-	entries, err := os.ReadDir(dir)
+	r, err := openUserSpecDir(root)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil // the ordinary case
 		}
+		return nil, []error{fmt.Errorf("read %s: %w", UserSpecDir, err)}
+	}
+	defer r.Close()
+	dir, err := r.Open(".")
+	if err != nil {
+		return nil, []error{fmt.Errorf("read %s: %w", UserSpecDir, err)}
+	}
+	entries, err := dir.ReadDir(-1)
+	_ = dir.Close() // read-only handle; the listing is all that was needed
+	if err != nil {
 		return nil, []error{fmt.Errorf("read %s: %w", UserSpecDir, err)}
 	}
 
@@ -63,10 +76,9 @@ func LoadUserSpecs(root string) ([]*SpecParser, []error) {
 	}
 
 	for _, name := range names {
-		path := filepath.Join(dir, name)
 		rel := UserSpecDir + "/" + name
 
-		info, err := os.Lstat(path)
+		info, err := r.Lstat(name)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", rel, err))
 			continue
@@ -82,7 +94,7 @@ func LoadUserSpecs(root string) ([]*SpecParser, []error) {
 			continue
 		}
 
-		data, err := os.ReadFile(path)
+		data, err := safefs.ReadFileIn(r, name, MaxUserSpecBytes)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", rel, err))
 			continue
@@ -100,4 +112,18 @@ func LoadUserSpecs(root string) ([]*SpecParser, []error) {
 		parsers = append(parsers, parser)
 	}
 	return parsers, errs
+}
+
+// openUserSpecDir opens .githints/langs only when both it and .githints are
+// plain directories. A clone can commit either as a link, and reading through
+// one would load specs from wherever it points.
+func openUserSpecDir(root string) (*os.Root, error) {
+	state := filepath.Join(root, ".githints")
+	// OpenExisting Lstats its directory, so a missing one is fs.ErrNotExist.
+	gr, err := safefs.OpenExisting(state)
+	if err != nil {
+		return nil, err
+	}
+	_ = gr.Close() // opened only to check .githints itself
+	return safefs.OpenExisting(filepath.Join(state, "langs"))
 }

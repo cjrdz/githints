@@ -63,16 +63,9 @@ func run(args ...string) (string, error) {
 // the user's config decides what that runs. githints wants git's own diff,
 // and wants it the same on every machine (it is hashed into diff_hash).
 func runCtx(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	out := &capWriter{n: MaxOutputBytes}
-	stderr := &capWriter{n: 8 << 10}
-	cmd.Stdout = out
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), ctxErr)
-		}
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, stderr.buf.String())
+	out, err := execGit(ctx, "", nil, MaxOutputBytes, args)
+	if err != nil {
+		return "", err
 	}
 	s := strings.TrimSpace(out.buf.String())
 	if out.truncated {
@@ -121,6 +114,21 @@ func CurrentBranch() (string, error) {
 // about to commit.
 func StagedFiles() ([]string, error) {
 	return pathList("diff", "--cached", "--name-only", "-z")
+}
+
+// StagedDiff is the staged change as a zero-context diff, for scanning what a
+// commit would add. Rename detection is off so a moved file's lines count as
+// added, and no repository driver runs.
+func StagedDiff() (string, error) {
+	return run("diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "-U0")
+}
+
+// StagedFilesNoRenames is StagedFiles with rename detection off, so a staged
+// rename lists the old path (deleted) as well as the new one. Risk scoring
+// needs both: moving internal/auth/token.go to util.go must still count as a
+// change to auth code.
+func StagedFilesNoRenames() ([]string, error) {
+	return pathList("diff", "--cached", "--name-only", "--no-renames", "-z")
 }
 
 // pathList runs a git command that prints NUL-separated paths (-z) and returns
@@ -207,31 +215,15 @@ func UserEmail() (string, error) {
 	return run("config", "--get", "user.email")
 }
 
-// DiffHash returns the SHA-256 of the unified diff for one file in one
-// commit. If hash is empty it hashes the working-tree diff vs HEAD.
-// It uses git show for committed diffs so it also works for a repo's first
-// commit, where hash^ does not exist.
+// DiffHash returns the SHA-256 of FileDiff(hash, file): the diff of one file
+// in one commit, or of the working tree vs HEAD when hash is empty.
 func DiffHash(hash, file string) (string, error) {
-	if !IsValidCommitish(hash) {
-		return "", fmt.Errorf("invalid commit hash %q", hash)
-	}
-	var out string
-	var err error
-	if hash == "" {
-		out, err = run("diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--", file)
-	} else {
-		out, err = run("show", "--no-ext-diff", "--no-textconv", "--no-color", "--pretty=format:", hash, "--", file)
-	}
+	out, err := FileDiff(hash, file)
 	if err != nil {
 		return "", err
 	}
 	h := sha256.Sum256([]byte(out))
 	return hex.EncodeToString(h[:]), nil
-}
-
-// WorktreeDiffHash is the working-tree variant of DiffHash.
-func WorktreeDiffHash(file string) (string, error) {
-	return DiffHash("", file)
 }
 
 // ChangedFiles lists files touched by the given commit (vs its parent).
@@ -269,23 +261,47 @@ func changedFiles(hash string, noRenames bool) ([]string, error) {
 	return paths, nil
 }
 
-// DiffStat returns a compact "+N -M" string for one file in one commit. An
-// invalid commit-ish yields "" rather than an error, matching the existing
-// "unknown stat" contract — but it must never reach argv, since hash sits
-// before the "--" separator.
-func DiffStat(hash, file string) string {
-	if !IsValidCommitish(hash) {
-		return ""
+// ShortHash is the 8-character prefix githints shows for a commit hash.
+func ShortHash(h string) string {
+	if len(h) > 8 {
+		return h[:8]
 	}
-	out, err := run("diff", "--no-ext-diff", "--no-textconv", "--numstat", hash+"^", hash, "--", file)
-	if err != nil || out == "" {
-		return ""
+	return h
+}
+
+// CommitDiffStats returns the compact "+N -M" stat of every file a commit
+// touched, keyed by path, from one git process. A binary file maps to "".
+// Rename detection is off, as it was when each file was diffed alone: a
+// pathspec of one path cannot see the other side of a rename either.
+//
+// It replaced one `git diff hash^ hash -- file` per file, which also gave the
+// repository's first commit no stats at all, since its hash^ does not exist.
+func CommitDiffStats(hash string) (map[string]string, error) {
+	// hash lands in argv before any separator, so it must be validated.
+	if hash == "" || !IsValidCommitish(hash) {
+		return nil, fmt.Errorf("invalid commit hash %q", hash)
 	}
-	add, del, ok := parseNumstat(out)
-	if !ok {
-		return ""
+	opts := []string{"--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z"}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	out, err := runLimited(ctx, nil, MaxOutputBytes, append(append([]string{"diff"}, opts...), hash+"^", hash)...)
+	if err != nil {
+		// The first commit has no parent: diff it against the empty tree.
+		out, err = runLimited(ctx, nil, MaxOutputBytes, append(append([]string{"diff-tree", "-r", "--root", "--no-commit-id"}, opts...), hash)...)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return fmt.Sprintf("+%d -%d", add, del)
+	stats := map[string]string{}
+	for _, rec := range strings.Split(string(out), "\x00") {
+		add, rest, ok1 := strings.Cut(rec, "\t")
+		del, path, ok2 := strings.Cut(rest, "\t")
+		if !ok1 || !ok2 || path == "" {
+			continue
+		}
+		stats[path] = numstat(add + "\t" + del)
+	}
+	return stats, nil
 }
 
 // WorktreeDiffStat returns a compact "+N -M" string for the current
@@ -296,8 +312,19 @@ func WorktreeDiffStat(file string) string {
 	if err != nil || out == "" {
 		return ""
 	}
-	add, del, ok := parseNumstat(out)
-	if !ok {
+	return numstat(out)
+}
+
+// numstat turns git's "ADD\tDEL..." counts into "+ADD -DEL", or "" for a
+// binary file (git prints "-" for both) or anything else it cannot read.
+func numstat(line string) string {
+	f := strings.Fields(line)
+	if len(f) < 2 {
+		return ""
+	}
+	add, errA := strconv.Atoi(f[0])
+	del, errD := strconv.Atoi(f[1])
+	if errA != nil || errD != nil {
 		return ""
 	}
 	return fmt.Sprintf("+%d -%d", add, del)
@@ -317,19 +344,6 @@ func ParseDiffStat(stat string) (add, del int, ok bool) {
 	delStr := strings.TrimPrefix(parts[1], "-")
 	add, errA := strconv.Atoi(addStr)
 	del, errD := strconv.Atoi(delStr)
-	if errA != nil || errD != nil {
-		return 0, 0, false
-	}
-	return add, del, true
-}
-
-func parseNumstat(out string) (add, del int, ok bool) {
-	fields := strings.Fields(out)
-	if len(fields) < 2 {
-		return 0, 0, false
-	}
-	add, errA := strconv.Atoi(fields[0])
-	del, errD := strconv.Atoi(fields[1])
 	if errA != nil || errD != nil {
 		return 0, 0, false
 	}
@@ -372,18 +386,45 @@ func ReadNotes(ref string) (map[string]string, error) {
 		return notes, nil
 	}
 
-	out, err := runLimited(ctx, strings.NewReader(strings.Join(blobs, "\n")+"\n"), maxNotesBytes, "cat-file", "--batch")
+	objs, err := catFileBatch(ctx, blobs, maxNotesBytes)
 	if err != nil {
 		return nil, err
 	}
-	// Each record is "<oid> <type> <size>\n<content>\n", in request order.
-	for i := range blobs {
+	for i, o := range objs {
+		if o.missing {
+			return nil, fmt.Errorf("cat-file: note %s is missing", blobs[i])
+		}
+		notes[commits[i]] = strings.TrimSpace(string(o.body))
+	}
+	return notes, nil
+}
+
+type catObject struct {
+	kind    string
+	body    []byte
+	missing bool
+}
+
+// catFileBatch reads objects with one `git cat-file --batch`, in request
+// order. Truncated output is an error, never a short answer.
+func catFileBatch(ctx context.Context, ids []string, max int) ([]catObject, error) {
+	out, err := runLimited(ctx, strings.NewReader(strings.Join(ids, "\n")+"\n"), max, "cat-file", "--batch")
+	if err != nil {
+		return nil, err
+	}
+	objs := make([]catObject, 0, len(ids))
+	// Each record is "<oid> <type> <size>\n<content>\n", or "<id> missing\n".
+	for i := range ids {
 		nl := bytes.IndexByte(out, '\n')
 		if nl < 0 {
-			return nil, fmt.Errorf("cat-file: short output reading note %d of %d", i+1, len(blobs))
+			return nil, fmt.Errorf("cat-file: short output reading object %d of %d", i+1, len(ids))
 		}
 		header := strings.Fields(string(out[:nl]))
 		out = out[nl+1:]
+		if len(header) == 2 && header[1] == "missing" {
+			objs = append(objs, catObject{missing: true})
+			continue
+		}
 		if len(header) != 3 {
 			return nil, fmt.Errorf("cat-file: unexpected header %q", strings.Join(header, " "))
 		}
@@ -391,10 +432,72 @@ func ReadNotes(ref string) (map[string]string, error) {
 		if err != nil || size < 0 || size+1 > len(out) {
 			return nil, fmt.Errorf("cat-file: bad size in header %q", strings.Join(header, " "))
 		}
-		notes[commits[i]] = strings.TrimSpace(string(out[:size]))
+		objs = append(objs, catObject{kind: header[1], body: out[:size]})
 		out = out[size+1:]
 	}
-	return notes, nil
+	return objs, nil
+}
+
+// IndexTree writes the index as a tree object and returns its hash: exactly
+// the tree a commit made now would record. It honors GIT_INDEX_FILE, so in a
+// pre-commit hook under `git commit -a` it is the temporary index git commits
+// from. It fails while the index has unmerged entries.
+func IndexTree() (string, error) {
+	tree, err := run("write-tree")
+	if err != nil {
+		return "", err
+	}
+	if tree == "" || !IsValidCommitish(tree) {
+		return "", fmt.Errorf("write-tree returned %q", tree)
+	}
+	return tree, nil
+}
+
+// CommitShape is what a commit was made of: its tree and first parent ("" for
+// a root commit). Missing is true when the commit is not in the repository
+// (rewritten away, or never fetched).
+type CommitShape struct {
+	Tree, Parent string
+	Missing      bool
+}
+
+// CommitShapes reads the tree and first parent of every commit in one git
+// process, however many there are.
+func CommitShapes(hashes []string) (map[string]CommitShape, error) {
+	for _, h := range hashes {
+		if h == "" || !IsValidCommitish(h) {
+			return nil, fmt.Errorf("invalid commit hash %q", h)
+		}
+	}
+	out := make(map[string]CommitShape, len(hashes))
+	if len(hashes) == 0 {
+		return out, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
+	objs, err := catFileBatch(ctx, hashes, MaxOutputBytes)
+	if err != nil {
+		return nil, err
+	}
+	for i, o := range objs {
+		if o.missing || o.kind != "commit" {
+			out[hashes[i]] = CommitShape{Missing: true}
+			continue
+		}
+		var shape CommitShape
+		for _, line := range strings.Split(string(o.body), "\n") {
+			if line == "" {
+				break // the headers end at the first blank line
+			}
+			if t, ok := strings.CutPrefix(line, "tree "); ok && shape.Tree == "" {
+				shape.Tree = t
+			} else if p, ok := strings.CutPrefix(line, "parent "); ok && shape.Parent == "" {
+				shape.Parent = p
+			}
+		}
+		out[hashes[i]] = shape
+	}
+	return out, nil
 }
 
 // runLimited runs git with optional stdin and returns raw stdout, failing
@@ -415,6 +518,25 @@ func RunIn(ctx context.Context, dir string, stdin io.Reader, max int, args ...st
 		ctx, cancel = context.WithTimeout(ctx, defaultTimeout)
 		defer cancel()
 	}
+	out, err := execGit(ctx, dir, stdin, max, args)
+	if err != nil {
+		if out == nil {
+			return nil, err
+		}
+		return out.buf.Bytes(), err
+	}
+	if out.truncated {
+		return nil, fmt.Errorf("git %s: output exceeded %d bytes", strings.Join(args, " "), max)
+	}
+	return out.buf.Bytes(), nil
+}
+
+// execGit is the one place githints starts git. stdout is capped at max
+// bytes (the caller decides whether passing it is a truncation or an error),
+// stderr at 8 KiB for the error message. On a non-zero exit the error wraps
+// *exec.ExitError and stdout is returned with it; when ctx ended the run,
+// there is no output.
+func execGit(ctx context.Context, dir string, stdin io.Reader, max int, args []string) (*capWriter, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	out := &capWriter{n: max}
@@ -426,12 +548,9 @@ func RunIn(ctx context.Context, dir string, stdin io.Reader, max int, args ...st
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), ctxErr)
 		}
-		return out.buf.Bytes(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.buf.String()))
+		return out, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.buf.String()))
 	}
-	if out.truncated {
-		return nil, fmt.Errorf("git %s: output exceeded %d bytes", strings.Join(args, " "), max)
-	}
-	return out.buf.Bytes(), nil
+	return out, nil
 }
 
 // AddNote adds a git note to HEAD. It uses --force so repeated commits or
@@ -447,6 +566,111 @@ func AddNote(ref, message string) error {
 func DeleteRef(ref string) error {
 	_, err := run("update-ref", "-d", ref)
 	return err
+}
+
+// AnchorsRef is where the post-commit hook writes Merkle anchors.
+const AnchorsRef = "refs/notes/githints"
+
+// networkTimeout bounds a push or fetch, which waits on a remote and maybe
+// on a person typing a password.
+const networkTimeout = 2 * time.Minute
+
+// Remotes lists the configured remote names.
+func Remotes() ([]string, error) {
+	out, err := run("remote")
+	if err != nil || out == "" {
+		return nil, err
+	}
+	return strings.Fields(out), nil
+}
+
+// checkRemote accepts only the name of a configured remote. The name lands in
+// argv, so anything else -- a URL, or "--upload-pack=..." -- is refused rather
+// than passed to git.
+func checkRemote(remote string) error {
+	remotes, err := Remotes()
+	if err != nil {
+		return err
+	}
+	for _, r := range remotes {
+		if r == remote && !strings.HasPrefix(r, "-") {
+			return nil
+		}
+	}
+	return fmt.Errorf("%q is not a configured remote (git remote lists: %s)", remote, strings.Join(remotes, ", "))
+}
+
+// PushAnchors pushes refs/notes/githints to a configured remote. It never
+// forces: anchors written by another clone are not overwritten.
+func PushAnchors(remote string) error {
+	if err := checkRemote(remote); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), networkTimeout)
+	defer cancel()
+	_, err := runCtx(ctx, "push", "--", remote, AnchorsRef+":"+AnchorsRef)
+	return err
+}
+
+// FetchAnchors fetches refs/notes/githints from a configured remote into the
+// local ref, only as a fast-forward: local anchors are never discarded.
+func FetchAnchors(remote string) error {
+	if err := checkRemote(remote); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), networkTimeout)
+	defer cancel()
+	_, err := runCtx(ctx, "fetch", "--", remote, AnchorsRef+":"+AnchorsRef)
+	return err
+}
+
+// Blamed is the commit that last changed one line of a file, with the file's
+// name in that commit (blame follows renames) and the commit's subject.
+type Blamed struct {
+	Commit, File, Subject string
+	Uncommitted           bool // the line is changed in the working tree
+}
+
+// BlameLine asks which commit last changed line n of file. No textconv
+// filter runs, and the path is after "--".
+func BlameLine(file string, n int) (Blamed, error) {
+	if n < 1 {
+		return Blamed{}, fmt.Errorf("line must be 1 or more, got %d", n)
+	}
+	out, err := run("blame", "--porcelain", "--no-textconv", "-L", fmt.Sprintf("%d,%d", n, n), "--", file)
+	if err != nil {
+		return Blamed{}, err
+	}
+	var b Blamed
+	for i, l := range strings.Split(out, "\n") {
+		if i == 0 {
+			f := strings.Fields(l)
+			if len(f) == 0 || !IsValidCommitish(f[0]) || f[0] == "" {
+				return Blamed{}, fmt.Errorf("blame: unexpected output %q", l)
+			}
+			b.Commit = f[0]
+			b.Uncommitted = strings.Trim(b.Commit, "0") == ""
+			continue
+		}
+		if strings.HasPrefix(l, "\t") {
+			break // the line's content: never parsed as a header
+		}
+		if v, ok := strings.CutPrefix(l, "filename "); ok {
+			b.File = v
+		} else if v, ok := strings.CutPrefix(l, "summary "); ok {
+			b.Subject = v
+		}
+	}
+	return b, nil
+}
+
+// RefHash returns the object a ref points at, or "" when it does not exist.
+func RefHash(ref string) string {
+	out, err := run("rev-parse", "--verify", "--quiet", ref)
+	if err != nil {
+		return ""
+	}
+	return out
 }
 
 // RefExists reports whether a ref exists in the current repository.

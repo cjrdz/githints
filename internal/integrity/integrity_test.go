@@ -305,6 +305,43 @@ func TestRotateSalt(t *testing.T) {
 	}
 }
 
+// The chain is verified inside the transaction that re-signs it, after the
+// new salt is staged; a refusal must leave the old salt in force and no
+// staged file behind.
+func TestRotateSaltRefusalKeepsOldSalt(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	root := t.TempDir()
+	st, err := store.Open(filepath.Join(root, ".githints", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := KeyFromRepo(root); err != nil {
+		t.Fatalf("KeyFromRepo: %v", err)
+	}
+	if _, err := st.Insert(store.Change{FilePath: "a.go", Source: "agent", Summary: "x", RecordedAt: 10, HMAC: "not-a-valid-hmac"}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	st.Close()
+	before, err := os.ReadFile(SaltPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RotateSalt(root, false); err == nil {
+		t.Fatal("RotateSalt re-signed a broken chain without -force")
+	}
+	after, err := os.ReadFile(SaltPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rotation changed the salt")
+	}
+	if _, err := os.Stat(SaltPath(root) + ".new"); !os.IsNotExist(err) {
+		t.Errorf("a refused rotation left the staged salt behind: %v", err)
+	}
+}
+
 // A legacy in-repo salt that git tracks came from a commit: anyone with the
 // repository has the key. It must be refused, not silently used.
 func TestLoadOrCreateSaltRefusesTrackedLegacySalt(t *testing.T) {
@@ -427,5 +464,54 @@ func TestMissingSaltWithRowsIsAnErrorAndImportRecovers(t *testing.T) {
 	}
 	if _, err := ImportSalt(root, "nothex", true); err == nil {
 		t.Fatal("ImportSalt accepted garbage")
+	}
+}
+
+// A row recorded while a rotation is under way must end up signed with the
+// new key. The row is written at the last moment another writer could get in,
+// just before the re-signing transaction; the rotation must read it there.
+// Before the fix it read the log first, re-signed the rows it had read, and
+// left this one under the old key.
+func TestRotateSaltIncludesARowRecordedDuringIt(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	root := t.TempDir()
+	st, err := store.Open(filepath.Join(root, ".githints", "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	key, err := KeyFromRepo(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign := func(c store.Change) (string, error) { return ComputeHMAC(key, c) }
+	for i, f := range []string{"a.go", "b.go"} {
+		if _, err := st.InsertSigned(store.Change{FilePath: f, Source: "agent", Summary: "x", RecordedAt: int64(10 + i)}, sign, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beforeResign = func() {
+		if _, err := st.InsertSigned(store.Change{FilePath: "c.go", Source: "agent", Summary: "during rotation", RecordedAt: 20}, sign, false); err != nil {
+			t.Errorf("concurrent record: %v", err)
+		}
+	}
+	t.Cleanup(func() { beforeResign = func() {} })
+
+	if err := RotateSalt(root, false); err != nil {
+		t.Fatalf("RotateSalt: %v", err)
+	}
+	newKey, err := KeyFromRepo(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.AllChanges()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3", len(rows))
+	}
+	if errs := VerifyChain(newKey, rows); len(errs) != 0 {
+		t.Errorf("chain does not verify under the new key: %+v", errs)
 	}
 }

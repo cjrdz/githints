@@ -1,6 +1,8 @@
 package notes
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -64,7 +66,7 @@ func TestPageCSP(t *testing.T) {
 	script := regexp.MustCompile(`(?s)<script>(.*?)</script>`).FindStringSubmatch(out)[1]
 	style := regexp.MustCompile(`(?s)<style>(.*?)</style>`).FindStringSubmatch(out)[1]
 	for name, body := range map[string]string{"script": script, "style": style} {
-		if !strings.Contains(out, cspHash(body)) {
+		if !strings.Contains(out, sha256CSP(body)) {
 			t.Errorf("CSP does not pin the inline %s", name)
 		}
 	}
@@ -148,4 +150,11 @@ func TestWritePageRefusesToWriteThroughALink(t *testing.T) {
 	if b, _ := os.ReadFile(victim); string(b) != "ORIGINAL" {
 		t.Errorf("the file behind the link was overwritten: %q", b)
 	}
+}
+
+// sha256CSP is the CSP source expression for body, computed here rather than
+// with the function under test.
+func sha256CSP(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
 }

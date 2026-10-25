@@ -280,9 +280,12 @@ func Run(root string, st *store.Store, db *index.Store, opt Options) (Result, er
 		},
 	}
 	for _, c := range rows {
-		if c.Kind == store.KindOutcome {
+		switch c.Kind {
+		case store.KindOutcome:
 			m.Counts["outcomes"]++
-		} else {
+		case store.KindReview:
+			m.Counts["reviews"]++
+		default:
 			m.Counts["changes"]++
 		}
 	}

@@ -168,7 +168,7 @@ func loadSalt(root string, replacing bool) ([]byte, error) {
 				"A new salt would make every one of them fail `githints verify`, so none was created.\n"+
 				"  - Moved the repository or changed machines? Restore the salt: on the old machine run\n"+
 				"    `githints salt export -o salt.txt`, then here `githints salt import salt.txt`.\n"+
-				"  - Salt gone for good? `githints rotate-salt -force` re-signs the log under a new salt\n"+
+				"  - Salt gone for good? `githints salt rotate -force` re-signs the log under a new salt\n"+
 				"    (this discards the existing tamper evidence)", ErrSaltMissing, n, path)
 		}
 	}
@@ -338,7 +338,7 @@ func refuseTrackedSalt(root, path string) error {
 		return nil
 	}
 	return fmt.Errorf("%s is tracked by git, so the integrity key is public; "+
-		"run `git rm --cached .githints/.salt`, delete the file, then `githints rotate-salt -force` "+
+		"run `git rm --cached .githints/.salt`, delete the file, then `githints salt rotate -force` "+
 		"to re-sign the log under a private salt", legacy)
 }
 
@@ -394,6 +394,12 @@ type hmacPayload struct {
 	TargetID       int64  `json:"target_id,omitempty"`
 	TargetDiffHash string `json:"target_diff_hash,omitempty"`
 	Outcome        string `json:"outcome,omitempty"`
+
+	// Review receipt fields, after the outcome ones and likewise omitted
+	// when empty.
+	CandidateTree string `json:"candidate_tree,omitempty"`
+	BaseCommit    string `json:"base_commit,omitempty"`
+	Verdict       string `json:"verdict,omitempty"`
 }
 
 func payloadFromChange(c store.Change) hmacPayload {
@@ -406,6 +412,9 @@ func payloadFromChange(c store.Change) hmacPayload {
 		TargetID:           c.TargetID,
 		TargetDiffHash:     c.TargetDiffHash,
 		Outcome:            c.OutcomeState,
+		CandidateTree:      c.CandidateTree,
+		BaseCommit:         c.BaseCommit,
+		Verdict:            c.Verdict,
 		PrevHMAC:           c.PrevHMAC,
 		FilePath:           c.FilePath,
 		Branch:             c.Branch,
@@ -542,7 +551,7 @@ func verifyOutcomes(rows []store.Change) []IntegrityError {
 			errs = append(errs, IntegrityError{ID: c.ID, Problem: fmt.Sprintf("outcome row has unknown state %q", c.OutcomeState)})
 		}
 		t, ok := byID[c.TargetID]
-		if !ok || t.ID >= c.ID || t.Kind == store.KindOutcome {
+		if !ok || t.ID >= c.ID || (t.Kind != store.KindChange && t.Kind != "") {
 			errs = append(errs, IntegrityError{ID: c.ID, Problem: ProblemOutcomeTarget})
 			continue
 		}
@@ -601,6 +610,10 @@ func MerkleRoot(rows []store.Change) (string, error) {
 // the existing chain first unless force is true. The new salt is written
 // atomically: if the DB update succeeds but the salt rename fails, the
 // .salt.new file is left behind for manual recovery.
+// beforeResign runs just before RotateSalt's re-signing transaction. Tests
+// record a row there, the moment another writer could; nothing else sets it.
+var beforeResign = func() {}
+
 func RotateSalt(root string, force bool) error {
 	oldSalt, err := loadSalt(root, force)
 	if err != nil {
@@ -615,59 +628,53 @@ func RotateSalt(root string, force bool) error {
 	}
 	defer st.Close()
 
-	rows, err := st.AllChanges()
-	if err != nil {
-		return fmt.Errorf("load changes: %w", err)
-	}
-
-	if !force && len(rows) > 0 {
-		if errs := VerifyChain(oldKey, rows); len(errs) > 0 {
-			return fmt.Errorf("existing chain has %d integrity problem(s); use -force to rotate anyway", len(errs))
-		}
-	}
-
 	newSalt := make([]byte, saltSize)
 	if _, err := rand.Read(newSalt); err != nil {
 		return fmt.Errorf("generate salt: %w", err)
 	}
 	newKey := DeriveKey(newSalt, email)
 
-	type update struct {
-		id   int64
-		hmac string
-		prev string
-	}
-	updates := make([]update, len(rows))
-	var prev string
-	for i, c := range rows {
-		c.PrevHMAC = prev
-		c.HMAC, err = ComputeHMAC(newKey, c)
-		if err != nil {
-			return fmt.Errorf("re-sign row %d: %w", c.ID, err)
-		}
-		updates[i] = update{id: c.ID, hmac: c.HMAC, prev: c.PrevHMAC}
-		prev = c.HMAC
-	}
-
+	// Through safefs: a legacy salt lives in .githints/, where a planted link
+	// at the .new name would otherwise redirect the write.
 	saltPath := SaltPath(root)
 	tmpPath := saltPath + ".new"
-	if err := os.WriteFile(tmpPath, newSalt, 0o600); err != nil {
+	if err := safefs.WriteFile(filepath.Dir(tmpPath), filepath.Base(tmpPath), newSalt, safefs.StateDirPerm, 0o600); err != nil {
 		return fmt.Errorf("write new salt: %w", err)
 	}
 
+	// The rows are read inside the transaction that re-signs them. Read
+	// before it, a row recorded in between (by a running MCP server) kept the
+	// old key, and the chain failed verify after the rotation.
+	beforeResign()
 	if err := st.WithTx(func(tx *sql.Tx) error {
+		rows, err := store.AllChangesTx(tx)
+		if err != nil {
+			return fmt.Errorf("load changes: %w", err)
+		}
+		if !force && len(rows) > 0 {
+			if errs := VerifyChain(oldKey, rows); len(errs) > 0 {
+				return fmt.Errorf("existing chain has %d integrity problem(s); use -force to rotate anyway", len(errs))
+			}
+		}
 		stmt, err := tx.Prepare("UPDATE changes SET hmac = ?, prev_hmac = ? WHERE id = ?")
 		if err != nil {
 			return err
 		}
 		defer stmt.Close()
-		for _, u := range updates {
-			if _, err := stmt.Exec(u.hmac, u.prev, u.id); err != nil {
+		var prev string
+		for _, c := range rows {
+			c.PrevHMAC = prev
+			if c.HMAC, err = ComputeHMAC(newKey, c); err != nil {
+				return fmt.Errorf("re-sign row %d: %w", c.ID, err)
+			}
+			if _, err := stmt.Exec(c.HMAC, c.PrevHMAC, c.ID); err != nil {
 				return err
 			}
+			prev = c.HMAC
 		}
 		return nil
 	}); err != nil {
+		_ = os.Remove(tmpPath) // nothing was re-signed, so the old salt stays in force
 		return fmt.Errorf("re-sign rows: %w", err)
 	}
 

@@ -1,0 +1,78 @@
+{
+  // Shell scripts: sh, bash, zsh and ksh, by extension, plus the startup
+  // files that have none (.bashrc, .zshrc, .envrc...). A script with no
+  // extension is recognised only by its shebang, which a file-name claim
+  // cannot see, so bin/deploy is not indexed.
+  //
+  // A function is a symbol, in both spellings: `name() {` and
+  // `function name {` / `function name() {`, and so is a global written in
+  // capitals at the start of a line (`export KUBECONFIG=...`, `readonly
+  // RETRIES=3`), the configuration a sourced file usually exists to share;
+  // lower-case names are locals by convention. Nesting is not tracked
+  // (depth "none"): a function defined inside another is global once the
+  // outer one runs, and braces are not reliable in shell -- `$#` reads as a
+  // comment below, which would hide the `}` after it.
+  //
+  // A sourced file is an import: `source ./lib/log.sh`, `. ../common.sh`,
+  // and the idioms that name the script's own directory
+  // ("$(dirname "$0")/lib.sh", "${BASH_SOURCE%/*}/lib.sh"), all resolved from
+  // the sourcing file's directory, which is where a script expects to find
+  // them. An absolute path (/etc/os-release) is kept as written. A path
+  // built from any other variable, or a bare name that the shell would look
+  // up on PATH, is not followed. Scripts are graph nodes only when something
+  // links them.
+  "language": "shell",
+  "extensions": [".sh", ".bash", ".zsh", ".ksh"],
+  "filenames": [
+    ".bashrc", ".bash_profile", ".bash_aliases", ".bash_logout", ".profile",
+    ".zshrc", ".zprofile", ".zshenv", ".envrc"
+  ],
+  "depth_style": "none",
+  "graph": "linked",
+
+  // `#` begins a comment only at the start of a word in shell, but the
+  // blanker cannot tell: `$#` and `foo#bar` lose the rest of their line.
+  // ${...} is read as a literal, so `${#items[@]}` and `${x#prefix}` do not.
+  //
+  // Strings end at the end of a line. Shell strings may span lines, but an
+  // unbalanced quote (an apostrophe in a here-document) would then hide the
+  // rest of the file. Here-documents are not recognised: their bodies are
+  // read as code.
+  "comments": { "line": ["#"] },
+  "strings": [
+    { "open": "${", "close": "}" },
+    { "open": "$'", "close": "'", "escape": "\\" },
+    { "open": "\"", "close": "\"", "escape": "\\", "continue_on_escape": true },
+    { "open": "'", "close": "'" }
+  ],
+
+  "import_path": "slash",
+
+  "symbols": [
+    { "kind": "func", "requires": "function",
+      "pattern": "^\\s*function\\s+(?P<name>[A-Za-z_][\\w.:-]*)\\s*(?:\\(\\s*\\))?\\s*(?:\\{|\\(|$)" },
+    { "kind": "func", "requires": "(",
+      "pattern": "^\\s*(?P<name>[A-Za-z_][\\w.:-]*)\\s*\\(\\s*\\)\\s*(?:\\{|\\(|$)" },
+    { "kind": "var", "requires": "=",
+      "pattern": "^(?:(?:export|readonly|declare\\s+-[a-zA-Z]+|typeset\\s+-[a-zA-Z]+)\\s+)?(?P<name>[A-Z_][A-Z0-9_]*)=" }
+  ],
+
+  "imports": [
+    // source ./lib/log.sh, . ../common.sh: from the script's directory.
+    { "requires": "source", "relative": true,
+      "pattern": "(?:^|[;&|{(]|\\b(?:then|do|else))\\s*source\\s+[\"']?(?P<path>\\.\\.?/[^\"'\\s;&|)$]+)(?:[\"'\\s;&|)]|$)" },
+    { "requires": ". ", "relative": true,
+      "pattern": "(?:^|[;&|{(]|\\b(?:then|do|else))\\s*\\.\\s+[\"']?(?P<path>\\.\\.?/[^\"'\\s;&|)$]+)(?:[\"'\\s;&|)]|$)" },
+    // source "$(dirname "$0")/lib.sh", "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+    { "requires": "dirname", "relative": true,
+      "pattern": "(?:^|[\\s;&|{(])(?:source|\\.)\\s+\"?\\$\\(\\s*dirname\\s+\"?\\$(?:0|\\{0\\}|BASH_SOURCE|\\{BASH_SOURCE(?:\\[0\\])?\\})\"?\\s*\\)\"?/(?P<path>[^\"'\\s;&|)$]+)(?:[\"'\\s;&|)]|$)" },
+    // source "${BASH_SOURCE%/*}/lib.sh"
+    { "requires": "BASH_SOURCE", "relative": true,
+      "pattern": "(?:^|[\\s;&|{(])(?:source|\\.)\\s+\"?\\$\\{BASH_SOURCE(?:\\[0\\])?%/\\*\\}\"?/(?P<path>[^\"'\\s;&|)$]+)(?:[\"'\\s;&|)]|$)" },
+    // source /etc/os-release: outside the repository, kept as written.
+    { "requires": "source",
+      "pattern": "(?:^|[;&|{(]|\\b(?:then|do|else))\\s*source\\s+[\"']?(?P<path>/[^\"'\\s;&|)$]+)(?:[\"'\\s;&|)]|$)" },
+    { "requires": ". ",
+      "pattern": "(?:^|[;&|{(]|\\b(?:then|do|else))\\s*\\.\\s+[\"']?(?P<path>/[^\"'\\s;&|)$]+)(?:[\"'\\s;&|)]|$)" }
+  ]
+}

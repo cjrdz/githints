@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cjrdz/githints/internal/cli/anchors"
 	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/cli/doctor"
 	"github.com/cjrdz/githints/internal/cli/exportcmd"
@@ -18,6 +19,7 @@ import (
 	"github.com/cjrdz/githints/internal/cli/notecmd"
 	"github.com/cjrdz/githints/internal/cli/read"
 	"github.com/cjrdz/githints/internal/cli/record"
+	"github.com/cjrdz/githints/internal/cli/review"
 	"github.com/cjrdz/githints/internal/cli/salt"
 	"github.com/cjrdz/githints/internal/cli/serve"
 	"github.com/cjrdz/githints/internal/cli/setup"
@@ -73,25 +75,30 @@ var commands = map[string]func(args []string) error{
 	"outcome":        record.Outcome,
 	"note":           notecmd.Run,
 	"export":         func(args []string) error { return exportcmd.Run(args, versionString()) },
-	"remove":         teardown.Remove,
 	"uninstall":      teardown.Uninstall,
 	"verify":         noArgs(verify.Run),
-	"changes":        read.Changes,
-	"history":        read.History,
-	"recent":         read.Recent,
+	"anchors":        anchors.Run,
+	"log":            read.Log,
 	"brief":          read.Brief,
-	"search":         read.Search,
 	"diff":           read.Diff,
-	"rotate-salt":    salt.RotateSalt,
+	"review":         review.Run,
 	"salt":           salt.Salt,
-	"status":         noArgs(record.Status),
 	"render":         noArgs(record.Render),
 	"index":          indexcmd.Run,
 	"doctor":         noArgs(doctor.Run),
-	"mcp-config":     mcpcfg.MCPConfig,
 	"setup":          setup.Setup,
-	"version":        noArgs(cmdVersion),
-	"help":           noArgs(cmdHelp),
+
+	// Old names, kept for one release; see hiddenCommands.
+	"history":     read.Log,
+	"recent":      read.Log,
+	"search":      read.Log,
+	"changes":     read.Log,
+	"rotate-salt": salt.RotateSalt,
+	"remove":      teardown.Remove,
+	"status":      noArgs(doctor.Run),
+	"mcp-config":  mcpcfg.MCPConfig,
+	"version":     noArgs(cmdVersion),
+	"help":        noArgs(cmdHelp),
 }
 
 // noArgs adapts a flagless command to the table's handler signature.
@@ -104,6 +111,18 @@ func noArgs(fn func() error) func([]string) error {
 var hiddenCommands = map[string]bool{
 	"hook-run":       true,
 	"hook-precommit": true,
+
+	// Replaced by log, salt rotate, uninstall -keep-data, doctor and
+	// setup -print. They still work so scripts and agent memories keep
+	// working for a release.
+	"history":     true,
+	"recent":      true,
+	"search":      true,
+	"changes":     true,
+	"rotate-salt": true,
+	"remove":      true,
+	"status":      true,
+	"mcp-config":  true,
 }
 
 func usage() {
@@ -115,9 +134,9 @@ const usageText = `githints — lightweight change tracking for AI coding agents
 Usage:
   githints init [-chain|-force] [-share]
                                   set up .githints/ + install the git hooks
-  githints remove [-dry-run]      stop tracking: remove the git hooks, keep everything else
-  githints uninstall [-dry-run] [-force]
-                                  remove hooks, MCP entries, agent blocks, anchors, .githints/ and salt
+  githints uninstall [-dry-run] [-force | -keep-data]
+                                  remove hooks, MCP entries, agent blocks, anchors, .githints/
+                                  and salt; -keep-data removes only the hooks
   githints serve [-root=PATH]     run the MCP stdio server (root also via $GITHINTS_ROOT)
   githints record -file=... -summary=... [-reason=...] [-agent-id=...]
                                   manually record a change (useful for testing)
@@ -128,19 +147,16 @@ Usage:
   githints export -o DIR [-duckdb] [-no-notes]
                                   write the log, hints and notes as files for people and notebooks
   githints verify                 check HMAC chain + markdown consistency
-  githints history -file=F [-limit=N]
-                                  why a file looks the way it does (get_file_history)
-  githints recent [-limit=N]      latest changes across the repo (get_recent_changes)
+  githints anchors push|fetch [REMOTE]
+                                  share the Merkle anchors (refs/notes/githints) with a remote
+  githints log [-file=F] [-query=Q] [-since=T] [-until=T] [-limit=N]
+                                  the change log, newest first; filters combine (query_changes)
   githints brief [-budget=N]      session-start digest: failed attempts, uncommitted work, blast radius
-  githints search -query=Q [-limit=N]
-                                  full-text search of summaries and reasons (search_changes)
   githints diff -file=F [-hash=H] redacted diff of the working tree or one commit (get_diff)
-  githints changes -since=T -until=T [-file=F] [-limit=N]
-                                  timeline query (get_changes_in_range)
-  githints rotate-salt [-force]   generate a new integrity salt and re-sign the chain
-  githints salt path|export [-o FILE]|import [-force] FILE
-                                  locate, back up, or restore the integrity salt
-  githints status                 show store health and pending records
+  githints review [-json] [PATH...]
+                                  how deep a review the staged change (or PATHs) needs, and why
+  githints salt path|export [-o FILE]|import [-force] FILE|rotate [-force]
+                                  locate, back up, restore or rotate the integrity salt
   githints render                 re-render all markdown from the store
   githints index                  re-index the structural symbol cache
   githints index status           show index statistics
@@ -151,13 +167,12 @@ Usage:
   githints index graph [-format=html|json|dot|mermaid] [-o=FILE] [-focus=F -depth=N]
                                   export the file dependency graph (default: an
                                   offline viewer at .githints/graph.html)
-  githints doctor                 check hooks, salt, store, config, index and MCP setup
-  githints setup [-clients=a,b|all] [-dry-run] [-list] [-update]
+  githints doctor                 check hooks, salt, store, log, config, index and MCP setup
+  githints setup [-clients=a,b|all] [-dry-run] [-list] [-update] [-print]
                                   init if needed, then register the MCP server with
                                   every client detected (Claude Code, opencode, Codex,
-                                  VS Code, Cursor, Zed, Kiro, Gemini, Junie, ...)
-  githints mcp-config CLIENT [-write]
-                                  print or add the MCP entry for one client
+                                  VS Code, Cursor, Zed, Kiro, Gemini, Junie, ...);
+                                  -print -clients=NAME only prints that client's entry
   githints version                print the version, commit and build date
   githints help                   show this list
 

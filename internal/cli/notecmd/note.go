@@ -56,17 +56,16 @@ func Run(args []string) error {
 }
 
 // open returns the repository root and the index, which holds the notes'
-// search tables. It goes through OpenInitialized so, like every command but
-// init, it refuses a repository githints was never set up in.
+// search tables. Like every command but init, it refuses a repository
+// githints was never set up in.
 func open(fs *flag.FlagSet, args []string) (root string, db *index.Store, rest []string, err error) {
 	if err := fs.Parse(args); err != nil {
 		return "", nil, nil, err
 	}
-	root, st, err := core.OpenInitialized()
+	root, err = core.InitializedRoot()
 	if err != nil {
 		return "", nil, nil, err
 	}
-	st.Close() // only needed to confirm the repository is initialized
 	db, err = index.Open(lang.IndexDBPath(root))
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("open notes index: %w", err)

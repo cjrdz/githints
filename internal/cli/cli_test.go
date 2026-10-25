@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	"github.com/cjrdz/githints/internal/cli/core"
+	"github.com/cjrdz/githints/internal/cli/doctor"
+	"github.com/cjrdz/githints/internal/cli/indexcmd"
+	"github.com/cjrdz/githints/internal/cli/notecmd"
 	"github.com/cjrdz/githints/internal/cli/record"
 	"github.com/cjrdz/githints/internal/cli/verify"
 )
@@ -97,14 +100,22 @@ func TestCommandsRequireInit(t *testing.T) {
 	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
 	dir := chdirTempRepo(t)
 	for name, run := range map[string]func() error{
-		"status": record.Status,
 		"verify": verify.Run,
 		"record": func() error { return record.Record([]string{"-file=a.go", "-summary=x"}) },
+		// index.Open creates .githints/ by itself, so these once did.
+		"index":        func() error { return indexcmd.Run(nil) },
+		"index status": func() error { return indexcmd.Run([]string{"status"}) },
+		"index verify": func() error { return indexcmd.Run([]string{"verify"}) },
+		"index facets": func() error { return indexcmd.Run([]string{"facets"}) },
+		"note list":    func() error { return notecmd.Run([]string{"list"}) },
 	} {
 		if err := run(); !errors.Is(err, core.ErrNotInitialized) {
 			t.Errorf("%s before init: got %v, want ErrNotInitialized", name, err)
 		}
 	}
+	// doctor (and status, its alias) reports a missing setup as a failed
+	// check rather than an error value, but must create nothing either.
+	_ = doctor.Run() // its verdict is printed; only the side effect matters here
 	if _, err := os.Stat(filepath.Join(dir, ".githints")); err == nil {
 		t.Error("a command other than init created .githints/")
 	}

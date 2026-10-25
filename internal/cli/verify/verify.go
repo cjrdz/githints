@@ -34,15 +34,16 @@ func Run() error {
 		return fmt.Errorf("load changes: %w", err)
 	}
 
-	outcomes := 0
+	kinds := map[string]int{}
 	for _, c := range rows {
-		if c.Kind == store.KindOutcome {
-			outcomes++
-		}
+		kinds[c.Kind]++
 	}
-	fmt.Printf("changes: %d\n", len(rows)-outcomes)
-	if outcomes > 0 {
-		fmt.Printf("outcomes: %d\n", outcomes)
+	fmt.Printf("changes: %d\n", kinds[store.KindChange])
+	if n := kinds[store.KindOutcome]; n > 0 {
+		fmt.Printf("outcomes: %d\n", n)
+	}
+	if n := kinds[store.KindReview]; n > 0 {
+		fmt.Printf("review receipts: %d\n", n)
 	}
 
 	chainErrs := integrity.VerifyChain(key, rows)
@@ -108,7 +109,18 @@ func Run() error {
 		fmt.Printf("rows after the newest anchor: %d (anchored at the next commit)\n", anchors.Unanchorable)
 	}
 
-	if len(chainErrs) > 0 || len(diverged) > 0 || clockWarnings > 0 || len(anchors.Problems) > 0 {
+	reviewProblems, err := integrity.VerifyReviews(rows)
+	if err != nil {
+		return fmt.Errorf("check review receipts: %w", err)
+	}
+	if len(reviewProblems) > 0 {
+		fmt.Printf("review receipts: %d problem(s)\n", len(reviewProblems))
+		for _, p := range reviewProblems {
+			fmt.Printf("  - %s\n", p)
+		}
+	}
+
+	if len(chainErrs) > 0 || len(diverged) > 0 || clockWarnings > 0 || len(anchors.Problems) > 0 || len(reviewProblems) > 0 {
 		return core.ErrVerifyFailed
 	}
 

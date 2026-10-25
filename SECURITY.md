@@ -62,7 +62,7 @@ are vulnerabilities:
   terminal, an MCP response or the graph viewer.
 - **Repository config cannot run programs.** git runs without external diff or
   textconv drivers; the hook script never interpolates the binary path into
-  code; the Ollama endpoint is confined to loopback.
+  code.
 - **Edited, deleted or re-signed history is detected** by `githints verify`
   through the Merkle anchors, within the limits below.
 
@@ -80,8 +80,9 @@ the Merkle anchor written to `refs/notes/githints` after every commit, which
 a high-water mark over the whole log, so editing, deleting, or re-pointing an
 anchored row fails verify. Forging the database is easy, but forging it *and*
 rewriting a note that has already been pushed is not -- and git does not push
-notes by default, so push them yourself (`git push origin refs/notes/githints`)
-if you want the anchor to exist anywhere but your own machine. Rows recorded
+notes by default, so push them yourself (`githints anchors push`, which
+`githints doctor` reminds you of) if you want the anchor to exist anywhere but
+your own machine. Rows recorded
 since the last commit are not anchored yet. Treat the chain as
 tamper-**evident**, not tamper-proof.
 
@@ -107,12 +108,10 @@ reaches the agent. If a repository holds secrets that must never be shown to a
 model, keep them out of the working tree.
 
 **`.githints/config.json` is repository content.** It can therefore arrive in a
-clone and enable the optional Ollama integration without you asking. The endpoint
-is still forced to resolve to loopback — checked both at config load and again on
-the address actually dialed — and the request path is fixed at `/api/generate`,
-so this cannot reach off-box. It can choose *which* local port receives diff
-content, which is enough to fingerprint local services. githints prints a warning
-on stderr when a repo-supplied config enables egress.
+clone. It holds only index settings, whose limits have fixed ceilings, and
+nothing in it can make githints open a network connection: the MCP server
+speaks over stdio, and no githints package imports `net` since the optional
+Ollama integration was removed.
 
 **Notes are not integrity-checked.** Nothing signs a note in `.githints/notes/`:
 whoever can write that directory can write a note. githints scans notes for

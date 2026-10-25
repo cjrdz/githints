@@ -3,7 +3,6 @@ package lang
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -234,19 +233,6 @@ func decodeSpec(data []byte) (Spec, error) {
 	spec.Language = strings.ToLower(strings.TrimSpace(spec.Language))
 	for i, ext := range spec.Extensions {
 		spec.Extensions[i] = strings.ToLower(strings.TrimSpace(ext))
-	}
-	return spec, nil
-}
-
-// LoadSpecFile reads and parses a spec from disk.
-func LoadSpecFile(path string) (Spec, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Spec{}, fmt.Errorf("read spec: %w", err)
-	}
-	spec, err := LoadSpec(data)
-	if err != nil {
-		return Spec{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return spec, nil
 }

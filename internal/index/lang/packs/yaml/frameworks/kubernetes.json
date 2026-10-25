@@ -2,7 +2,8 @@
   // Kubernetes objects: a manifest's kind, named by its metadata.name. Any YAML
   // file can be one, so the shape is the gate: a top-level kind with a
   // capitalised value followed by metadata with a name. A templated name
-  // (Helm's {{ ... }}) is skipped.
+  // (Helm's {{ ... }}) is skipped here and reported by helm.json, under its
+  // chart, so no object is reported twice.
   "framework": "kubernetes",
   "languages": [
     "yaml"

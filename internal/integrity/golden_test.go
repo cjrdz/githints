@@ -77,3 +77,42 @@ func TestAnchorRootsAreFrozen(t *testing.T) {
 		t.Errorf("log root = %s", a.LogRoot)
 	}
 }
+
+// A review receipt's fields come after the outcome ones; this pins their
+// bytes the way TestHMACPayloadBytesAreFrozen pins an ordinary change's.
+func TestReviewPayloadBytesAreFrozen(t *testing.T) {
+	c := store.Change{
+		Source: "agent", Summary: "approved · risk high · lenses risk,resilience,readability,reliability",
+		Reason: "no findings", AgentID: "rev-1", RecordedAt: 1234567890, Kind: store.KindReview,
+		CandidateTree: "4b825dc642cb6eb9a060e54bf8d69288fbee4904", BaseCommit: "abc1234", Verdict: store.VerdictApproved,
+	}
+	got, err := json.Marshal(payloadFromChange(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"prev_hmac":"","file_path":"","branch":"","source":"agent","summary":"approved · risk high · lenses risk,resilience,readability,reliability","reason":"no findings","diff_stat":"","diff_hash":"","agent_id":"rev-1","recorded_at":1234567890,"clock_tamper_warning":false,"kind":"review","candidate_tree":"4b825dc642cb6eb9a060e54bf8d69288fbee4904","base_commit":"abc1234","verdict":"approved"}`
+	if string(got) != want {
+		t.Fatalf("payload bytes changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// Every receipt field is signed: rewriting any of them in the database, to
+// turn an escalation into an approval or point a receipt at another tree,
+// fails the chain.
+func TestReviewFieldsAreSigned(t *testing.T) {
+	key := DeriveKey(make([]byte, 32), "u@example.com")
+	c := store.Change{Source: "agent", Summary: "s", RecordedAt: 1, Kind: store.KindReview,
+		CandidateTree: "t1", BaseCommit: "b1", Verdict: store.VerdictEscalated}
+	c.HMAC = mustHMAC(t, key, c)
+	for name, edit := range map[string]func(*store.Change){
+		"verdict": func(r *store.Change) { r.Verdict = store.VerdictApproved },
+		"tree":    func(r *store.Change) { r.CandidateTree = "t2" },
+		"base":    func(r *store.Change) { r.BaseCommit = "b2" },
+	} {
+		r := c
+		edit(&r)
+		if errs := VerifyChain(key, []store.Change{r}); len(errs) == 0 {
+			t.Errorf("changing the %s left the chain verifying", name)
+		}
+	}
+}

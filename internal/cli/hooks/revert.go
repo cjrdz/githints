@@ -3,7 +3,6 @@ package hooks
 import (
 	"fmt"
 
-	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/recorder"
 	"github.com/cjrdz/githints/internal/store"
@@ -53,7 +52,7 @@ func recordReverts(st *store.Store, root string, key []byte, hash string) error 
 	for _, f := range changed {
 		touched[f] = true
 	}
-	note := fmt.Sprintf("Reverted by commit %s.", core.ShortCommitHash(hash))
+	note := fmt.Sprintf("Reverted by commit %s.", gitutil.ShortHash(hash))
 
 	budget := maxRevertRows
 	for _, ref := range reverted {
@@ -65,7 +64,7 @@ func recordReverts(st *store.Store, root string, key []byte, hash string) error 
 
 		rows, err := st.ChangesForCommit(full)
 		if err != nil {
-			return fmt.Errorf("load rows for %s: %w", core.ShortCommitHash(full), err)
+			return fmt.Errorf("load rows for %s: %w", gitutil.ShortHash(full), err)
 		}
 		for _, row := range rows {
 			if row.Kind != store.KindChange || !touched[row.FilePath] {

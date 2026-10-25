@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cjrdz/githints/internal/gitutil"
 	"github.com/cjrdz/githints/internal/store"
 	"github.com/cjrdz/githints/internal/textsafe"
 )
@@ -18,7 +19,7 @@ import (
 var columns = []string{
 	"id", "kind", "file_path", "commit_hash", "branch", "source", "summary", "reason", "diff_stat", "diff_hash",
 	"agent_id", "recorded_at", "recorded_at_utc", "clock_tamper_warning", "target_id", "target_diff_hash", "outcome",
-	"hmac", "prev_hmac",
+	"candidate_tree", "base_commit", "verdict", "hmac", "prev_hmac",
 }
 
 type jsonRow struct {
@@ -39,6 +40,9 @@ type jsonRow struct {
 	TargetID           int64  `json:"target_id"`
 	TargetDiffHash     string `json:"target_diff_hash"`
 	Outcome            string `json:"outcome"`
+	CandidateTree      string `json:"candidate_tree"`
+	BaseCommit         string `json:"base_commit"`
+	Verdict            string `json:"verdict"`
 	HMAC               string `json:"hmac"`
 	PrevHMAC           string `json:"prev_hmac"`
 }
@@ -57,6 +61,7 @@ func toRow(c store.Change) jsonRow {
 		Summary: c.Summary, Reason: c.Reason, DiffStat: c.DiffStat, DiffHash: c.DiffHash, AgentID: c.AgentID,
 		RecordedAt: c.RecordedAt, RecordedAtUTC: utc, ClockTamperWarning: c.ClockTamperWarning,
 		TargetID: c.TargetID, TargetDiffHash: c.TargetDiffHash, Outcome: c.OutcomeState,
+		CandidateTree: c.CandidateTree, BaseCommit: c.BaseCommit, Verdict: c.Verdict,
 		HMAC: c.HMAC, PrevHMAC: c.PrevHMAC,
 	}
 }
@@ -108,6 +113,7 @@ func writeCSV(w io.Writer, rows []store.Change) error {
 			neutralize(r.DiffStat), neutralize(r.DiffHash), neutralize(r.AgentID),
 			strconv.FormatInt(r.RecordedAt, 10), r.RecordedAtUTC, strconv.FormatBool(r.ClockTamperWarning),
 			strconv.FormatInt(r.TargetID, 10), neutralize(r.TargetDiffHash), neutralize(r.Outcome),
+			neutralize(r.CandidateTree), neutralize(r.BaseCommit), neutralize(r.Verdict),
 			neutralize(r.HMAC), neutralize(r.PrevHMAC),
 		}
 		if err := cw.Write(rec); err != nil {
@@ -120,7 +126,8 @@ func writeCSV(w io.Writer, rows []store.Change) error {
 
 // writeChangelog writes every change, newest first and grouped by commit, with
 // its reason and its newest outcome: CHANGES.md without the 100-row limit.
-// Outcomes appear under the change they are about, not as entries of their own.
+// Outcomes appear under the change they are about, not as entries of their own,
+// and review receipts, which are about a whole commit, are in changes.jsonl.
 func writeChangelog(w io.Writer, rows []store.Change) error {
 	latest := map[int64]store.Change{}
 	for _, c := range rows { // id order: a later outcome replaces an earlier one
@@ -135,14 +142,14 @@ func writeChangelog(w io.Writer, rows []store.Change) error {
 	lastCommit := "\x00"
 	for i := len(rows) - 1; i >= 0; i-- {
 		c := rows[i]
-		if c.Kind == store.KindOutcome {
+		if c.Kind != store.KindChange {
 			continue
 		}
 		if c.CommitHash != lastCommit {
 			if c.CommitHash == "" {
 				b.WriteString("## uncommitted\n\n")
 			} else {
-				fmt.Fprintf(&b, "## commit `%s`\n\n", textsafe.CodeSpanText(shortHash(c.CommitHash)))
+				fmt.Fprintf(&b, "## commit `%s`\n\n", textsafe.CodeSpanText(gitutil.ShortHash(c.CommitHash)))
 			}
 			lastCommit = c.CommitHash
 		}
@@ -174,13 +181,6 @@ func writeChangelog(w io.Writer, rows []store.Change) error {
 
 // flatten puts text on one line so an entry cannot start another.
 func flatten(s string) string { return strings.Join(strings.Fields(textsafe.OneLine(s)), " ") }
-
-func shortHash(h string) string {
-	if len(h) > 8 {
-		return h[:8]
-	}
-	return h
-}
 
 // writeDuckDB writes a script that loads the pack into DuckDB. It contains no
 // data from the log: every table is read from the files next to it, by fixed
@@ -217,12 +217,18 @@ SELECT
   clock_tamper_warning, target_id,
   NULLIF(target_diff_hash, '') AS target_diff_hash,
   NULLIF(outcome, '') AS outcome,
+  NULLIF(candidate_tree, '') AS candidate_tree,
+  NULLIF(base_commit, '') AS base_commit,
+  NULLIF(verdict, '') AS verdict,
   hmac, prev_hmac
 FROM read_json('changes.jsonl', format = 'newline_delimited', columns = {%s});
 
 -- Rows that say what changed, and rows that say how a change turned out.
 CREATE OR REPLACE VIEW changes AS SELECT * FROM log WHERE kind = 'change';
 CREATE OR REPLACE VIEW outcomes AS SELECT * FROM log WHERE kind = 'outcome';
+-- Review receipts: a verdict on one staged tree; commit_hash is the commit
+-- that used it, if any.
+CREATE OR REPLACE VIEW reviews AS SELECT * FROM log WHERE kind = 'review';
 
 -- Changes whose newest outcome is failed, partial or reverted.
 CREATE OR REPLACE VIEW failed_attempts AS

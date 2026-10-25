@@ -483,16 +483,6 @@ func IndexRollupPath(root string) string {
 	return filepath.Join(root, ".githints", "INDEX.md")
 }
 
-// IsIndexPath reports whether p is a path inside the index notes directory.
-func IsIndexPath(root, p string) bool {
-	notes := IndexNotesPath(root)
-	rel, err := filepath.Rel(notes, p)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, "..") && rel != "."
-}
-
 // IndexNotePath returns the path of the index note for a repo-relative source
 // path, and a boolean reporting whether the path would collide with the index
 // notes directory itself (i.e. the source path starts with "index/" or is "index").
@@ -545,10 +535,6 @@ func SortedKeys(m map[string]int) []string {
 	sort.Strings(keys)
 	return keys
 }
-
-// EscapeMarkdown escapes display text for an index note. It is the same
-// escaping the hint renderer uses (textsafe.Markdown); there is one copy.
-func EscapeMarkdown(s string) string { return textsafe.Markdown(s) }
 
 // NoteLink returns a link, labeled display, to the index note for target (a
 // repo-relative source file). fromDir is the directory of the linking

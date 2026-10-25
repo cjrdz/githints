@@ -110,3 +110,94 @@ func TestTerraformDirectoryModulesAndQuotedSymbols(t *testing.T) {
 		t.Error("the root module got a key")
 	}
 }
+
+// TestShellSpec: both function spellings and capitalised globals are
+// symbols; a sourced file is an import, from the script's directory, in the
+// spellings scripts use; nothing in a comment, a string, a here-document or
+// a variable-built path is.
+func TestShellSpec(t *testing.T) {
+	src := "#!/usr/bin/env bash\n" +
+		"# source ./commented.sh\n" +
+		"source \"$(dirname \"$0\")/../lib/log.sh\"\n" +
+		". \"$(dirname \"${BASH_SOURCE[0]}\")/env.bash\"\n" +
+		"source \"${BASH_SOURCE%/*}/colors.sh\"\n" +
+		"[ -f ./local.sh ] && . ./local.sh\n" +
+		"if [ -r /etc/os-release ]; then . /etc/os-release; fi\n" +
+		"source \"$CONFIG/settings.sh\"\n" +
+		"source ./lib/$NAME.sh\n" +
+		"echo \"source ./quoted.sh\"\n" +
+		"export KUBECONFIG=/tmp/kube\n" +
+		"readonly RETRIES=3\n" +
+		"declare -r REGION=eu\n" +
+		"timeout=30\n" +
+		"usage() {\n" +
+		"  echo \"usage: fake() {\"\n" +
+		"}\n" +
+		"function deploy {\n" +
+		"  [ $# -lt 1 ] && usage\n" +
+		"  echo ${#items[@]}\n" +
+		"  cat <<EOF\n" +
+		"it's here\n" +
+		"EOF\n" +
+		"}\n" +
+		"function rollback() {\n" +
+		"  :\n" +
+		"}\n" +
+		"lib::trace () { echo \"$*\"; }\n" +
+		"helper()\n" +
+		"{\n" +
+		"  :\n" +
+		"}\n"
+	symbols, imports := parseWith(t, "shell", "bin/deploy.sh", src)
+	want := map[string]SymbolKind{
+		"usage": KindFunc, "deploy": KindFunc, "rollback": KindFunc, "lib::trace": KindFunc, "helper": KindFunc,
+		"KUBECONFIG": KindVar, "RETRIES": KindVar, "REGION": KindVar,
+	}
+	if got := kindsByName(symbols); !reflect.DeepEqual(got, want) {
+		t.Errorf("symbols = %v, want %v", got, want)
+	}
+	wantImports := []string{"lib/log", "bin/env", "bin/colors", "bin/local", "/etc/os-release"}
+	if got := importPaths(imports); !reflect.DeepEqual(got, wantImports) {
+		t.Errorf("imports = %q, want %q", got, wantImports)
+	}
+
+	// The key a sourced file is imported by is the key its path gives it.
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"lib/log.sh": "", "bin/env.bash": ""})
+	for file, want := range map[string]string{"lib/log.sh": "lib/log", "bin/env.bash": "bin/env"} {
+		if key, err := NewRegistry().ImportPath(root, file); err != nil || key != want {
+			t.Errorf("%s: key %q, %v; want %q", file, key, err, want)
+		}
+	}
+}
+
+// TestInfraFileClaims: terragrunt.hcl is read as Terraform and links to the
+// module it deploys and the units it depends on; other HCL and .tfvars files
+// are not claimed. Shell startup files are claimed by name.
+func TestInfraFileClaims(t *testing.T) {
+	r := NewRegistry()
+	for file, want := range map[string]string{
+		"live/prod/vpc/terragrunt.hcl": "terraform",
+		"packer/ubuntu.pkr.hcl":        "",
+		"nomad/web.hcl":                "",
+		".terraform.lock.hcl":          "",
+		"env/prod.tfvars":              "",
+		"scripts/deploy.sh":            "shell",
+		"tools/run.bash":               "shell",
+		".zshrc":                       "shell",
+		"home/.bashrc":                 "shell",
+	} {
+		got := ""
+		if p := r.ForPath(file); p != nil {
+			got = p.Language()
+		}
+		if got != want {
+			t.Errorf("%s: %q, want %q", file, got, want)
+		}
+	}
+	src := "terraform {\n  source = \"../../../modules//vpc\"\n}\n\ndependency \"net\" {\n  config_path = \"../net\"\n}\n"
+	_, imports := parseWith(t, "terraform", "live/prod/vpc/terragrunt.hcl", src)
+	if got, want := importPaths(imports), []string{"modules/vpc", "live/prod/net"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("imports = %q, want %q", got, want)
+	}
+}

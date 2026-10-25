@@ -10,23 +10,35 @@ import (
 	"github.com/cjrdz/githints/internal/clitest"
 )
 
+// `uninstall -keep-data` replaced `remove`; both must stop tracking and keep
+// everything else.
 func TestRemoveStopsTrackingButKeepsStore(t *testing.T) {
-	dir := clitest.ChdirTempRepo(t)
-	hooksDir := initManagedHooks(t, dir)
+	for name, run := range map[string]func() error{
+		"remove":               func() error { return Remove(nil) },
+		"uninstall -keep-data": func() error { return Uninstall([]string{"-keep-data"}) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := clitest.ChdirTempRepo(t)
+			hooksDir := initManagedHooks(t, dir)
 
-	if err := Remove(nil); err != nil {
-		t.Fatalf("Remove: %v", err)
+			if err := run(); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			for _, name := range []string{"post-commit", "pre-commit"} {
+				if _, err := os.Stat(filepath.Join(hooksDir, name)); !os.IsNotExist(err) {
+					t.Errorf("%s still exists", name)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(dir, ".githints", "store.db")); err != nil {
+				t.Errorf("store.db missing: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err != nil {
+				t.Errorf("AGENTS.md missing: %v", err)
+			}
+		})
 	}
-	for _, name := range []string{"post-commit", "pre-commit"} {
-		if _, err := os.Stat(filepath.Join(hooksDir, name)); !os.IsNotExist(err) {
-			t.Errorf("%s still exists", name)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".githints", "store.db")); err != nil {
-		t.Errorf("store.db missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err != nil {
-		t.Errorf("AGENTS.md missing: %v", err)
+	if err := Uninstall([]string{"-keep-data", "-force"}); err == nil {
+		t.Error("-keep-data with -force was accepted")
 	}
 }
 
