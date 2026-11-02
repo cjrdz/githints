@@ -4,11 +4,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cjrdz/githints/internal/cli/initialize"
 	"github.com/cjrdz/githints/internal/clitest"
+	"github.com/cjrdz/githints/internal/index"
+	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/integrity"
+	"github.com/cjrdz/githints/internal/managed"
 	"github.com/cjrdz/githints/internal/recorder"
 	"github.com/cjrdz/githints/internal/store"
 )
@@ -64,6 +68,73 @@ func TestDoctorHealthyRepo(t *testing.T) {
 	}
 	if got := doctorLevels(runChecks()); got["hooks"] != LevelFail && runtime.GOOS != "windows" {
 		t.Errorf("non-executable hook not reported: %v", got)
+	}
+}
+
+func TestDoctorPointsStaleSetupAtUpgrade(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := clitest.ChdirTempRepo(t)
+	if err := initialize.Init(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := doctorLevels(runChecks()); got["hooks"] != LevelOK || got["blocks"] != LevelOK {
+		t.Fatalf("fresh init: %v", got)
+	}
+
+	other := filepath.Join(t.TempDir(), "githints")
+	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(dir, ".git", "hooks", "post-commit")
+	if err := os.WriteFile(hook, []byte(managed.HookScriptFor(other, "hook-run")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agents := filepath.Join(dir, "AGENTS.md")
+	data, err := os.ReadFile(agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agents, []byte(strings.Replace(string(data), "## Change tracking with githints", "## Change tracking (old text)", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("build/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var details []string
+	for _, r := range runChecks() {
+		if r.Level == LevelWarn && (r.Name == "hooks" || r.Name == "blocks") {
+			if r.Fix != "githints upgrade" && r.Fix != "githints upgrade (repoints the hooks)" {
+				t.Errorf("%s warning %q points at %q, not githints upgrade", r.Name, r.Detail, r.Fix)
+			}
+			details = append(details, r.Detail)
+		}
+	}
+	joined := strings.Join(details, "\n")
+	for _, want := range []string{"post-commit runs " + other, "block in AGENTS.md differs", ".gitignore has no githints block"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("no warning containing %q in:\n%s", want, joined)
+		}
+	}
+}
+
+// Only a full scan stamps the resolver version, so an index the hook alone
+// built reads 0; that is "never fully built", not "an older githints".
+func TestIndexBuiltOnlyByCommitsIsNotCalledOld(t *testing.T) {
+	dir := t.TempDir()
+	if got := IndexRebuildReason(dir, []string{"auto"}); got != "" {
+		t.Errorf("no index: %q", got)
+	}
+	if _, err := os.Stat(lang.IndexDBPath(dir)); err == nil {
+		t.Error("IndexRebuildReason created index.db")
+	}
+	db, err := index.Open(lang.IndexDBPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if got := IndexRebuildReason(dir, []string{"auto"}); !strings.Contains(got, "never a full scan") || strings.Contains(got, "older") {
+		t.Errorf("reason = %q", got)
 	}
 }
 

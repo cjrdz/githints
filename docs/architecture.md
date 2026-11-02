@@ -573,6 +573,26 @@ comments is never rewritten; Codex's TOML is only appended to; global configs ge
 a per-repository entry name and a one-time backup, and are written only when the
 client is named.
 
+### Update and upgrade
+
+`githints update` (`internal/cli/updatecmd` over `internal/update`) is the only
+network path. `internal/update` is the only package importing `net/http`, which
+`TestOnlyUpdateImportsNetHTTP` enforces. It mirrors `.goreleaser.yml` and the
+install scripts (`TestArchiveNameMatchesGoreleaser` reads all three): the
+latest tag from the `/releases/latest` redirect, the
+`githints_<version>_<os>_<arch>` archive and `checksums.txt`, https to GitHub
+hosts only with redirects re-checked, capped reads, and an archive entry taken
+only if it is a regular file named exactly `githints` at the top level. The new
+binary must run `version` and report the release before it replaces the old one
+by rename.
+
+`githints upgrade` (`internal/cli/upgrade`) is offline and reuses init's pieces
+rather than calling init: `managed.Hooks` and `managed.HookScriptFor` for the
+hooks, `managed.Blocks` (which renders each block exactly as `EnsureBlock`
+would) for the managed text, and `doctor.IndexRebuildReason` for the index.
+`doctor` uses the same comparisons for its warnings, so the two cannot disagree
+about what is stale.
+
 ## CLI
 
 Commands are dispatched from the `commands` table in `internal/cli/cli.go`, the single

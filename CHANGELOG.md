@@ -8,7 +8,39 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+### Upgrade notes
+
+- **`githints update` uses the network; nothing else does.** githints used to
+  open no network connections at all. `update` is now the one exception: it
+  runs only when you type it, talks https to github.com and GitHub's
+  release-asset hosts, and never runs from a hook, the MCP server, `doctor`,
+  `brief`, `init` or `upgrade`.
+- After this release, `githints update` followed by `githints upgrade` in each
+  tracked repository replaces reinstalling and re-running `init` and `index`.
+  A binary installed by a package manager or `go install` is updated there;
+  `update` says which command to use.
+
 ### Added
+
+- **`githints update [-check] [-version=TAG] [-force] [-yes]`.** Finds the
+  latest release the way `install.sh` does, downloads this platform's archive
+  and `checksums.txt`, refuses on a mismatch or a missing entry, checks the new
+  binary runs and reports the expected version, then replaces the running one
+  by rename (on Windows the old one is kept as `.old` until the next run). It
+  refuses to replace a binary owned by a package manager or `go install`,
+  never downgrades without `-version` and `-force`, and prints the
+  `gh attestation verify` command for build provenance. `-check` exits 0 when
+  up to date, 2 when an update is available, 1 on error.
+- **`githints upgrade [-dry-run]`.** Offline and idempotent: repoints githints'
+  hooks at the running binary, refreshes the managed blocks in `AGENTS.md`,
+  `CLAUDE.md` and `.gitignore`, rebuilds a stale index, runs `doctor`, and asks
+  for an MCP server restart when the binary managing the repository changed. A
+  hook githints did not install, or a file without a managed block, is left
+  alone.
+- **`doctor` warns about a stale setup**, each with `githints upgrade` as the
+  fix: a hook that runs a different binary than the one running `doctor`, a
+  managed block that differs from what this version writes, and a missing
+  `.gitignore` block.
 
 - **Writes name the client.** When `record_change`, `record_outcome` or
   `record_review` get no `agent_id`, githints records
@@ -32,6 +64,13 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   It does; what a rewrite does change (rows keep the old commit hash, replayed
   commits get fallback rows) is described under "History rewrites" in
   `docs/usage.md`.
+
+### Fixed
+
+- An index built only by the commit hook, never by a full `githints index`,
+  was reported as built "by an older githints", by `doctor` and by the hook on
+  every commit. `doctor` now says it was never fully built; the hook stays
+  quiet about it.
 
 ## [0.4.0] - 2026-11-01
 

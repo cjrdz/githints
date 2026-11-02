@@ -43,6 +43,11 @@ to a junction (`mklink /J`), which needs no elevation.
 Each of these is load-bearing and easy to undo by accident. There is a test for
 every one; if you find yourself deleting or weakening one of those tests, stop.
 
+- **Only `githints update` touches the network.** `internal/update` is the one
+  package that imports `net/http` (`TestOnlyUpdateImportsNetHTTP`), and nothing
+  calls it from a hook, the MCP server, `doctor`, `brief`, `init` or `upgrade`.
+  It accepts https to GitHub hosts only, re-checks every redirect, caps every
+  read, and installs nothing that fails the release checksum.
 - **Nothing but JSON-RPC on stdout in `serve` mode.** A stray `fmt.Println`
   anywhere reachable from `internal/cli/serve.Run` corrupts the framing for every client.
   Diagnostics go to stderr.

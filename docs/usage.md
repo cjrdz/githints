@@ -747,18 +747,48 @@ regenerate every file from the store.
 
 ## Upgrading
 
-Install the new version the way you installed the old one, then in each tracked
-repository:
-
 ```sh
-githints init      # repoints the hooks if the binary path changed
-githints index     # rebuild the index with the new version's resolution
-githints doctor
+githints update          # replace this binary with the latest release
+githints upgrade         # in each tracked repository
 ```
+
+`githints update` is the only command that uses the network. It finds the
+latest release the way `install.sh` does (the redirect from
+`github.com/cjrdz/githints/releases/latest`), downloads the archive for this
+OS and architecture and `checksums.txt`, refuses on a checksum mismatch or a
+missing entry, checks that the new binary runs and reports the expected
+version, and only then replaces the running one by rename (on Windows the old
+binary is kept as `githints.exe.old` until the next run). It prints the
+`gh attestation verify` command for checking build provenance; it does not run
+it.
+
+| Flag | Does |
+| --- | --- |
+| `-check` | Only compare the running and latest versions: exit 0 up to date, 2 update available, 1 error (offline included) |
+| `-version=TAG` | Install that release instead of the latest |
+| `-force` | Reinstall the same release, replace a development build, or, with `-version`, downgrade |
+| `-yes` | In a tracked repository, run `githints upgrade` afterwards without asking |
+
+It refuses to replace a binary a package manager or `go install` owns
+(`/usr/bin`, Homebrew, Nix, snap, Scoop, Chocolatey, winget, `GOPATH/bin`) and
+names the command to use instead. A snapshot build (`X-next`) counts as newer
+than `X`; a development build needs `-force`.
+
+`githints upgrade [-dry-run]` works offline and changes nothing on a second
+run. It repoints githints' hooks at the running binary, refreshes the managed
+blocks in `AGENTS.md`, `CLAUDE.md` and `.gitignore` (a file without a block,
+or a hook githints did not install, is left alone), rebuilds the index when it
+was built by an older version or never fully, runs `doctor`, and asks you to
+restart MCP servers when the binary managing the repository changed. `doctor`
+points at it when a hook runs another binary, a managed block is out of date,
+or the index needs a rebuild.
+
+If you install the new version another way (a package manager, the install
+scripts), run `githints upgrade` in each tracked repository afterwards.
 
 The post-commit hook only rescans changed files, so after an upgrade that
 changes import resolution, the hook and `doctor` both say when a full
-`githints index` is needed. An index from before 0.2.4 has no stored import
+rebuild is needed. An index from before 0.2.4 has no stored import
 keys; the first hook run computes them, so it takes as long as a hook did
 before, and the runs after it are faster. MCP clients pick up the new binary when they next
 start the server.
@@ -771,15 +801,15 @@ predates them does not know the new fields, so it reports outcome rows as
 post-commit hook runs, claims them for a commit and writes an anchor that the new
 version then reports as a problem for good. That happens when a long-running MCP
 server, an editor extension, or a hook that names an old binary path is left
-behind. Restart MCP servers after upgrading, and run `githints init` so each hook
-names the new binary; `githints doctor` shows which binary a hook runs. To go back
+behind. Restart MCP servers after upgrading, and run `githints upgrade` so each
+hook names the new binary; `githints doctor` warns when a hook runs another one. To go back
 to an older version on a store that has outcomes, export first
 (`githints export -o DIR`).
 
 ## CLI reference
 
-Every command takes `-h`. Exit status: 0 ok, 1 error, 2 usage error, 3 `verify`
-found problems.
+Every command takes `-h`. Exit status: 0 ok, 1 error, 2 usage error or (from
+`update -check`) an update is available, 3 `verify` found problems.
 
 | Command | Does |
 | --- | --- |
@@ -789,6 +819,8 @@ found problems.
 | `uninstall [-dry-run] [-force]` | Full removal: hooks, project MCP entries, managed blocks, anchors, `.githints/` and salt |
 | `uninstall -keep-data [-dry-run]` | Stop tracking: remove the git hooks, keep `.githints/` and configs |
 | `doctor` | Check everything githints depends on, and count the log; prints a fix per problem; changes nothing |
+| `update [-check] [-version=TAG] [-force] [-yes]` | Replace this binary with a verified release; the only command that uses the network; see [Upgrading](#upgrading) |
+| `upgrade [-dry-run]` | Repoint the hooks, refresh the managed blocks and rebuild a stale index for the running binary, then run `doctor` |
 | `serve [-root=PATH]` | Run the MCP stdio server |
 | `record -file=F -summary=S [-reason=R] [-agent-id=A]` | Record a change by hand |
 | `export -o DIR [-duckdb] [-no-notes]` | Write the log, hints and notes as JSONL, CSV and markdown, with a manifest; see [Exporting](#exporting) |

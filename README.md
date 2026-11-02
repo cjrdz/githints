@@ -12,7 +12,8 @@ repository and **why**, plus a structural index of its code, and serves both to
 any agent over MCP or from the command line. The next agent (or person) to open
 the repository can catch up on intent instead of re-deriving it from diffs.
 
-Everything stays on your machine: no service, no account, no network access.
+Everything stays on your machine: no service, no account, and no network access
+except when you run `githints update`.
 
 ## Quick start
 
