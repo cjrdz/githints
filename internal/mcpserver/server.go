@@ -541,6 +541,56 @@ func handleGetSessionContext(root string, st *store.Store, session *SessionTrack
 
 // handleRecordChange records one change (file, summary, reason) or, given
 // changes[], several in one transaction: all land or none do.
+// recordChangeHints generates optional feedback on recording quality.
+func recordChangeHints(st *store.Store, file, summary, reason string) string {
+	var hints []string
+
+	// Hint 1: no reason given
+	if reason == "" {
+		hints = append(hints, "no reason given (optional but valuable: why this change?)")
+	}
+
+	// Hint 2: generic or filename-only summary
+	if isGenericSummary(file, summary) {
+		hints = append(hints, fmt.Sprintf("generic summary: %q explains what but not why", summary))
+	}
+
+	// Hint 3: identical to previous record for same file (if we can check)
+	if prev, err := st.FileHistory(file, 1); err == nil && len(prev) > 0 {
+		if prev[0].Summary == summary {
+			hints = append(hints, "summary identical to previous record for this file")
+		}
+	}
+
+	if len(hints) == 0 {
+		return ""
+	}
+
+	result := "Feedback:"
+	for _, h := range hints {
+		if len(result) < 100 { // Keep hints concise, one short line
+			result += " " + h
+			break
+		}
+	}
+	result += "\nWhen you know the result: record_outcome(change_id=N, outcome=\"worked\"|\"failed\"...)"
+	return result
+}
+
+// isGenericSummary checks if a summary is too generic or just the filename.
+func isGenericSummary(file, summary string) bool {
+	s := strings.ToLower(summary)
+	generic := []string{"updated", "fix", "fixed", "change", "changes", "modified", "changed", "update"}
+	for _, g := range generic {
+		if strings.HasPrefix(s, g+" ") || s == g {
+			return true
+		}
+	}
+	// Check if it's just the filename (with or without path)
+	base := filepath.Base(file)
+	return strings.EqualFold(summary, base) || strings.EqualFold(summary, file)
+}
+
 func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if _, batch := req.GetArguments()["changes"]; batch {
@@ -578,7 +628,13 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("recorded change #%d for %s", c.ID, oneLine(file))), nil
+
+		// Build success response with optional hints
+		text := fmt.Sprintf("recorded change #%d for %s", c.ID, oneLine(file))
+		if hints := recordChangeHints(st, file, summary, reason); hints != "" {
+			text += "\n\n" + hints
+		}
+		return mcp.NewToolResultText(text), nil
 	}
 }
 

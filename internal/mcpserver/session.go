@@ -70,6 +70,12 @@ type SessionTracker struct {
 	// indexMeta is sampled at the time the index is attached.
 	indexMeta   indexMetaSnapshot
 	indexLoaded bool
+
+	// lastUnrecordedCheck tracks when we last checked for unrecorded files,
+	// and what we found, for debouncing and repeat suppression.
+	lastUnrecordedCheck time.Time
+	lastUnrecordedFiles []string
+	nudgeDisabled       bool
 }
 
 type indexMetaSnapshot struct {
@@ -97,6 +103,8 @@ func NewSessionTracker(st *store.Store) *SessionTracker {
 			t.changeCount = count
 		}
 	}
+	// Check environment for nudge disable
+	t.nudgeDisabled = os.Getenv("GITHINTS_NO_NUDGE") == "1"
 	return t
 }
 

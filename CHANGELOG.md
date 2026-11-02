@@ -15,6 +15,10 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   non-alphanumeric characters and converting each word to a quoted FTS5 prefix
   term. "auth-token" and "auth token" now both find summaries containing both
   words. A new `raw` parameter allows passing FTS5 syntax directly when needed.
+- **MCP tool annotations.** All MCP tools now declare scope annotations so clients
+  can make informed decisions about tool safety: read-only, writable, and
+  destructive. Clients like Claude Code and opencode use these to guide users
+  about which tools need confirmation before calling.
 
 ### Changed
 
