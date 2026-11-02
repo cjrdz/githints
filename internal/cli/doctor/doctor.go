@@ -191,7 +191,6 @@ func checkIntegrity(root string, st *store.Store) []Result {
 	default:
 		out = append(out, Result{LevelFail, "chain", fmt.Sprintf("%d problem(s) in %d row(s)", len(errs), len(rows)), "githints verify (shows each one)"})
 	}
-	// What `githints status` used to print; status is now this command.
 	if total, err := st.Count(); err == nil {
 		pending, _ := st.UncommittedCount() // 0 on error: the count above already read the table
 		detail := fmt.Sprintf("%d change(s), %d not yet committed", total, pending)

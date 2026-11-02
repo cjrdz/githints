@@ -530,9 +530,11 @@ Tools:
 - `find_facets` — framework constructs by role (`route`, `model`,
   `component`, ...), across frameworks.
 
-The seven tools these replaced keep answering under their old names for one
-release, each registered with a one-line "Deprecated: use X" description and
-the new tool's handler.
+Every tool declares MCP annotations: the reads are `readOnlyHint` and not
+`destructiveHint`, the writes append except `record_note` (whose `replace` overwrites, so it is
+`destructiveHint`), and none is `openWorldHint`. mcp-go's `NewTool` defaults
+to destructive and open-world, so a tool added without them misreports itself;
+`TestToolAnnotations` catches that.
 
 Every structural index tool response includes the timestamp of the last full
 or incremental index scan so the agent can decide whether the data is fresh

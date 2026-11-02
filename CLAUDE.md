@@ -269,7 +269,7 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
 
 ### Dependency pins
 
-`mcp-go` is at `v1.3.x` (see `go.mod`). It was on a pre-release for a long time and its API
+`mcp-go` is at `v1.4.x` (see `go.mod`). It was on a pre-release for a long time and its API
 moved between them, so treat an upgrade as a real change with its own commit
 rather than a routine bump: build it, run the gate, and start the server to
 confirm `tools/list` still answers.

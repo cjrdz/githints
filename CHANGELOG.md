@@ -8,6 +8,56 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+## [0.4.0] - 2026-11-01
+
+Searching the change log takes plain words, every MCP tool tells clients
+whether it reads, appends or overwrites, `record_change` says when a record
+is too thin to help the next reader, and the instructions follow the loop an
+agent works in. The names replaced in 0.3.0 are gone.
+
+### Upgrade notes
+
+- **The names replaced in 0.3.0 are gone.** The MCP tools `get_file_history`,
+  `get_recent_changes`, `search_changes`, `get_changes_in_range`,
+  `record_batch`, `list_symbols` and `get_index_summary`, and the commands
+  `history`, `recent`, `search`, `changes`, `status`, `rotate-salt`, `remove`
+  and `mcp-config`, no longer answer. Running an old command prints what
+  replaced it. Run `githints init` to refresh the managed block in `AGENTS.md`,
+  and restart MCP servers so clients drop the old tools.
+- **`query` takes plain words now.** `query_changes(query=...)` and `githints
+  log -query` used to pass the text to FTS5 as a `MATCH` expression; now every
+  word must appear (as a prefix, for words of three letters or more) and
+  punctuation only separates words. A saved query that uses `OR`, `NEAR`, a
+  column filter or quotes needs `raw=true` (`-raw`) to keep its meaning.
+
+### Added
+
+- **Plain-word search.** `auth-token`, `internal/auth/token.go` or a stray quote
+  used to fail as FTS5 syntax or match the wrong thing; they now search for
+  their words. A query is capped at 10 words of up to 64 bytes, the same limits
+  as note search, and a query with no words is an error rather than the whole
+  log. `raw=true` (`-raw`) keeps the FTS5 expression form.
+- **Tool annotations.** Every MCP tool declares `readOnlyHint`,
+  `destructiveHint` and `openWorldHint`, so clients can tell the read tools
+  from the writes without asking: nine tools read, `record_change`,
+  `record_outcome` and `record_review` only append, and `record_note` is marked
+  destructive because `replace=true` overwrites a note. None reaches the
+  network. Without them, mcp-go reported every tool as destructive and
+  open-world.
+- **Hints on `record_change`.** A recorded change can come back with advice,
+  never a refusal: no reason, a generic summary ("Updated function", or the
+  file name), or the same summary as the file's previous change. The hints end
+  with the `record_outcome` call for that change id.
+
+### Changed
+
+- The MCP instructions are ordered as the loop an agent follows (start, check
+  history, edit and record, outcome, review), give a good and a bad summary,
+  say what a reason is for, and say what not to record (pure formatting,
+  generated files, lockfiles), at the same size as before.
+- `get_session_context` suggests `review_status` instead of `get_diff`, and
+  says that the change count it reports was sampled when the session began.
+
 ## [0.3.0] - 2026-10-24
 
 Risk-scaled review comes to githints: it says how deep a review a staged change

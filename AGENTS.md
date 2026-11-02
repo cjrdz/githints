@@ -36,10 +36,6 @@ Use them instead of the CLI twins.
 | `find_symbol(name)` or `find_symbol(file)`, `get_dependents(file)`, `get_dependency_graph(file, depth)` | Explore the structural index before changing unfamiliar code. `get_dependents()` with no file gives totals and hub files. |
 | `find_facets(facet)` | Routes, models, components and the rest, across frameworks. |
 
-The tools these replaced (`get_file_history`, `get_recent_changes`,
-`search_changes`, `get_changes_in_range`, `record_batch`, `list_symbols`,
-`get_index_summary`) still answer under their old names for one release.
-
 If no MCP server is registered in your client, use the CLI twins below.
 
 ## Rule: start every session by catching up
@@ -152,7 +148,8 @@ Exceeding a limit is an error, never a silent truncation:
   letters, digits and hyphens. `search_notes` query: 500 bytes, 20 words.
 - `agent_id`: 128 bytes. `file`: repo-relative, no `..`, no control characters.
 - `record_change` with `changes=[...]`: at most 100 changes. `query_changes`
-  query: 500 characters (an FTS5 `MATCH` expression). Every `limit`: 1 to 500.
+  query: 500 characters (plain words, or an FTS5 `MATCH` expression with
+  `raw=true`). Every `limit`: 1 to 500.
 
 ## Do not
 
