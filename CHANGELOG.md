@@ -41,6 +41,12 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 - `query_changes` error messages now guide users to the appropriate mode when
   syntax fails: "use plain words, or raw=true for FTS5 syntax".
 
+- **Workflow instructions restructured.** The server-side workflow instructions
+  now follow the workflow loop (start → check history → edit → record → outcomes
+  → review), include concrete good/bad examples for summaries, and explain what
+  NOT to record (formatting, generated code, lockfiles). New instructions are
+  16.7% smaller while being more actionable.
+
 ### Removed
 
 - **Deprecated tool aliases removed.** The 7 MCP tool aliases kept for v0.3.0
