@@ -530,8 +530,8 @@ Tools:
 - `find_facets` — framework constructs by role (`route`, `model`,
   `component`, ...), across frameworks.
 
-Every tool declares MCP annotations: the reads are `readOnlyHint`, the writes
-append except `record_note` (whose `replace` overwrites, so it is
+Every tool declares MCP annotations: the reads are `readOnlyHint` and not
+`destructiveHint`, the writes append except `record_note` (whose `replace` overwrites, so it is
 `destructiveHint`), and none is `openWorldHint`. mcp-go's `NewTool` defaults
 to destructive and open-world, so a tool added without them misreports itself;
 `TestToolAnnotations` catches that.
