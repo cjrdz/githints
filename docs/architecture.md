@@ -44,7 +44,7 @@ Each row is one recorded change.
 | `reason` | Optional explanation of why it changed. |
 | `diff_stat` | e.g. `+5 -2`, captured for agent rows from the working tree. |
 | `diff_hash` | SHA-256 of the unified diff for this file/commit. |
-| `agent_id` | Optional session/client fingerprint. |
+| `agent_id` | Optional session/client fingerprint. An MCP write that passes none records `client:<name>/<version>` from the client's `initialize` request, set before the row is signed. |
 | `recorded_at` | Authoritative Unix timestamp, set in Go. |
 | `hmac` / `prev_hmac` | Hex HMAC-SHA256 chaining the row to the previous one. |
 | `clock_tamper_warning` | Set when `recorded_at` jumps backward unexpectedly. |

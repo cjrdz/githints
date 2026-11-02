@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -157,7 +158,7 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				}),
 			),
 			mcp.WithString("agent_id",
-				mcp.Description("Optional agent/session fingerprint, e.g. claude-code-session-abc123")),
+				mcp.Description("Optional session fingerprint; defaults to client:<name>/<version> of the MCP client")),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithOpenWorldHintAnnotation(false),
 		),
@@ -476,7 +477,7 @@ func handleRecordReview(root string, st *store.Store, cfg config.Review, idx *in
 			Verdict:  verdict,
 			Findings: req.GetString("findings", ""),
 			Lenses:   lenses,
-			AgentID:  req.GetString("agent_id", ""),
+			AgentID:  agentIDFor(ctx, req),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -517,6 +518,44 @@ func handleGetSessionContext(root string, st *store.Store, session *SessionTrack
 		}
 		return mcp.NewToolResultText(report + "\n" + digest), nil
 	}
+}
+
+// agentIDFor is the agent_id a write records: the caller's, or else the name
+// and version the client sent in its initialize request. Agents rarely pass
+// agent_id, and without it a row cannot be told apart from another client's.
+func agentIDFor(ctx context.Context, req mcp.CallToolRequest) string {
+	if id := req.GetString("agent_id", ""); id != "" {
+		return id
+	}
+	if sess, ok := server.ClientSessionFromContext(ctx).(server.SessionWithClientInfo); ok {
+		return clientAgentID(sess.GetClientInfo())
+	}
+	return ""
+}
+
+// clientAgentID formats clientInfo as client:<name>/<version>. The values come
+// from the client, so they are cleaned like any recorded text, and shortened
+// rather than rejected: the recorder refuses an over-long agent_id, which here
+// would make every write from that client fail. A value that looks like a
+// credential is dropped for the same reason.
+func clientAgentID(info mcp.Implementation) string {
+	clean := func(s string) string { return strings.TrimSpace(textsafe.Remove(s)) }
+	name, version := clean(info.Name), clean(info.Version)
+	if name == "" {
+		return ""
+	}
+	id := "client:" + name
+	if version != "" {
+		id += "/" + version
+	}
+	for len(id) > recorder.MaxAgentIDLen {
+		_, size := utf8.DecodeLastRuneInString(id)
+		id = id[:len(id)-size]
+	}
+	if _, secret := secrets.Scan(id); secret {
+		return ""
+	}
+	return id
 }
 
 // recordChangeHints is advice appended to a successful record_change, never a
@@ -575,7 +614,7 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 			if req.GetString("file", "") != "" || req.GetString("summary", "") != "" {
 				return mcp.NewToolResultError("pass either file and summary, or changes[], not both"), nil
 			}
-			return recordBatch(root, st, req)
+			return recordBatch(ctx, root, st, req)
 		}
 		file, err := req.RequireString("file")
 		if err != nil {
@@ -589,7 +628,7 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		reason := req.GetString("reason", "")
-		agentID := req.GetString("agent_id", "")
+		agentID := agentIDFor(ctx, req)
 
 		key, err := integrity.KeyFromRepo(root)
 		if err != nil {
@@ -779,7 +818,7 @@ func handleRecordOutcome(root string, st *store.Store) server.ToolHandlerFunc {
 			ChangeID: int64(req.GetInt("change_id", 0)),
 			State:    state,
 			Note:     req.GetString("note", ""),
-			AgentID:  req.GetString("agent_id", ""),
+			AgentID:  agentIDFor(ctx, req),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -871,7 +910,7 @@ func handleGetDiff() server.ToolHandlerFunc {
 	}
 }
 
-func recordBatch(root string, st *store.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func recordBatch(ctx context.Context, root string, st *store.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	raw, ok := req.GetArguments()["changes"]
 	if !ok {
 		return mcp.NewToolResultError("missing required argument: changes"), nil
@@ -893,7 +932,7 @@ func recordBatch(root string, st *store.Store, req mcp.CallToolRequest) (*mcp.Ca
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	agentID := req.GetString("agent_id", "")
+	agentID := agentIDFor(ctx, req)
 
 	inputs := make([]recorder.Input, 0, len(arr))
 	for i, item := range arr {

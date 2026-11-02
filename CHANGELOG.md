@@ -8,6 +8,16 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+### Added
+
+- **Writes name the client.** When `record_change`, `record_outcome` or
+  `record_review` get no `agent_id`, githints records
+  `client:<name>/<version>` from the MCP client's `initialize` request (for
+  example `client:claude-code/2.1.0` or `client:opencode/1.0.0`), so rows from
+  different clients can be told apart. The value is cleaned like any recorded
+  text, shortened to the 128-byte cap rather than refused, and set before the
+  row is signed. An explicit `agent_id` still wins.
+
 ## [0.4.0] - 2026-11-01
 
 Searching the change log takes plain words, every MCP tool tells clients

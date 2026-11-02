@@ -486,7 +486,9 @@ them as ordinary changes. Upgrade every machine that shares a store.
 ### Limits
 
 Writes and reads are bounded, and exceeding a limit is an error, never a silent
-truncation: summary and reason 4000 bytes each, `agent_id` 128 bytes, batches of
+truncation: summary and reason 4000 bytes each, `agent_id` 128 bytes (when an
+MCP client passes none, githints records `client:<name>/<version>` from the
+client's own `initialize` request, shortened to fit), batches of
 at most 100 (atomic: all rows land or none), search queries 500 characters, every
 `limit` between 1 and 500. A summary or reason carrying a recognizable credential
 (cloud or API key, GitHub or Slack token, private key, JWT) is refused. Control
