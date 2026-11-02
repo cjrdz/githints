@@ -906,30 +906,43 @@ func TestPreprocessSearchText(t *testing.T) {
 		{"auth token", `"auth"* AND "token"*`, "plain words"},
 		{"auth-token", `"auth"* AND "token"*`, "hyphen separator"},
 		{"auth.token", `"auth"* AND "token"*`, "dot separator"},
-		{"internal/auth/token.go", `"internal"* AND "auth"* AND "token"* AND "go"*`, "path"},
+		{"internal/auth/token.go", `"internal"* AND "auth"* AND "token"* AND "go"`, "path"},
 		{"foo.bar", `"foo"* AND "bar"*`, "dotted identifier"},
 		{`hello"world`, `"hello"* AND "world"*`, "quote as separator"},
 		{"AND", `"AND"*`, "AND as literal word"},
-		{"OR", `"OR"*`, "OR as literal word"},
+		{"OR", `"OR"`, "OR as literal word"},
 		{"NOT", `"NOT"*`, "NOT as literal word"},
+		{"summary:token", `"summary"* AND "token"*`, "column filter is just words"},
 		{"", "", "empty string"},
 		{"   ", "", "whitespace only"},
 		{"hello123", `"hello123"*`, "word with numbers"},
 		{"_underscore_", `"_underscore_"*`, "underscores"},
 		{"test@example.com", `"test"* AND "example"* AND "com"*`, "email-like"},
 		{"hello-world foo_bar", `"hello"* AND "world"* AND "foo_bar"*`, "mixed separators"},
-		{"a", `"a"*`, "single char"},
-		{"αβγ", `"αβγ"*`, "unicode letters"},
+		{"a", `"a"`, "short word is not a prefix"},
+		{"αβγ", `"αβγ"*`, "unicode letters count as runes"},
 		{"test!@#$%", `"test"*`, "special characters"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
-			got := preprocessSearchText(tt.input)
+			got, err := preprocessSearchText(tt.input)
+			if err != nil {
+				t.Fatalf("preprocessSearchText(%q): %v", tt.input, err)
+			}
 			if got != tt.expected {
 				t.Errorf("preprocessSearchText(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
+	}
+
+	for _, bad := range []string{
+		strings.Repeat("w ", maxSearchWords+1),
+		strings.Repeat("x", maxSearchWordLen+1),
+	} {
+		if got, err := preprocessSearchText(bad); err == nil {
+			t.Errorf("preprocessSearchText(%.20q...) = %q, want an error", bad, got)
+		}
 	}
 }
 
@@ -993,6 +1006,18 @@ func TestQueryChangesWithPlainWords(t *testing.T) {
 	}
 }
 
+// A query with no words must not fall through to an unfiltered listing.
+func TestQueryChangesWithoutWordsIsAnError(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+	mustInsert(t, st, Change{FilePath: "a.go", Summary: "anything", RecordedAt: 1})
+	for _, q := range []string{"!!!", "--", `"`, "*"} {
+		if got, err := st.QueryChanges(Query{Text: q, Limit: 10}); err == nil {
+			t.Errorf("query %q returned %d rows, want an error", q, len(got))
+		}
+	}
+}
+
 // TestQueryChangesQueryTooLong verifies the length cap error.
 func TestQueryChangesQueryTooLong(t *testing.T) {
 	st, cleanup := openTestStore(t)
@@ -1004,7 +1029,7 @@ func TestQueryChangesQueryTooLong(t *testing.T) {
 	if err == nil {
 		t.Fatal("QueryChanges: expected error for query too long, got nil")
 	}
-	if !strings.Contains(err.Error(), "search failed") {
-		t.Errorf("error message should contain 'search failed': %v", err)
+	if !strings.Contains(err.Error(), "too long") {
+		t.Errorf("error should say the query is too long: %v", err)
 	}
 }

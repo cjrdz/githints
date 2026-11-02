@@ -732,34 +732,111 @@ func TestFindSymbolNeedsNameOrFile(t *testing.T) {
 	}
 }
 
-// The registered tool list: every deprecated alias points at a tool that
-// exists, and the list stays the size this release set it to.
+func registeredTools(t *testing.T) map[string]*server.ServerTool {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv, closeDBs := newServer(dir, st, config.Default(), "test")
+	t.Cleanup(closeDBs)
+	return srv.ListTools()
+}
+
+// The tool list stays the size this release set it to.
 func TestRegisteredTools(t *testing.T) {
+	if n := len(registeredTools(t)); n != 13 {
+		t.Errorf("%d tools, want 13: consolidating them is what keeps the per-session cost down", n)
+	}
+}
+
+// Some clients ship only the instructions to the model, so every tool the
+// server registers must be named there.
+func TestInstructionsNameEveryTool(t *testing.T) {
+	for name := range registeredTools(t) {
+		if !strings.Contains(instructions, name+"(") {
+			t.Errorf("instructions do not mention %s", name)
+		}
+	}
+}
+
+// mcp-go's NewTool defaults to destructiveHint=true and openWorldHint=true, so
+// a tool that sets nothing tells clients it may destroy data on the network.
+// Every tool declares all three hints here, and only record_note (replace=true
+// overwrites a note) is destructive.
+func TestToolAnnotations(t *testing.T) {
+	writes := map[string]bool{"record_change": true, "record_outcome": true, "record_note": true, "record_review": true}
+	for name, tool := range registeredTools(t) {
+		a := tool.Tool.Annotations
+		if a.ReadOnlyHint == nil || a.OpenWorldHint == nil || a.DestructiveHint == nil {
+			t.Errorf("%s: annotations not all set: %+v", name, a)
+			continue
+		}
+		if *a.OpenWorldHint {
+			t.Errorf("%s: openWorldHint is true; githints opens no network connections", name)
+		}
+		if got, want := *a.ReadOnlyHint, !writes[name]; got != want {
+			t.Errorf("%s: readOnlyHint = %v, want %v", name, got, want)
+		}
+		if writes[name] {
+			if got, want := *a.DestructiveHint, name == "record_note"; got != want {
+				t.Errorf("%s: destructiveHint = %v, want %v", name, got, want)
+			}
+		}
+	}
+}
+
+func TestRecordChangeHints(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	srv, closeDBs := newServer(dir, st, config.Default(), "test")
-	defer closeDBs()
-	tools := srv.ListTools()
+	fn := handleRecordChange(dir, st)
 
-	current := 0
-	for name, tool := range tools {
-		desc := tool.Tool.Description
-		after, deprecated := strings.CutPrefix(desc, "Deprecated: use ")
-		if !deprecated {
-			current++
-			continue
-		}
-		target, _, _ := strings.Cut(after, " ")
-		if t2, ok := tools[target]; !ok || strings.HasPrefix(t2.Tool.Description, "Deprecated") {
-			t.Errorf("alias %s points at %q, which is not a current tool", name, target)
-		}
-	}
-	if current != 13 {
-		t.Errorf("%d current tools, want 13: consolidating them is what keeps the per-session cost down", current)
+	for _, tc := range []struct {
+		name          string
+		args          map[string]any
+		want, notWant []string
+	}{
+		{"good record has no hints",
+			map[string]any{"file": "a.go", "summary": "Replaced the linear scan in FindUser with a map lookup", "reason": "lookups dominated the profile"},
+			nil, []string{"Hints"}},
+		{"missing reason",
+			map[string]any{"file": "b.go", "summary": "Retry the token refresh once on a 401"},
+			[]string{"no reason", "record_outcome(change_id=2"}, []string{"generic summary", "same summary"}},
+		{"generic summary",
+			map[string]any{"file": "c.go", "summary": "Updated function", "reason": "x"},
+			[]string{"generic summary"}, []string{"no reason"}},
+		{"file name as summary",
+			map[string]any{"file": "internal/d.go", "summary": "d.go", "reason": "x"},
+			[]string{"generic summary"}, nil},
+		{"specific summary opening with a generic verb",
+			map[string]any{"file": "e.go", "summary": "Fix the race between refresh and logout", "reason": "x"},
+			nil, []string{"Hints"}},
+		{"repeat of the previous change to the file",
+			map[string]any{"file": "a.go", "summary": "Replaced the linear scan in FindUser with a map lookup", "reason": "again"},
+			[]string{"same summary as the previous change"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text, isErr := callText(t, fn, tc.args)
+			if isErr {
+				t.Fatalf("record failed: %s", text)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(text, w) {
+					t.Errorf("missing %q in:\n%s", w, text)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(text, w) {
+					t.Errorf("unexpected %q in:\n%s", w, text)
+				}
+			}
+		})
 	}
 }
 
@@ -812,25 +889,4 @@ func TestReviewStatus(t *testing.T) {
 	if text, isErr := callText(t, fn, map[string]any{"paths": []any{"../etc/passwd"}}); !isErr {
 		t.Errorf("a path outside the repo was assessed: %q", text)
 	}
-}
-
-// TestAllToolsHaveAnnotations verifies that every registered tool declares
-// annotations so clients can make decisions about tool safety and scope.
-// This test documents the expected annotations:
-//   - Read-only closed-world: get_session_context, query_changes, get_diff, search_notes,
-//     find_symbol, get_dependents, get_dependency_graph, find_facets, review_status
-//   - Writable closed-world: record_change, record_outcome, record_review
-//   - Writable, closed-world, destructive: record_note (because replace=true overwrites)
-func TestAllToolsHaveAnnotations(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "store.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-
-	// Creating a server with all tools and annotations should not panic.
-	// This verifies that all tool definitions compile correctly with annotations.
-	_, cleanup := newServer(dir, st, config.Config{}, "test")
-	defer cleanup()
 }

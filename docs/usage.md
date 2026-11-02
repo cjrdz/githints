@@ -265,18 +265,21 @@ Reading it back, from MCP or the CLI:
 Diffs are redacted: hunks of credential-carrying files (`.env*`, `*.pem`,
 `*.key`, `id_rsa*`, `*secret*`, ...) and lines matching a known secret shape come
 back as `[REDACTED SECRET LINE]`. They are truncated at about 128 KiB with an
-explicit marker. `query` takes an FTS5 `MATCH` expression, so `NEAR`, prefix
-`*` and column filters work. The filters combine: `githints log -file=F
--query=Q -since=2026-01-01` searches one file's history after a date.
+explicit marker. `query` takes plain words: every word must appear in the
+summary or reason, as a prefix, and punctuation separates words, so
+`auth-token` finds "rotate the auth token". For an FTS5 `MATCH` expression
+(`OR`, `NEAR`, column filters) pass `raw=true`, or `-raw` on the command line.
+The filters combine: `githints log -file=F -query=Q -since=2026-01-01`
+searches one file's history after a date.
 
-The read tools and commands were consolidated: `get_file_history`,
-`get_recent_changes`, `search_changes` and `get_changes_in_range` are now
+The names replaced in 0.3.0 were removed in 0.4.0: `get_file_history`,
+`get_recent_changes`, `search_changes` and `get_changes_in_range` are
 `query_changes`; `record_batch` is `record_change` with `changes=[...]`;
 `list_symbols` is `find_symbol(file)`; `get_index_summary` is
 `get_dependents()` with no file. On the command line, `history`, `recent`,
 `search` and `changes` are `log`, `status` is `doctor`, `rotate-salt` is `salt
-rotate`, `remove` is `uninstall -keep-data`, and `mcp-config` is `setup -print`.
-The old names keep working for one release.
+rotate`, `remove` is `uninstall -keep-data`, and `mcp-config` is `setup -print
+-clients=NAME`; running an old name prints its replacement.
 
 ### Exporting
 

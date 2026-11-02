@@ -25,18 +25,6 @@ import (
 	"github.com/cjrdz/githints/internal/store"
 )
 
-// deprecatedToolNames maps old tool names to the new names they were replaced by.
-// Used to resolve aliases so calling a deprecated name counts as calling the new tool.
-var deprecatedToolNames = map[string]string{
-	"get_file_history":     "query_changes",
-	"get_recent_changes":   "query_changes",
-	"search_changes":       "query_changes",
-	"get_changes_in_range": "query_changes",
-	"record_batch":         "record_change",
-	"list_symbols":         "find_symbol",
-	"get_index_summary":    "get_dependents",
-}
-
 // sessionSuggestions lists the tools worth calling at session start, in the
 // order an agent should consider them. Only tools that have not been called
 // yet are suggested, so the advice shrinks as the session progresses instead
@@ -142,20 +130,13 @@ func (t *SessionTracker) IndexDB() *index.Store {
 
 // MarkToolCalled records that a tool ran during this session. A nil receiver
 // is a no-op so handlers can be constructed without a tracker.
-// Deprecated tool names are resolved to their new names so that calling an
-// old alias counts as calling the current tool.
 func (t *SessionTracker) MarkToolCalled(name string) {
 	if t == nil || name == "" {
 		return
 	}
-	// Resolve deprecated aliases to new tool names
-	resolvedName := name
-	if newName, ok := deprecatedToolNames[name]; ok {
-		resolvedName = newName
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.called[resolvedName] = true
+	t.called[name] = true
 }
 
 // CalledTools returns the tools used this session, sorted for stable output.

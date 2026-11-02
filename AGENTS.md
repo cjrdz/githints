@@ -148,7 +148,8 @@ Exceeding a limit is an error, never a silent truncation:
   letters, digits and hyphens. `search_notes` query: 500 bytes, 20 words.
 - `agent_id`: 128 bytes. `file`: repo-relative, no `..`, no control characters.
 - `record_change` with `changes=[...]`: at most 100 changes. `query_changes`
-  query: 500 characters (an FTS5 `MATCH` expression). Every `limit`: 1 to 500.
+  query: 500 characters (plain words, or an FTS5 `MATCH` expression with
+  `raw=true`). Every `limit`: 1 to 500.
 
 ## Do not
 

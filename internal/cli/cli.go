@@ -45,23 +45,10 @@ func Main(args []string, version string) int {
 		return 0
 	}
 
-	// Deprecation mapping for helpful error messages
-	deprecatedCommands := map[string]string{
-		"history":     "log",
-		"recent":      "log",
-		"search":      "log",
-		"changes":     "log",
-		"rotate-salt": "salt rotate",
-		"remove":      "uninstall -keep-data",
-		"status":      "doctor",
-		"mcp-config":  "setup -print",
-	}
-
 	cmd, ok := commands[args[1]]
 	if !ok {
-		// Provide helpful message for deprecated commands
-		if replacement, isDeprecated := deprecatedCommands[args[1]]; isDeprecated {
-			fmt.Fprintf(os.Stderr, "githints: %q was replaced by %q; see CHANGELOG 0.4.0 for details\n", args[1], replacement)
+		if now, removed := removedCommands[args[1]]; removed {
+			fmt.Fprintf(os.Stderr, "githints: %q was removed in 0.4.0; use `githints %s`\n", args[1], now)
 		} else {
 			fmt.Fprintf(os.Stderr, "githints: unknown command %q; run `githints help` for the list\n", args[1])
 		}
@@ -117,6 +104,20 @@ func noArgs(fn func() error) func([]string) error {
 var hiddenCommands = map[string]bool{
 	"hook-run":       true,
 	"hook-precommit": true,
+}
+
+// removedCommands are names that dispatched until 0.4.0, mapped to what
+// replaced them, so scripts and agent memories that still use one get pointed
+// at the new command instead of a bare "unknown command".
+var removedCommands = map[string]string{
+	"history":     "log -file=F",
+	"recent":      "log",
+	"search":      "log -query=Q",
+	"changes":     "log -since=T -until=T",
+	"status":      "doctor",
+	"rotate-salt": "salt rotate",
+	"remove":      "uninstall -keep-data",
+	"mcp-config":  "setup -print -clients=NAME",
 }
 
 func usage() {

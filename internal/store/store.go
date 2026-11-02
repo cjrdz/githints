@@ -5,6 +5,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 
@@ -500,35 +502,46 @@ type Query struct {
 // pathological expressions are a cheap CPU amplifier.
 const MaxSearchQueryLen = 500
 
-// preprocessSearchText converts plain words into an FTS5 expression where each
-// word becomes a prefix term quoted and ANDed: "auth" "token" becomes "auth"* AND "token"*.
-// If nothing remains after splitting on non-alphanumeric characters, returns empty.
-// This makes user input behave consistently: "auth-token" and "auth token" both find
-// summaries containing both words as prefixes.
-func preprocessSearchText(text string) string {
-	// Split on any character that is not alphanumeric (including unicode letters/digits)
-	// or underscore. The FTS5 default tokenizer uses a similar split.
+// Plain-word search limits, the same as note search uses: a one- or two-letter
+// prefix matches most of the vocabulary, and many of them in one query cost
+// seconds of CPU on a large log.
+const (
+	maxSearchWords     = 10
+	maxSearchWordLen   = 64
+	minSearchPrefixLen = 3
+)
+
+// preprocessSearchText turns plain words into an FTS5 expression in which every
+// word must appear: "auth-token" becomes "auth"* AND "token"*. Words of
+// minSearchPrefixLen runes or more match as prefixes. Splitting on everything
+// but letters, digits and underscores means no input reaches FTS5 as an
+// operator, a column filter or an unbalanced quote, so "NOT" is searched for as
+// a word. It returns "" when no word remains.
+func preprocessSearchText(text string) (string, error) {
 	parts := strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
 	})
-	if len(parts) == 0 {
-		return ""
+	if len(parts) > maxSearchWords {
+		return "", fmt.Errorf("too many words in the query: %d (max %d)", len(parts), maxSearchWords)
 	}
-	// Quote each term and make it a prefix query.
-	quoted := make([]string, len(parts))
+	terms := make([]string, len(parts))
 	for i, p := range parts {
-		// Escape any internal quotes by doubling them (FTS5 quote rules).
-		escaped := strings.ReplaceAll(p, `"`, `""`)
-		quoted[i] = `"` + escaped + `"*`
+		if len(p) > maxSearchWordLen {
+			return "", fmt.Errorf("a query word is too long (max %d bytes)", maxSearchWordLen)
+		}
+		terms[i] = `"` + p + `"`
+		if utf8.RuneCountInString(p) >= minSearchPrefixLen {
+			terms[i] += "*"
+		}
 	}
-	return strings.Join(quoted, " AND ")
+	return strings.Join(terms, " AND "), nil
 }
 
 // QueryChanges runs q. The text cap is enforced here, so no caller can
 // forget it.
 func (s *Store) QueryChanges(q Query) ([]Change, error) {
 	if len(q.Text) > MaxSearchQueryLen {
-		return nil, fmt.Errorf("search failed: query too long (%d bytes, max %d)", len(q.Text), MaxSearchQueryLen)
+		return nil, fmt.Errorf("query too long: %d bytes (max %d)", len(q.Text), MaxSearchQueryLen)
 	}
 	from := `changes AS c`
 	where := []string{noDuplicateFallback}
@@ -536,13 +549,18 @@ func (s *Store) QueryChanges(q Query) ([]Change, error) {
 	if q.Text != "" {
 		searchText := q.Text
 		if !q.Raw {
-			searchText = preprocessSearchText(q.Text)
+			var err error
+			if searchText, err = preprocessSearchText(q.Text); err != nil {
+				return nil, err
+			}
+			// Without this, a query of punctuation alone would match every row.
+			if searchText == "" {
+				return nil, errors.New("the query has no words to search for")
+			}
 		}
-		if searchText != "" {
-			from = `changes_fts f JOIN changes c ON c.id = f.rowid`
-			where = append(where, `changes_fts MATCH ?`)
-			args = append(args, searchText)
-		}
+		from = `changes_fts f JOIN changes c ON c.id = f.rowid`
+		where = append(where, `changes_fts MATCH ?`)
+		args = append(args, searchText)
 	}
 	if q.File != "" {
 		where = append(where, `c.file_path = ?`)
