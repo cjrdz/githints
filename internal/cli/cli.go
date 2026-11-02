@@ -15,7 +15,6 @@ import (
 	"github.com/cjrdz/githints/internal/cli/hooks"
 	"github.com/cjrdz/githints/internal/cli/indexcmd"
 	"github.com/cjrdz/githints/internal/cli/initialize"
-	"github.com/cjrdz/githints/internal/cli/mcpcfg"
 	"github.com/cjrdz/githints/internal/cli/notecmd"
 	"github.com/cjrdz/githints/internal/cli/read"
 	"github.com/cjrdz/githints/internal/cli/record"
@@ -46,9 +45,26 @@ func Main(args []string, version string) int {
 		return 0
 	}
 
+	// Deprecation mapping for helpful error messages
+	deprecatedCommands := map[string]string{
+		"history":     "log",
+		"recent":      "log",
+		"search":      "log",
+		"changes":     "log",
+		"rotate-salt": "salt rotate",
+		"remove":      "uninstall -keep-data",
+		"status":      "doctor",
+		"mcp-config":  "setup -print",
+	}
+
 	cmd, ok := commands[args[1]]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "githints: unknown command %q; run `githints help` for the list\n", args[1])
+		// Provide helpful message for deprecated commands
+		if replacement, isDeprecated := deprecatedCommands[args[1]]; isDeprecated {
+			fmt.Fprintf(os.Stderr, "githints: %q was replaced by %q; see CHANGELOG 0.4.0 for details\n", args[1], replacement)
+		} else {
+			fmt.Fprintf(os.Stderr, "githints: unknown command %q; run `githints help` for the list\n", args[1])
+		}
 		return 2
 	}
 	if err := cmd(args[2:]); err != nil {
@@ -87,18 +103,8 @@ var commands = map[string]func(args []string) error{
 	"index":          indexcmd.Run,
 	"doctor":         noArgs(doctor.Run),
 	"setup":          setup.Setup,
-
-	// Old names, kept for one release; see hiddenCommands.
-	"history":     read.Log,
-	"recent":      read.Log,
-	"search":      read.Log,
-	"changes":     read.Log,
-	"rotate-salt": salt.RotateSalt,
-	"remove":      teardown.Remove,
-	"status":      noArgs(doctor.Run),
-	"mcp-config":  mcpcfg.MCPConfig,
-	"version":     noArgs(cmdVersion),
-	"help":        noArgs(cmdHelp),
+	"version":        noArgs(cmdVersion),
+	"help":           noArgs(cmdHelp),
 }
 
 // noArgs adapts a flagless command to the table's handler signature.
@@ -111,18 +117,6 @@ func noArgs(fn func() error) func([]string) error {
 var hiddenCommands = map[string]bool{
 	"hook-run":       true,
 	"hook-precommit": true,
-
-	// Replaced by log, salt rotate, uninstall -keep-data, doctor and
-	// setup -print. They still work so scripts and agent memories keep
-	// working for a release.
-	"history":     true,
-	"recent":      true,
-	"search":      true,
-	"changes":     true,
-	"rotate-salt": true,
-	"remove":      true,
-	"status":      true,
-	"mcp-config":  true,
 }
 
 func usage() {

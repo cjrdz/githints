@@ -36,10 +36,6 @@ Use them instead of the CLI twins.
 | `find_symbol(name)` or `find_symbol(file)`, `get_dependents(file)`, `get_dependency_graph(file, depth)` | Explore the structural index before changing unfamiliar code. `get_dependents()` with no file gives totals and hub files. |
 | `find_facets(facet)` | Routes, models, components and the rest, across frameworks. |
 
-The tools these replaced (`get_file_history`, `get_recent_changes`,
-`search_changes`, `get_changes_in_range`, `record_batch`, `list_symbols`,
-`get_index_summary`) still answer under their old names for one release.
-
 If no MCP server is registered in your client, use the CLI twins below.
 
 ## Rule: start every session by catching up

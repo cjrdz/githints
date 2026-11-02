@@ -397,25 +397,6 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 		handleRecordReview(root, st, cfg.Review, idxDB),
 	)
 
-	// Tools renamed or merged in this release still answer under their old
-	// names until the next one, for agents and memories that use them. Each
-	// costs one short line in the tool list; the handlers are the new tools'.
-	for _, a := range []struct {
-		old, now string
-		args     []string
-		h        server.ToolHandlerFunc
-	}{
-		{"get_file_history", "query_changes", []string{"file", "limit"}, handleQueryChanges(st)},
-		{"get_recent_changes", "query_changes", []string{"limit"}, handleQueryChanges(st)},
-		{"search_changes", "query_changes", []string{"query", "limit"}, handleQueryChanges(st)},
-		{"get_changes_in_range", "query_changes", []string{"since", "until", "file", "limit"}, handleQueryChanges(st)},
-		{"record_batch", "record_change", []string{"changes", "agent_id"}, handleRecordChange(root, st)},
-		{"list_symbols", "find_symbol", []string{"file", "limit"}, handleFindSymbol(idxDB)},
-		{"get_index_summary", "get_dependents", []string{"limit"}, handleGetDependents(root, idxDB)},
-	} {
-		addTool(deprecatedAlias(a.old, a.now, a.args), a.h)
-	}
-
 	return s, func() {
 		for _, c := range closers {
 			c()
@@ -490,23 +471,6 @@ func handleRecordReview(root string, st *store.Store, cfg config.Review, idx *in
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("recorded review receipt #%d: %s\n", c.ID, oneLine(c.Summary)) + receipts.Format()), nil
 	}
-}
-
-// deprecatedAlias is the tool entry for an old name: one line of description
-// and its arguments, untyped, since the new tool's handler validates them.
-func deprecatedAlias(old, now string, args []string) mcp.Tool {
-	opts := []mcp.ToolOption{mcp.WithDescription("Deprecated: use " + now + " (same arguments).")}
-	for _, a := range args {
-		switch a {
-		case "changes":
-			opts = append(opts, mcp.WithArray(a))
-		case "limit":
-			opts = append(opts, mcp.WithNumber(a))
-		default:
-			opts = append(opts, mcp.WithString(a))
-		}
-	}
-	return mcp.NewTool(old, opts...)
 }
 
 func openIndexDB(root string, cfg config.Config) *index.Store {

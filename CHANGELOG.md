@@ -25,10 +25,32 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   identical to previous record for the same file. Hints include a follow-up
   suggestion to record_outcome when results are known.
 
+### Fixed
+
+- **Session tracker now resolves deprecated tool aliases.** Calling a deprecated
+  tool name (get_file_history, record_batch, list_symbols, etc.) now counts as
+  calling the new tool so session tracking and suggestions remain accurate during
+  the deprecation period.
+
 ### Changed
+
+- Session context suggestions reordered: removed get_diff (conditional advice),
+  added review_status, focused list on essential workflow. Clarified that
+  recorded change count is sampled at session start.
 
 - `query_changes` error messages now guide users to the appropriate mode when
   syntax fails: "use plain words, or raw=true for FTS5 syntax".
+
+### Removed
+
+- **Deprecated tool aliases removed.** The 7 MCP tool aliases kept for v0.3.0
+  (`get_file_history`, `get_recent_changes`, `search_changes`, `get_changes_in_range`,
+  `record_batch`, `list_symbols`, `get_index_summary`) no longer work; use their
+  replacements (`query_changes`, `record_change`, `find_symbol`, `get_dependents`)
+  instead. The 8 deprecated CLI commands (`history`, `recent`, `search`, `changes`,
+  `status`, `rotate-salt`, `remove`, `mcp-config`) also removed. Unknown command
+  errors now suggest the replacements. Session tracking and suggestions have been
+  updated accordingly.
 
 ## [0.3.0] - 2026-10-24
 
