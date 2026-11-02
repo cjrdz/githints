@@ -43,7 +43,11 @@ func TestUpgradeRefreshesAStaleRepository(t *testing.T) {
 	agents := filepath.Join(dir, "AGENTS.md")
 	gitignore := filepath.Join(dir, ".gitignore")
 
-	staleHook := managed.HookScriptFor("/opt/old/githints", "hook-run")
+	// An older install that still exists: the hook runs it, not this binary.
+	// (A path that is gone fails doctor outright unless githints is on PATH.)
+	oldBinary := filepath.Join(t.TempDir(), "githints")
+	write(t, oldBinary, "#!/bin/sh\n")
+	staleHook := managed.HookScriptFor(oldBinary, "hook-run")
 	write(t, postCommit, staleHook)
 	staleAgents := strings.Replace(read(t, agents), "## Change tracking with githints", "## Change tracking (old text)", 1)
 	write(t, agents, staleAgents)

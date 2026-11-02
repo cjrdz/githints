@@ -111,7 +111,7 @@ func TestDoctorPointsStaleSetupAtUpgrade(t *testing.T) {
 		}
 	}
 	joined := strings.Join(details, "\n")
-	for _, want := range []string{"post-commit runs " + other, "block in AGENTS.md differs", ".gitignore has no githints block"} {
+	for _, want := range []string{"post-commit runs " + filepath.ToSlash(other), "block in AGENTS.md differs", ".gitignore has no githints block"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("no warning containing %q in:\n%s", want, joined)
 		}
