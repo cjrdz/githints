@@ -238,9 +238,12 @@ handling.
 ## Daily workflow
 
 1. Edit a file.
-2. Record it: the agent calls `record_change` (with `changes=[...]` for several files) with a concrete
-   summary and, where it is not obvious, a reason. By hand:
-   `githints record -file=F -summary="..." -reason="..."`.
+2. Record it: the agent calls `record_change` (with `changes=[...]` for several
+   files) with a concrete summary and a reason, one record per file per logical
+   change. By hand: `githints record -file=F -summary="..." -reason="..."`.
+   Both record what they are given, and both add hints when it is thin: no
+   reason, a generic summary ("Updated function", or the file name), or the
+   same summary as the file's previous change.
 3. Commit as usual. The post-commit hook ties the pending records to the commit
    and writes a fallback entry for any changed file nobody described, so nothing
    is silently lost.

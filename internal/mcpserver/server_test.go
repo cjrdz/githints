@@ -15,6 +15,7 @@ import (
 	"github.com/cjrdz/githints/internal/config"
 	"github.com/cjrdz/githints/internal/index"
 	"github.com/cjrdz/githints/internal/index/lang"
+	"github.com/cjrdz/githints/internal/managed"
 	"github.com/cjrdz/githints/internal/store"
 )
 
@@ -752,12 +753,16 @@ func TestRegisteredTools(t *testing.T) {
 	}
 }
 
-// Some clients ship only the instructions to the model, so every tool the
-// server registers must be named there.
-func TestInstructionsNameEveryTool(t *testing.T) {
+// Some clients ship only the instructions to the model, and others only read
+// AGENTS.md, so every tool the server registers is named in both.
+func TestInstructionsAndAgentsBlockNameTheSameTools(t *testing.T) {
+	block := strings.Join(managed.AgentsBlock(), "\n")
 	for name := range registeredTools(t) {
 		if !strings.Contains(instructions, name+"(") {
 			t.Errorf("instructions do not mention %s", name)
+		}
+		if !strings.Contains(block, name+"(") {
+			t.Errorf("the AGENTS.md block does not mention %s", name)
 		}
 	}
 }
@@ -840,8 +845,9 @@ func TestRecordChangeHints(t *testing.T) {
 }
 
 // What every client pays for in every session: the instructions and each
-// tool's name, description and argument descriptions. Seventeen tools cost
-// about 11 KB before they were consolidated; this keeps it from creeping back.
+// tool's name, description and argument descriptions. It measured 14,519
+// bytes in 0.5.0; the budget sits about 5% above, so growth is a decision
+// made here rather than something that happens.
 func TestToolDescriptionsStaySmall(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, ".githints", "store.db"))
@@ -860,8 +866,9 @@ func TestToolDescriptionsStaySmall(t *testing.T) {
 		total += len(b)
 	}
 	t.Logf("instructions + tool schemas: %d bytes", total)
-	if total > 16<<10 {
-		t.Errorf("instructions and tool schemas are %d bytes, over the 16 KiB budget", total)
+	const budget = 15250
+	if total > budget {
+		t.Errorf("instructions and tool schemas are %d bytes, over the %d-byte budget", total, budget)
 	}
 }
 

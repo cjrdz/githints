@@ -62,14 +62,15 @@ const instructions = `githints records what changed in this repo and why, per fi
    find_facets(facet="route") (or model, component, service, job, infra...),
    find_symbol(name), get_dependency_graph(file). search_notes(query) before
    re-deriving a design choice or a hard bug.
-3. Right after each edit: record_change(file, summary, reason); changes=[...]
-   for several files in one step (all land or none). Summary: what changed,
-   specifically. Good: "Replaced the linear scan in FindUser with a map
-   lookup". Bad: "Updated function". Reason: why (the bug, constraint or
-   request), not the summary again. Do not record pure formatting, generated
-   files or lockfiles.
-4. When you learn how a change turned out: record_outcome(change_id, outcome,
-   note). Changes are listed with a #id; failures stay in the history so
+3. Right after each edit: record_change(file, summary, reason), one record per
+   file per logical change; changes=[...] for several files in one step (all
+   land or none). Summary: "Replaced the linear scan in FindUser with a map
+   lookup", not "Updated function". Reason: the evidence or constraint. Good:
+   "Login latency was profiled at 10k users; the map is built once at
+   startup." Bad: "To improve performance." Do not record formatting-only
+   edits, generated files or lockfiles.
+4. After testing, and whenever you learn how a change turned out:
+   record_outcome(change_id, outcome, note). Changes are listed with a #id; failures stay in the history so
    nobody repeats them.
 5. Before the change is committed: stage it, call review_status(), review it by
    the lenses it asks for, then record_review(verdict, findings, lenses).
@@ -576,20 +577,9 @@ func clientAgentID(info mcp.Implementation) string {
 	return id
 }
 
-// recordChangeHints is advice appended to a successful record_change, never a
-// rejection: refusing a weak summary would only make an agent retry with a
-// different weak one. prevSummary is the file's latest change before this one.
-func recordChangeHints(id int64, file, summary, reason, prevSummary string) string {
-	var hints []string
-	if strings.TrimSpace(reason) == "" {
-		hints = append(hints, "no reason: say why (the bug, constraint or request behind it); it is what the next reader needs most")
-	}
-	if isGenericSummary(file, summary) {
-		hints = append(hints, `generic summary: say what specifically changed, e.g. "Replaced the linear scan in FindUser with a map lookup"`)
-	}
-	if prevSummary != "" && strings.EqualFold(strings.TrimSpace(prevSummary), strings.TrimSpace(summary)) {
-		hints = append(hints, "same summary as the previous change to this file: say what is different this time")
-	}
+// formatHints renders recorder.Hints for a record_change result, ending with
+// the record_outcome call for this change.
+func formatHints(id int64, hints []string) string {
 	if len(hints) == 0 {
 		return ""
 	}
@@ -600,28 +590,6 @@ func recordChangeHints(id int64, file, summary, reason, prevSummary string) stri
 	}
 	fmt.Fprintf(&b, "Once you know how it turned out: record_outcome(change_id=%d, outcome=\"worked\" or \"failed\", note=...)", id)
 	return b.String()
-}
-
-// genericVerbs open summaries that say nothing when little follows them.
-var genericVerbs = map[string]bool{
-	"update": true, "updated": true, "updates": true,
-	"fix": true, "fixed": true, "fixes": true,
-	"change": true, "changed": true, "changes": true,
-	"modify": true, "modified": true, "edit": true, "edited": true,
-	"refactor": true, "refactored": true, "tweak": true, "tweaked": true,
-	"wip": true, "misc": true, "cleanup": true,
-}
-
-// isGenericSummary reports a summary that names no specific change: the file
-// name alone, or a generic verb followed by at most two words ("Updated
-// function", "fix bug"). "Fix the race in token refresh" is specific enough.
-func isGenericSummary(file, summary string) bool {
-	s := strings.TrimSpace(summary)
-	if strings.EqualFold(s, file) || strings.EqualFold(s, filepath.Base(file)) {
-		return true
-	}
-	words := strings.Fields(strings.ToLower(strings.TrimRight(s, ".!")))
-	return len(words) > 0 && len(words) <= 3 && genericVerbs[words[0]]
 }
 
 // handleRecordChange records one change (file, summary, reason) or, given
@@ -653,16 +621,7 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		// Read before recording: afterwards the newest row is this one.
-		prevSummary := ""
-		if prev, err := st.FileHistory(file, 5); err == nil { // no comparison on error; the hint is optional
-			for _, p := range prev {
-				if p.Kind == "" || p.Kind == store.KindChange {
-					prevSummary = p.Summary
-					break
-				}
-			}
-		}
+		prevSummary := recorder.PreviousSummary(st, file)
 
 		c, err := recorder.RecordChange(st, root, key, recorder.Input{
 			FilePath: file,
@@ -676,7 +635,7 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 		}
 
 		text := fmt.Sprintf("recorded change #%d for %s", c.ID, oneLine(file))
-		if hints := recordChangeHints(c.ID, file, summary, reason, prevSummary); hints != "" {
+		if hints := formatHints(c.ID, recorder.Hints(file, summary, reason, prevSummary)); hints != "" {
 			text += "\n\n" + hints
 		}
 		return mcp.NewToolResultText(text), nil

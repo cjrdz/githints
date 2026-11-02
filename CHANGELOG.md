@@ -19,6 +19,8 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   tracked repository replaces reinstalling and re-running `init` and `index`.
   A binary installed by a package manager or `go install` is updated there;
   `update` says which command to use.
+- Run `githints upgrade` in each tracked repository once to get the rewritten
+  `AGENTS.md` block; `doctor` warns until then.
 
 ### Added
 
@@ -64,6 +66,19 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   It does; what a rewrite does change (rows keep the old commit hash, replayed
   commits get fallback rows) is described under "History rewrites" in
   `docs/usage.md`.
+
+### Changed
+
+- **The `AGENTS.md` block `init` writes follows the agent loop** (start, check
+  history, edit and record, test and record the outcome, review), says what a
+  reason is for with a good and a bad one, asks for one record per file per
+  logical change, and says what not to record (formatting-only edits,
+  generated files, lockfiles). It is smaller than before. The MCP
+  instructions carry the same rules, and a test keeps both naming every tool.
+- **`githints record` shows the same hints as `record_change`** on its
+  following lines, ending with the `githints outcome` command for the change.
+- The size test for the instructions and tool schemas is set about 5% above
+  what they measure (14.5 KB), down from a flat 16 KiB.
 
 ### Fixed
 
