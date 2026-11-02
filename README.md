@@ -42,6 +42,13 @@ Cursor, Zed, Kiro, Gemini CLI, JetBrains Junie and Continue. Run
 `githints setup -list` to see what it found, or `githints doctor` afterwards to
 check everything.
 
+To update later:
+
+```sh
+githints update     # download, verify and install the latest release
+githints upgrade    # then, in each tracked repository: hooks, agent instructions, index
+```
+
 Native packages (Arch, Debian, Fedora, Alpine), building from source, and manual
 client setup are in the [usage guide](docs/usage.md).
 
@@ -51,6 +58,9 @@ client setup are in the [usage guide](docs/usage.md).
   post-commit hook ties each record to its commit and writes a fallback entry for
   anything left undescribed. A pre-commit gate can warn or block when a staged
   file has no record.
+- **Nudges agents to record well.** A thin record comes back with hints (no
+  reason, a generic summary), tool results mention files changed this session
+  without a record, and every row names the MCP client that wrote it.
 - **Keeps the record honest.** Rows are HMAC-chained, timestamps are checked for
   clock tampering, and each commit anchors a Merkle root in git notes that
   `githints verify` checks, so edited, deleted or re-signed history is detected.
@@ -79,7 +89,11 @@ client setup are in the [usage guide](docs/usage.md).
   or model lives instead of reading files to find out.
 - **Shows the dependency graph.** `githints index graph` writes an offline,
   interactive HTML viewer; Mermaid, Graphviz and JSON exports are one flag away.
-- **Works with any MCP client**, and has CLI equivalents for every read tool.
+- **Works with any MCP client**, with standard tool annotations (read-only,
+  append, destructive) and CLI equivalents for every read tool.
+- **Updates itself.** `githints update` installs a checksum-verified release
+  (the only command that uses the network); `githints upgrade` brings each
+  repository's hooks, agent instructions and index in line with it.
 
 ## Documentation
 
@@ -99,6 +113,8 @@ client setup are in the [usage guide](docs/usage.md).
 ```sh
 githints setup                  # set up the repo and register MCP clients
 githints doctor                 # check the whole setup; prints a fix for each problem
+githints update [-check]        # install the latest verified release (the only network command)
+githints upgrade [-dry-run]     # refresh this repo's hooks, managed blocks and index after an update
 githints uninstall -keep-data   # stop tracking: remove hooks, keep data
 githints uninstall -force       # full removal: hooks, configs, .githints/, salt
 

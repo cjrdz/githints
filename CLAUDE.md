@@ -36,7 +36,13 @@ winget install BrechtSanders.WinLibs.POSIX.UCRT
 
 Tests shell out to the real `git`, so it must be on `PATH`. Tests that need a
 file symlink skip on Windows without Developer Mode; directory links fall back
-to a junction (`mklink /J`), which needs no elevation.
+to a junction (`mklink /J`), which needs no elevation. Two tests run the `go`
+tool: `TestHistoryRewritesKeepVerifyClean` builds the binary so git can run the
+real hooks (`-short` skips it), and `TestOnlyUpdateImportsNetHTTP` runs
+`go list`. No test reaches the network: `internal/update` is tested against an
+`httptest` TLS server. Do not let a test depend on `githints` being on `PATH`;
+CI has none, and a missing hook binary is a `doctor` failure there but only a
+warning on a machine with githints installed.
 
 ### Invariants that must not regress
 
@@ -51,6 +57,38 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
 - **Nothing but JSON-RPC on stdout in `serve` mode.** A stray `fmt.Println`
   anywhere reachable from `internal/cli/serve.Run` corrupts the framing for every client.
   Diagnostics go to stderr.
+- **The unrecorded-edit reminder lives in the tool result, as its own content
+  block.** Appending it to a tool's text would break tools that return JSON
+  (`get_dependency_graph`). Files dirty when the server started are never
+  named, `record_*` calls drop the cached answer, and git runs at most every
+  `reminderEvery`. `TestUnrecordedReminderThroughTheServer` drives it with real
+  git, on and off.
+- **Every MCP tool declares all three annotations.** mcp-go's `NewTool`
+  defaults `destructiveHint` and `openWorldHint` to true, so a tool that sets
+  nothing tells clients it may destroy data over the network; the first cut of
+  annotations did exactly that for the append-only writes, and a test that only
+  built the server missed it. `TestToolAnnotations` checks every tool, and only
+  `record_note` is destructive.
+- **The instructions and the `AGENTS.md` block name every tool.** Some clients
+  show only one of them (`TestInstructionsAndAgentsBlockNameTheSameTools`); a
+  new tool goes into both, `managed.agentsBlock` and the `instructions`
+  constant.
+- **A client-derived `agent_id` is cut, never refused, and set before signing.**
+  The recorder rejects an `agent_id` over 128 bytes before it strips control
+  characters, so an unshortened client name would make every write from that
+  client fail. `clientAgentID` cleans, trims on a rune boundary and drops a
+  credential-shaped value (`TestClientAgentID`); an explicit `agent_id` wins.
+- **`upgrade` and `doctor` judge staleness with init's own code.**
+  `managed.Blocks` renders through the same `renderBlock` as `EnsureBlock`,
+  hooks are compared with `managed.HookScriptFor`, and the index with
+  `doctor.IndexRebuildReason`, so the two cannot disagree and `upgrade` never
+  duplicates `init`. `upgrade` leaves a hook githints did not install and a
+  file without a managed block alone.
+- **A history rewrite leaves `verify` clean.** `commit_hash` is outside the HMAC
+  and each anchor names its own commit; `TestHistoryRewritesKeepVerifyClean`
+  runs amend, rebase, cherry-pick, a squash and `gc` through the real hooks.
+  Re-pointing rows to rewritten commits would need new anchors beside the old
+  ones; see the roadmap before trying.
 - **Every diff handed to an agent is scrubbed.** `get_diff` and `githints
   diff` go through `secrets.DisplayDiff`, which runs `ScrubDiff` before
   truncating. It once ran only on an optional summarize path, so the default
@@ -129,8 +167,10 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   separator, so an unchecked one is parsed as a git option.
 - **Caps stay enforced in Go**, not just declared in the tool schema:
   `recorder.MaxSummaryLen`, `MaxReasonLen`, `MaxAgentIDLen`, `MaxBatchSize`,
-  `clampLimit`, `store.MaxSearchQueryLen`, `maxSymbolNameLen`, `secrets.MaxDiffResultBytes`,
-  `maxGraphNodesMCP`, `gitutil.MaxOutputBytes`, the `config.json` index ceilings.
+  `clampLimit`, `store.MaxSearchQueryLen`, `maxSearchWords`, `maxSearchWordLen`,
+  `maxSymbolNameLen`, `secrets.MaxDiffResultBytes`, `maxGraphNodesMCP`,
+  `gitutil.MaxOutputBytes`, the `config.json` index ceilings, and in
+  `internal/update` `maxArchiveBytes`, `maxChecksumsBytes`, `maxBinaryBytes`.
 - **`BatchRecord` is one transaction.** A partial batch leaves the caller
   unable to tell what landed.
 - **The `commands` table in `internal/cli/cli.go` is the single source of dispatch.**
@@ -301,6 +341,12 @@ client. When changing the server, remember:
   `internal/cli/mcpcfg/mcpcfg.go`, verified against vendor docs. When a client changes its
   format, change the table and `TestClientEntryShapes` together.
 - Tool descriptions and the `instructions` string are the only guidance some
-  clients ever show. Keep them accurate when behavior changes.
+  clients ever show. Keep them accurate when behavior changes, and within the
+  size budget in `TestToolDescriptionsStaySmall` (about 5% above what they
+  measure; raise it deliberately, not to make a test pass).
+- Use only what every client handles: plain text content blocks (the reminder
+  is one more of them), standard tool annotations, and `clientInfo` from
+  `initialize`. Client names differ (`claude-code`, `opencode`,
+  `codex-mcp-client`, `gemini-cli-mcp-client`...); nothing may depend on one.
 - Don't enable `server.WithInputSchemaValidation`: it would reject the
   string-encoded numbers the `cast`-based helpers exist to tolerate.

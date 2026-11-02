@@ -189,6 +189,10 @@ hooks there. The hook script holds the binary's path in a single-quoted shell
 variable (never interpolated into code), tries it first, falls back to
 `githints` on `PATH`, and exits 0 if neither exists. `init -chain` moves an
 existing hook to `<hook>.pre-githints`, which the new hook runs first.
+`githints upgrade` rewrites a githints hook whose text differs from what
+`managed.HookScriptFor` produces for the running binary, and leaves any other
+hook alone; `doctor` warns when a hook runs a binary that is not, by file
+identity, the one running it.
 
 ## Rendering
 
@@ -510,13 +514,18 @@ Tools:
   much history exists, which tools have been used this session, and suggested
   next steps, then the brief (see [The session brief](usage.md#the-session-brief)).
   Intended as the first call of a session.
-- `record_change` — record one file change, or `changes=[...]` atomically.
+- `record_change` — record one file change, or `changes=[...]` atomically. A
+  thin record still lands, with hints from `recorder.Hints` (the same ones
+  `githints record` prints).
 - `record_outcome` — record how an earlier change turned out, by its `#id`.
 - `record_note` — write a markdown note (not integrity-checked).
 - `search_notes` — find notes by words, file or tag, or read one by `name`.
 - `query_changes` — the change log through one `store.QueryChanges`: a file's
-  history, recent changes, FTS search over summaries and reasons, and a
+  history, recent changes, a search over summaries and reasons (plain words,
+  each required as a prefix, or an FTS5 expression with `raw=true`), and a
   `recorded_at` range, combined as given.
+- `review_status` / `record_review` — how deep a review the staged change
+  needs, and a signed, single-use receipt of the review.
 - `get_diff` — redacted unified diff for a file (committed or working tree).
 - `find_symbol` — prefix symbol search across the repo, or with `file`, the
   symbols one file defines with line ranges and signatures.
@@ -557,6 +566,23 @@ have not been called yet. State is in-memory and per-process: a server restart
 is a new session. The stdio transport is single-session by construction, so two
 agents sharing one stdio would share the state; that is a property of the
 transport rather than something the tracker can resolve.
+
+The same wrapper adds the unrecorded-edit reminder (`internal/mcpserver/unrecorded.go`).
+At server start it samples `git status`; files dirty then are never mentioned.
+After a successful call to a tool other than `record_*`, it lists files dirty
+now, minus that baseline, `.githints/` and files recorded since the start, and
+appends one line as a separate content block, so a tool whose text is JSON
+stays parseable. The answer is cached for two seconds and dropped after a
+`record_*` call, and a set is reported once. `mcp.unrecorded_reminder` or
+`GITHINTS_MCP_UNRECORDED_REMINDER=0` turns it off.
+
+Every tool declares `readOnlyHint`, `destructiveHint` and `openWorldHint`
+explicitly, because mcp-go's `NewTool` defaults to destructive and open-world:
+nine tools read, `record_change`, `record_outcome` and `record_review` append,
+`record_note` is destructive (`replace=true`), and none is open-world. A write
+without `agent_id` records `client:<name>/<version>` from the session's
+`initialize` request (`agentIDFor`), cleaned and cut to 128 bytes before the row
+is signed.
 
 githints uses `mark3labs/mcp-go` (v1), and `internal/mcpserver` is the only
 package that imports it. Its API moved between pre-releases, so an upgrade is its
@@ -607,7 +633,7 @@ The full reference is in [usage.md](usage.md#cli-reference). Exit status: 0 ok,
 main.go                # thin binary entry point; delegates to internal/cli
 internal/
   cli/                 # root dispatcher: Main(), commands table, usage, help, version
-    core/              # shared CLI helpers: OpenInitialized, PrintChanges, ErrVerifyFailed, ...
+    core/              # shared CLI helpers: OpenInitialized, PrintChanges, ErrVerifyFailed, ErrUpdateAvailable, ...
     initialize/        # githints init
     hooks/             # githints hook-run, hook-precommit
     record/            # githints record, outcome, render
@@ -621,6 +647,9 @@ internal/
     setup/             # githints setup
     teardown/          # githints uninstall (and -keep-data)
     serve/             # githints serve (MCP stdio server)
+    updatecmd/         # githints update (flags, prompts, exit codes)
+    upgrade/           # githints upgrade (offline refresh of a tracked repository)
+  update/              # release lookup, download, checksum, install (the only net/http importer)
   managed/             # managed hooks, managed-block primitives, agent instruction blocks
   clitest/             # shared test helpers for the CLI packages
   config/              # .githints/config.json loader, env overrides, bounds

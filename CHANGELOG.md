@@ -8,6 +8,16 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+## [0.5.0] - 2026-11-01
+
+githints updates itself: `githints update` installs a checksum-verified release
+and `githints upgrade` brings each repository's hooks, agent instructions and
+index in line with it, while `doctor` says when one is out of date. Agents are
+nudged to record well: rows name the MCP client that wrote them, tool results
+mention files changed without a record, and the `AGENTS.md` block, the MCP
+instructions and `githints record` share one set of rules. History rewrites are
+tested against the real hooks and documented.
+
 ### Upgrade notes
 
 - **`githints update` uses the network; nothing else does.** githints used to
