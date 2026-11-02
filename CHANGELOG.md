@@ -19,6 +19,11 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   can make informed decisions about tool safety: read-only, writable, and
   destructive. Clients like Claude Code and opencode use these to guide users
   about which tools need confirmation before calling.
+- **Feedback hints on record_change.** When recording a change, githints appends
+  optional non-blocking hints to the success message to educate agents about
+  quality: no reason given, generic summary (updated/fixed/changed), or summary
+  identical to previous record for the same file. Hints include a follow-up
+  suggestion to record_outcome when results are known.
 
 ### Changed
 

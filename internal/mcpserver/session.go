@@ -25,6 +25,18 @@ import (
 	"github.com/cjrdz/githints/internal/store"
 )
 
+// deprecatedToolNames maps old tool names to the new names they were replaced by.
+// Used to resolve aliases so calling a deprecated name counts as calling the new tool.
+var deprecatedToolNames = map[string]string{
+	"get_file_history":     "query_changes",
+	"get_recent_changes":   "query_changes",
+	"search_changes":       "query_changes",
+	"get_changes_in_range": "query_changes",
+	"record_batch":         "record_change",
+	"list_symbols":         "find_symbol",
+	"get_index_summary":    "get_dependents",
+}
+
 // sessionSuggestions lists the tools worth calling at session start, in the
 // order an agent should consider them. Only tools that have not been called
 // yet are suggested, so the advice shrinks as the session progresses instead
@@ -34,10 +46,9 @@ var sessionSuggestions = []struct {
 	why  string
 }{
 	{"query_changes", "catch up on recent work by other agents or plain git commits; with file=..., read why a file is shaped the way it is before editing it"},
-	{"get_diff", "check the real unified diff when a recorded summary looks vague or wrong"},
 	{"record_change", "record what you changed and why, right after each edit (changes[] for several files at once)"},
 	{"record_outcome", "record whether an earlier change worked, partly worked, failed or was reverted"},
-	{"search_notes", "look for a note before re-deriving a design choice, a plan or a hard bug"},
+	{"review_status", "check how deep a review your staged change needs before committing"},
 }
 
 // maxSessionSuggestions caps how many suggestions are returned, so the
@@ -70,12 +81,6 @@ type SessionTracker struct {
 	// indexMeta is sampled at the time the index is attached.
 	indexMeta   indexMetaSnapshot
 	indexLoaded bool
-
-	// lastUnrecordedCheck tracks when we last checked for unrecorded files,
-	// and what we found, for debouncing and repeat suppression.
-	lastUnrecordedCheck time.Time
-	lastUnrecordedFiles []string
-	nudgeDisabled       bool
 }
 
 type indexMetaSnapshot struct {
@@ -103,8 +108,6 @@ func NewSessionTracker(st *store.Store) *SessionTracker {
 			t.changeCount = count
 		}
 	}
-	// Check environment for nudge disable
-	t.nudgeDisabled = os.Getenv("GITHINTS_NO_NUDGE") == "1"
 	return t
 }
 
@@ -139,13 +142,20 @@ func (t *SessionTracker) IndexDB() *index.Store {
 
 // MarkToolCalled records that a tool ran during this session. A nil receiver
 // is a no-op so handlers can be constructed without a tracker.
+// Deprecated tool names are resolved to their new names so that calling an
+// old alias counts as calling the current tool.
 func (t *SessionTracker) MarkToolCalled(name string) {
 	if t == nil || name == "" {
 		return
 	}
+	// Resolve deprecated aliases to new tool names
+	resolvedName := name
+	if newName, ok := deprecatedToolNames[name]; ok {
+		resolvedName = newName
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.called[name] = true
+	t.called[resolvedName] = true
 }
 
 // CalledTools returns the tools used this session, sorted for stable output.
@@ -186,7 +196,7 @@ func (t *SessionTracker) ContextReport() string {
 	b.WriteString("githints session context\n\n")
 	fmt.Fprintf(&b, "- session started: %s (%s ago)\n",
 		started.Format(time.RFC3339), time.Since(started).Round(time.Second))
-	fmt.Fprintf(&b, "- recorded changes in store: %d\n", changeCount)
+	fmt.Fprintf(&b, "- recorded changes in store: %d (at session start)\n", changeCount)
 
 	usedNames := make([]string, 0, len(called))
 	for name := range called {
