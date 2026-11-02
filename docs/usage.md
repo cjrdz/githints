@@ -636,6 +636,9 @@ Per-repository settings live in `.githints/config.json`. Every key is optional:
     "max_file_size": 1048576,
     "parse_timeout_ms": 5000,
     "graph_html": false
+  },
+  "mcp": {
+    "unrecorded_reminder": true
   }
 }
 ```
@@ -648,11 +651,25 @@ Per-repository settings live in `.githints/config.json`. Every key is optional:
 | `index.max_file_size` | Files larger than this are skipped (at most 64 MiB). |
 | `index.parse_timeout_ms` | Per-file parse budget (at most 60 s). |
 | `index.graph_html` | Keep `.githints/graph.html` current after `githints index` and every commit. |
+| `mcp.unrecorded_reminder` | Remind the agent about files it changed without recording them (see below). On by default. |
 
 Environment variables override the file: `GITHINTS_INDEX_ENABLED`,
 `GITHINTS_INDEX_LANGUAGES` (a comma-separated list that replaces the configured
 set), `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
-`GITHINTS_INDEX_PARSE_TIMEOUT_MS` and `GITHINTS_INDEX_GRAPH_HTML`.
+`GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_GRAPH_HTML` and
+`GITHINTS_MCP_UNRECORDED_REMINDER`.
+
+**Unrecorded-edit reminder.** After a successful MCP tool call other than the
+`record_*` tools, the server checks `git status` (at most every two seconds)
+for files changed since the server started that have no recorded change since
+then, and adds one line to the result as its own text block:
+
+    [githints] 2 files changed this session without a record: a.go, b.go. Call record_change.
+
+Files already changed when the session started, ignored files and `.githints/`
+are left out; at most five names are shown; the same set is reported once. A
+record made with `githints record` counts too. The line is part of the tool
+result, never written anywhere else.
 
 Other variables: `GITHINTS_ROOT` (pin the served repository),
 `GITHINTS_PRECOMMIT_BLOCK=1` and `GITHINTS_SECRET_BLOCK=1` (make the

@@ -108,14 +108,32 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 	// get_session_context reads it when it runs.
 	var notesDB *index.Store
 
+	var reminder *editReminder
+	if cfg.MCP.UnrecordedReminder {
+		reminder = newEditReminder(root, st)
+	}
+
 	// addTool registers a tool and marks it as used whenever it runs. Taking
 	// the name from the tool itself means a new tool cannot be registered
-	// without being tracked, and no name literal is repeated.
+	// without being tracked, and no name literal is repeated. After any other
+	// successful call it appends the unrecorded-edits reminder as a separate
+	// content block, so a tool whose text is JSON stays parseable.
 	addTool := func(tool mcp.Tool, h server.ToolHandlerFunc) {
 		name := tool.Name
+		records := strings.HasPrefix(name, "record_")
 		s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			defer session.MarkToolCalled(name)
-			return h(ctx, req)
+			res, err := h(ctx, req)
+			if records {
+				reminder.forget()
+				return res, err
+			}
+			if err == nil && res != nil && !res.IsError {
+				if line := reminder.line(ctx); line != "" {
+					res.Content = append(res.Content, mcp.NewTextContent(line))
+				}
+			}
+			return res, err
 		})
 	}
 

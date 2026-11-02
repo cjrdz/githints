@@ -17,6 +17,15 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   different clients can be told apart. The value is cleaned like any recorded
   text, shortened to the 128-byte cap rather than refused, and set before the
   row is signed. An explicit `agent_id` still wins.
+- **A reminder about unrecorded edits.** After a successful MCP tool call other
+  than the `record_*` tools, the result can carry one more text block:
+  `[githints] 2 files changed this session without a record: a.go, b.go. Call
+  record_change.` It lists files changed since the server started that have no
+  record since then, leaves out files already dirty at session start, ignored
+  files and `.githints/`, shows at most five names, repeats only when the set
+  changes, and runs `git status` at most every two seconds. Turn it off with
+  `"mcp": {"unrecorded_reminder": false}` in `config.json` or
+  `GITHINTS_MCP_UNRECORDED_REMINDER=0`.
 
 ## [0.4.0] - 2026-11-01
 
