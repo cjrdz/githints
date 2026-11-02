@@ -696,7 +696,7 @@ func TestQueryChangesCombinesFilters(t *testing.T) {
 	for name, args := range map[string]map[string]any{
 		"bad file":   {"file": "../x"},
 		"bad since":  {"since": "yesterday"},
-		"bad fts":    {"query": `"unbalanced`},
+		"bad fts":    {"query": `"unbalanced`, "raw": true},
 		"line alone": {"line": 3},
 		"line+query": {"file": "a.go", "line": 3, "query": "x"},
 	} {

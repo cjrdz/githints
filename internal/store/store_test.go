@@ -894,3 +894,117 @@ func TestOpenSetsTrustedSchemaOffOnEveryConnection(t *testing.T) {
 		_ = c.Close()
 	}
 }
+
+// TestPreprocessSearchText verifies that plain words are split and converted
+// into FTS5 prefix queries correctly.
+func TestPreprocessSearchText(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+		desc     string
+	}{
+		{"auth token", `"auth"* AND "token"*`, "plain words"},
+		{"auth-token", `"auth"* AND "token"*`, "hyphen separator"},
+		{"auth.token", `"auth"* AND "token"*`, "dot separator"},
+		{"internal/auth/token.go", `"internal"* AND "auth"* AND "token"* AND "go"*`, "path"},
+		{"foo.bar", `"foo"* AND "bar"*`, "dotted identifier"},
+		{`hello"world`, `"hello"* AND "world"*`, "quote as separator"},
+		{"AND", `"AND"*`, "AND as literal word"},
+		{"OR", `"OR"*`, "OR as literal word"},
+		{"NOT", `"NOT"*`, "NOT as literal word"},
+		{"", "", "empty string"},
+		{"   ", "", "whitespace only"},
+		{"hello123", `"hello123"*`, "word with numbers"},
+		{"_underscore_", `"_underscore_"*`, "underscores"},
+		{"test@example.com", `"test"* AND "example"* AND "com"*`, "email-like"},
+		{"hello-world foo_bar", `"hello"* AND "world"* AND "foo_bar"*`, "mixed separators"},
+		{"a", `"a"*`, "single char"},
+		{"αβγ", `"αβγ"*`, "unicode letters"},
+		{"test!@#$%", `"test"*`, "special characters"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			got := preprocessSearchText(tt.input)
+			if got != tt.expected {
+				t.Errorf("preprocessSearchText(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestQueryChangesWithPlainWords verifies that plain words are preprocessed
+// and matched correctly against summaries and reasons.
+func TestQueryChangesWithPlainWords(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	mustInsert(t, st, Change{
+		FilePath:   "auth.go",
+		Summary:    "Add authentication token rotation",
+		Reason:     "Improve security for long-lived sessions",
+		RecordedAt: 1000,
+	})
+	mustInsert(t, st, Change{
+		FilePath:   "logger.go",
+		Summary:    "Fix log output formatting",
+		Reason:     "Token values were leaking to stderr",
+		RecordedAt: 2000,
+	})
+	mustInsert(t, st, Change{
+		FilePath:   "config.go",
+		Summary:    "Update configuration defaults",
+		Reason:     "No token renewal period set",
+		RecordedAt: 3000,
+	})
+
+	tests := []struct {
+		query    string
+		raw      bool
+		wantRows int
+		desc     string
+	}{
+		{"token rotation", false, 1, "plain words match summary and reason"},
+		{"auth-token", false, 1, "hyphen split into two words"},
+		{"token", false, 3, "single word matches multiple rows"},
+		{"log output", false, 1, "multiple words in reason"},
+		{"foo bar", false, 0, "no match"},
+		{"", false, 3, "empty query returns all"},
+		// Raw mode tests (using actual FTS5 syntax)
+		{`"token" AND "rotation"`, true, 1, "FTS5 syntax with AND"},
+		{`"log" AND "output"`, true, 1, "FTS5 syntax finding specific match"},
+		{`"notfound"`, true, 0, "FTS5 no match"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			q := Query{Text: tt.query, Raw: tt.raw, Limit: 100}
+			changes, err := st.QueryChanges(q)
+			if err != nil {
+				t.Fatalf("QueryChanges: %v", err)
+			}
+			if got := len(changes); got != tt.wantRows {
+				t.Errorf("QueryChanges returned %d rows, want %d", got, tt.wantRows)
+				for _, c := range changes {
+					t.Logf("  row: %s", c.Summary)
+				}
+			}
+		})
+	}
+}
+
+// TestQueryChangesQueryTooLong verifies the length cap error.
+func TestQueryChangesQueryTooLong(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+
+	longQuery := strings.Repeat("x", MaxSearchQueryLen+1)
+	q := Query{Text: longQuery, Limit: 100}
+	_, err := st.QueryChanges(q)
+	if err == nil {
+		t.Fatal("QueryChanges: expected error for query too long, got nil")
+	}
+	if !strings.Contains(err.Error(), "search failed") {
+		t.Errorf("error message should contain 'search failed': %v", err)
+	}
+}

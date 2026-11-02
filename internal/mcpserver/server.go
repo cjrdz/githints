@@ -159,15 +159,14 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 
 	addTool(
 		mcp.NewTool("query_changes",
-			mcp.WithDescription("Read the change log, newest first. With no arguments: the latest changes "+
-				"across the repo (catch up on other agents, teammates, manual commits). file: one file's "+
-				"history, before editing a file you have not touched this session. query: full-text search "+
-				"over summaries and reasons (FTS5 syntax). since/until: a time range (Unix seconds or RFC3339). "+
-				"Arguments combine. file with line: why that line is there (the commit that last changed it, "+
-				"what was recorded for it, and the review it passed)."),
+			mcp.WithDescription("Read the change log, newest first. file: one file's history. "+
+				"query: plain words (split on non-alphanumeric) or raw=true for FTS5 syntax. "+
+				"since/until: Unix seconds or RFC3339. Arguments combine. "+
+				"file + line: why that line is there (commit, recorded, review receipt)."),
 			mcp.WithString("file", mcp.Description("Repo-relative path")),
 			mcp.WithNumber("line", mcp.Min(1), mcp.Description("With file: explain this line")),
-			mcp.WithString("query", mcp.MaxLength(maxSearchQueryLen), mcp.Description("Words to search for")),
+			mcp.WithString("query", mcp.MaxLength(maxSearchQueryLen), mcp.Description("Search words or FTS5 syntax")),
+			mcp.WithBoolean("raw", mcp.Description("If true, query is raw FTS5 syntax")),
 			mcp.WithString("since", mcp.Description("Start, inclusive")),
 			mcp.WithString("until", mcp.Description("End, inclusive")),
 			mcp.WithNumber("limit", mcp.Min(1), mcp.Max(500), mcp.Description("Max entries (default 20)")),
@@ -730,6 +729,7 @@ func handleQueryChanges(st *store.Store) server.ToolHandlerFunc {
 		q := store.Query{
 			File:  req.GetString("file", ""),
 			Text:  req.GetString("query", ""),
+			Raw:   req.GetBool("raw", false),
 			Limit: clampLimit(req.GetInt("limit", 20), 20, 500),
 		}
 		if q.File != "" {
@@ -765,9 +765,12 @@ func handleQueryChanges(st *store.Store) server.ToolHandlerFunc {
 		changes, err := st.QueryChanges(q)
 		if err != nil {
 			if q.Text != "" {
-				// FTS5 MATCH is a query language; a syntax error here is the
-				// caller's malformed expression, not a store failure.
-				return mcp.NewToolResultError(fmt.Sprintf("search failed (check FTS5 query syntax): %v", err)), nil
+				// If raw=true, user provided FTS5 syntax that failed. Otherwise,
+				// they provided plain words; preprocess should handle most input.
+				if q.Raw {
+					return mcp.NewToolResultError(fmt.Sprintf("search failed with FTS5 syntax: %v", err)), nil
+				}
+				return mcp.NewToolResultError(fmt.Sprintf("search failed: %v; use plain words, or raw=true for FTS5 syntax", err)), nil
 			}
 			return mcp.NewToolResultError(err.Error()), nil
 		}

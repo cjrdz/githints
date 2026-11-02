@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	_ "modernc.org/sqlite"
 
@@ -491,6 +492,7 @@ type Query struct {
 	Text         string
 	Since, Until int64
 	Limit        int
+	Raw          bool // if true, Text is real FTS5 syntax; if false, split and quote words
 }
 
 // MaxSearchQueryLen bounds the FTS5 MATCH expression. The query is
@@ -498,19 +500,49 @@ type Query struct {
 // pathological expressions are a cheap CPU amplifier.
 const MaxSearchQueryLen = 500
 
+// preprocessSearchText converts plain words into an FTS5 expression where each
+// word becomes a prefix term quoted and ANDed: "auth" "token" becomes "auth"* AND "token"*.
+// If nothing remains after splitting on non-alphanumeric characters, returns empty.
+// This makes user input behave consistently: "auth-token" and "auth token" both find
+// summaries containing both words as prefixes.
+func preprocessSearchText(text string) string {
+	// Split on any character that is not alphanumeric (including unicode letters/digits)
+	// or underscore. The FTS5 default tokenizer uses a similar split.
+	parts := strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	})
+	if len(parts) == 0 {
+		return ""
+	}
+	// Quote each term and make it a prefix query.
+	quoted := make([]string, len(parts))
+	for i, p := range parts {
+		// Escape any internal quotes by doubling them (FTS5 quote rules).
+		escaped := strings.ReplaceAll(p, `"`, `""`)
+		quoted[i] = `"` + escaped + `"*`
+	}
+	return strings.Join(quoted, " AND ")
+}
+
 // QueryChanges runs q. The text cap is enforced here, so no caller can
 // forget it.
 func (s *Store) QueryChanges(q Query) ([]Change, error) {
 	if len(q.Text) > MaxSearchQueryLen {
-		return nil, fmt.Errorf("query too long: %d bytes (max %d)", len(q.Text), MaxSearchQueryLen)
+		return nil, fmt.Errorf("search failed: query too long (%d bytes, max %d)", len(q.Text), MaxSearchQueryLen)
 	}
 	from := `changes AS c`
 	where := []string{noDuplicateFallback}
 	var args []any
 	if q.Text != "" {
-		from = `changes_fts f JOIN changes c ON c.id = f.rowid`
-		where = append(where, `changes_fts MATCH ?`)
-		args = append(args, q.Text)
+		searchText := q.Text
+		if !q.Raw {
+			searchText = preprocessSearchText(q.Text)
+		}
+		if searchText != "" {
+			from = `changes_fts f JOIN changes c ON c.id = f.rowid`
+			where = append(where, `changes_fts MATCH ?`)
+			args = append(args, searchText)
+		}
 	}
 	if q.File != "" {
 		where = append(where, `c.file_path = ?`)

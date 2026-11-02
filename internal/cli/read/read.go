@@ -24,7 +24,8 @@ import (
 func Log(args []string) error {
 	fs := flag.NewFlagSet("log", flag.ExitOnError)
 	file := fs.String("file", "", "one repo-relative file's history")
-	query := fs.String("query", "", "FTS5 MATCH expression over summaries and reasons")
+	query := fs.String("query", "", "plain words or FTS5 MATCH expression over summaries and reasons")
+	raw := fs.Bool("raw", false, "if true, query is raw FTS5 syntax; if false, treat as plain words")
 	sinceStr := fs.String("since", "", "start, inclusive (RFC3339, a date, or Unix seconds)")
 	untilStr := fs.String("until", "", "end, inclusive")
 	limit := fs.Int("limit", 20, "max entries (1-500)")
@@ -54,7 +55,7 @@ func Log(args []string) error {
 		fmt.Print(text)
 		return nil
 	}
-	q := store.Query{File: *file, Text: strings.TrimSpace(*query), Limit: *limit}
+	q := store.Query{File: *file, Text: strings.TrimSpace(*query), Raw: *raw, Limit: *limit}
 	if q.File != "" {
 		if err := recorder.ValidateFilePath(q.File); err != nil {
 			return err
@@ -83,7 +84,10 @@ func Log(args []string) error {
 	changes, err := st.QueryChanges(q)
 	if err != nil {
 		if q.Text != "" {
-			return fmt.Errorf("search (FTS5 syntax): %w", err)
+			if *raw {
+				return fmt.Errorf("search failed with FTS5 syntax: %w", err)
+			}
+			return fmt.Errorf("search failed: %w (use -raw for FTS5 syntax)", err)
 		}
 		return err
 	}
