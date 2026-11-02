@@ -8,6 +8,13 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+## [0.4.0] - 2026-11-01
+
+Searching the change log takes plain words, every MCP tool tells clients
+whether it reads, appends or overwrites, `record_change` says when a record
+is too thin to help the next reader, and the instructions follow the loop an
+agent works in. The names replaced in 0.3.0 are gone.
+
 ### Upgrade notes
 
 - **The names replaced in 0.3.0 are gone.** The MCP tools `get_file_history`,
