@@ -122,6 +122,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				"what this session has used so far and what to call next, then a brief: failed or reverted "+
 				"attempts, uncommitted work, recent commits, what imports the files changed lately, and "+
 				"files that change together."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleGetSessionContext(root, st, session, func() *index.Store { return notesDB }),
 	)
@@ -153,6 +155,7 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 			),
 			mcp.WithString("agent_id",
 				mcp.Description("Optional agent/session fingerprint, e.g. claude-code-session-abc123")),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleRecordChange(root, st),
 	)
@@ -170,6 +173,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 			mcp.WithString("since", mcp.Description("Start, inclusive")),
 			mcp.WithString("until", mcp.Description("End, inclusive")),
 			mcp.WithNumber("limit", mcp.Min(1), mcp.Max(500), mcp.Description("Max entries (default 20)")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleQueryChanges(st),
 	)
@@ -185,6 +190,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				mcp.Description("Repo-relative path to the file")),
 			mcp.WithString("hash",
 				mcp.Description("Commit hash to diff within. Omit (or empty) for the working-tree diff vs HEAD.")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleGetDiff(),
 	)
@@ -206,6 +213,7 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				mcp.Description("What happened and why, e.g. \"integration test TestLogin fails: the token TTL is read before config loads\"")),
 			mcp.WithString("agent_id",
 				mcp.Description("Optional agent/session fingerprint")),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleRecordOutcome(root, st),
 	)
@@ -252,6 +260,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				mcp.Description("Ids (#N) of recorded changes this note is about")),
 			mcp.WithBoolean("replace",
 				mcp.Description("Overwrite an existing note of that name (default false)")),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
 		),
 		handleRecordNote(root, notesDB),
 	)
@@ -273,6 +283,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				mcp.Description("Only notes with this tag")),
 			mcp.WithNumber("limit", mcp.Min(1), mcp.Max(100),
 				mcp.Description("Max notes to return (default 20)")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleSearchNotes(root, notesDB),
 	)
@@ -288,6 +300,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				mcp.Description("Repo-relative path: list its symbols (filtered by name if given)")),
 			mcp.WithNumber("limit", mcp.Min(1), mcp.Max(500),
 				mcp.Description("Max symbols (default 20, or 50 for a file)")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleFindSymbol(idxDB),
 	)
@@ -296,6 +310,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 		mcp.NewTool("get_dependents",
 			mcp.WithDescription("Which files import this one: the blast radius to check before refactoring or "+
 				"deleting a file. Without file: index totals, languages and the most imported (hub) files."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("file",
 				mcp.Description("Repo-relative path, e.g. internal/store/store.go")),
 			mcp.WithNumber("limit", mcp.Min(1), mcp.Max(100),
@@ -320,6 +336,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				mcp.Description("json (default) or mermaid")),
 			mcp.WithNumber("max_nodes", mcp.Min(1), mcp.Max(maxGraphNodesMCP),
 				mcp.Description("Keep at most this many of the most connected nodes (default 100)")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleGetDependencyGraph(root, idxDB),
 	)
@@ -339,6 +357,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				mcp.Description("Restrict to one repo-relative file path. Omit for all.")),
 			mcp.WithNumber("limit", mcp.Min(1), mcp.Max(500),
 				mcp.Description("Max facets to return (default 50)")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleFindFacets(idxDB),
 	)
@@ -352,6 +372,8 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				"change first, or pass paths."),
 			mcp.WithArray("paths", mcp.WithStringItems(), mcp.MaxItems(risk.MaxPaths),
 				mcp.Description("Repo-relative paths to assess instead of the staged change")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleReviewStatus(root, st, cfg.Review, idxDB),
 	)
@@ -370,6 +392,7 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 			mcp.WithArray("lenses", mcp.WithStringItems(), mcp.MaxItems(len(risk.Lenses)),
 				mcp.Description("Lenses covered: risk, resilience, readability, reliability")),
 			mcp.WithString("agent_id", mcp.Description("Who reviewed")),
+			mcp.WithOpenWorldHintAnnotation(false),
 		),
 		handleRecordReview(root, st, cfg.Review, idxDB),
 	)

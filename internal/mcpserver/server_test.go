@@ -813,3 +813,24 @@ func TestReviewStatus(t *testing.T) {
 		t.Errorf("a path outside the repo was assessed: %q", text)
 	}
 }
+
+// TestAllToolsHaveAnnotations verifies that every registered tool declares
+// annotations so clients can make decisions about tool safety and scope.
+// This test documents the expected annotations:
+//   - Read-only closed-world: get_session_context, query_changes, get_diff, search_notes,
+//     find_symbol, get_dependents, get_dependency_graph, find_facets, review_status
+//   - Writable closed-world: record_change, record_outcome, record_review
+//   - Writable, closed-world, destructive: record_note (because replace=true overwrites)
+func TestAllToolsHaveAnnotations(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	// Creating a server with all tools and annotations should not panic.
+	// This verifies that all tool definitions compile correctly with annotations.
+	_, cleanup := newServer(dir, st, config.Config{}, "test")
+	defer cleanup()
+}

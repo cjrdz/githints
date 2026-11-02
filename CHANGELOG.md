@@ -8,6 +8,19 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+### Added
+
+- **Plain-word query preprocessing.** `query_changes(query, raw=false)` and
+  `githints log -query` now preprocess plain-word input by splitting on
+  non-alphanumeric characters and converting each word to a quoted FTS5 prefix
+  term. "auth-token" and "auth token" now both find summaries containing both
+  words. A new `raw` parameter allows passing FTS5 syntax directly when needed.
+
+### Changed
+
+- `query_changes` error messages now guide users to the appropriate mode when
+  syntax fails: "use plain words, or raw=true for FTS5 syntax".
+
 ## [0.3.0] - 2026-10-24
 
 Risk-scaled review comes to githints: it says how deep a review a staged change
