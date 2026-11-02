@@ -765,7 +765,8 @@ func TestInstructionsNameEveryTool(t *testing.T) {
 // mcp-go's NewTool defaults to destructiveHint=true and openWorldHint=true, so
 // a tool that sets nothing tells clients it may destroy data on the network.
 // Every tool declares all three hints here, and only record_note (replace=true
-// overwrites a note) is destructive.
+// overwrites a note) is destructive. Clients ignore destructiveHint on a
+// read-only tool, but some display it, so the reads say false too.
 func TestToolAnnotations(t *testing.T) {
 	writes := map[string]bool{"record_change": true, "record_outcome": true, "record_note": true, "record_review": true}
 	for name, tool := range registeredTools(t) {
@@ -780,10 +781,8 @@ func TestToolAnnotations(t *testing.T) {
 		if got, want := *a.ReadOnlyHint, !writes[name]; got != want {
 			t.Errorf("%s: readOnlyHint = %v, want %v", name, got, want)
 		}
-		if writes[name] {
-			if got, want := *a.DestructiveHint, name == "record_note"; got != want {
-				t.Errorf("%s: destructiveHint = %v, want %v", name, got, want)
-			}
+		if got, want := *a.DestructiveHint, name == "record_note"; got != want {
+			t.Errorf("%s: destructiveHint = %v, want %v", name, got, want)
 		}
 	}
 }
