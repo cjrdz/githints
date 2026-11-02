@@ -26,6 +26,12 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   changes, and runs `git status` at most every two seconds. Turn it off with
   `"mcp": {"unrecorded_reminder": false}` in `config.json` or
   `GITHINTS_MCP_UNRECORDED_REMINDER=0`.
+- **History rewrites are tested and documented.** A test with real hooks runs
+  `commit --amend`, `rebase`, `cherry-pick`, an interactive squash and
+  `git gc` and checks that `githints verify` stays clean through all of them.
+  It does; what a rewrite does change (rows keep the old commit hash, replayed
+  commits get fallback rows) is described under "History rewrites" in
+  `docs/usage.md`.
 
 ## [0.4.0] - 2026-11-01
 

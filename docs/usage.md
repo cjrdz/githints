@@ -614,6 +614,29 @@ githints salt rotate [-force]        # new salt, every row re-signed
 also discards the tamper evidence; use it only when the old salt is gone for
 good.
 
+### History rewrites
+
+`commit --amend`, `rebase` (interactive or not), `cherry-pick` and a later
+`git gc` leave `githints verify` passing: a row's commit hash is outside the
+HMAC, and each anchor names the commit it was written for, which a rewrite
+does not change. What a rewrite does change:
+
+- A row keeps the hash of the commit it was stamped with. After an amend or a
+  rebase that commit is no longer in your history, and once `git gc` removes
+  it, `githints diff -hash=` on it fails with "bad revision". The summary and
+  reason are unaffected.
+- git replays rebased and cherry-picked commits through the post-commit hook.
+  Their records were used up by the original commits, so each replayed commit
+  gets a fallback row ("Change detected by git hook"). `githints log -file=F`
+  then shows the recorded rows on the old hashes and the fallback rows on the
+  new ones; the recorded rows are the ones that say why.
+- An amend gives the amended commit any rows recorded since the original
+  commit; rows the original commit took keep its hash.
+
+Re-pointing rows to the rewritten commits would need a post-rewrite hook that
+also re-anchors them, which the anchors are designed to make visible; see the
+[roadmap](roadmap.md#history-rewrites).
+
 ## Structural index
 
 githints keeps a structural index of the code (symbols, imports, framework
