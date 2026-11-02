@@ -22,6 +22,17 @@ Left for later: a revert that is itself reverted leaves the original reading
 `reverted`; `git reset`, amend, rebase and cherry-pick leave no revert commit to
 notice; and nothing yet ranks past failures by how often they recur.
 
+### History rewrites
+
+Amend, rebase, cherry-pick and gc leave `verify` passing (tested in
+`TestHistoryRewritesKeepVerifyClean`), but rows keep the hashes of the commits
+they were stamped with, and replayed commits get fallback rows; see
+[usage](usage.md#history-rewrites). A post-rewrite hook could map old hashes to
+new ones, and the post-commit hook could skip fallback rows while a rebase or
+cherry-pick is replaying recorded commits. Re-pointing rows means writing new
+anchors for the new commits while the old ones stay, and `verify` would have
+to accept that pairing without accepting a re-pointed row it cannot explain.
+
 ### Project-aware matching in monorepos
 
 Imports are matched by name. Two projects in one repository that both expose a

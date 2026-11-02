@@ -23,7 +23,10 @@ import (
 	"github.com/cjrdz/githints/internal/cli/serve"
 	"github.com/cjrdz/githints/internal/cli/setup"
 	"github.com/cjrdz/githints/internal/cli/teardown"
+	"github.com/cjrdz/githints/internal/cli/updatecmd"
+	"github.com/cjrdz/githints/internal/cli/upgrade"
 	"github.com/cjrdz/githints/internal/cli/verify"
+	"github.com/cjrdz/githints/internal/update"
 )
 
 // Main is the CLI entry point. It returns an exit code.
@@ -31,6 +34,7 @@ import (
 // Exit codes: 0 ok, 1 error, 2 usage error, 3 verify found problems.
 func Main(args []string, version string) int {
 	cliVersion = version
+	update.CleanupOld()
 	if len(args) < 2 {
 		usage()
 		return 2
@@ -55,6 +59,9 @@ func Main(args []string, version string) int {
 		return 2
 	}
 	if err := cmd(args[2:]); err != nil {
+		if errors.Is(err, core.ErrUpdateAvailable) {
+			return 2 // update -check printed its own line
+		}
 		fmt.Fprintln(os.Stderr, "githints: "+err.Error())
 		if errors.Is(err, core.ErrVerifyFailed) {
 			return 3
@@ -90,6 +97,8 @@ var commands = map[string]func(args []string) error{
 	"index":          indexcmd.Run,
 	"doctor":         noArgs(doctor.Run),
 	"setup":          setup.Setup,
+	"update":         func(args []string) error { return updatecmd.Run(args, versionString()) },
+	"upgrade":        func(args []string) error { return upgrade.Run(args, versionString()) },
 	"version":        noArgs(cmdVersion),
 	"help":           noArgs(cmdHelp),
 }
@@ -168,11 +177,16 @@ Usage:
                                   every client detected (Claude Code, opencode, Codex,
                                   VS Code, Cursor, Zed, Kiro, Gemini, Junie, ...);
                                   -print -clients=NAME only prints that client's entry
+  githints update [-check] [-version=TAG] [-force] [-yes]
+                                  replace this binary with the latest verified release
+                                  (the only command that uses the network)
+  githints upgrade [-dry-run]     refresh this repository's hooks, managed blocks and
+                                  index for the running githints, then run doctor
   githints version                print the version, commit and build date
   githints help                   show this list
 
 Run any command with -h for its flags. Exit status: 0 ok, 1 error,
-2 usage error, 3 verify found problems.`
+2 usage error or (update -check) an update is available, 3 verify found problems.`
 
 func cmdHelp() error {
 	fmt.Println(usageText)

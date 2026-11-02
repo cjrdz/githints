@@ -8,6 +8,95 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+## [0.5.0] - 2026-11-01
+
+githints updates itself: `githints update` installs a checksum-verified release
+and `githints upgrade` brings each repository's hooks, agent instructions and
+index in line with it, while `doctor` says when one is out of date. Agents are
+nudged to record well: rows name the MCP client that wrote them, tool results
+mention files changed without a record, and the `AGENTS.md` block, the MCP
+instructions and `githints record` share one set of rules. History rewrites are
+tested against the real hooks and documented.
+
+### Upgrade notes
+
+- **`githints update` uses the network; nothing else does.** githints used to
+  open no network connections at all. `update` is now the one exception: it
+  runs only when you type it, talks https to github.com and GitHub's
+  release-asset hosts, and never runs from a hook, the MCP server, `doctor`,
+  `brief`, `init` or `upgrade`.
+- After this release, `githints update` followed by `githints upgrade` in each
+  tracked repository replaces reinstalling and re-running `init` and `index`.
+  A binary installed by a package manager or `go install` is updated there;
+  `update` says which command to use.
+- Run `githints upgrade` in each tracked repository once to get the rewritten
+  `AGENTS.md` block; `doctor` warns until then.
+
+### Added
+
+- **`githints update [-check] [-version=TAG] [-force] [-yes]`.** Finds the
+  latest release the way `install.sh` does, downloads this platform's archive
+  and `checksums.txt`, refuses on a mismatch or a missing entry, checks the new
+  binary runs and reports the expected version, then replaces the running one
+  by rename (on Windows the old one is kept as `.old` until the next run). It
+  refuses to replace a binary owned by a package manager or `go install`,
+  never downgrades without `-version` and `-force`, and prints the
+  `gh attestation verify` command for build provenance. `-check` exits 0 when
+  up to date, 2 when an update is available, 1 on error.
+- **`githints upgrade [-dry-run]`.** Offline and idempotent: repoints githints'
+  hooks at the running binary, refreshes the managed blocks in `AGENTS.md`,
+  `CLAUDE.md` and `.gitignore`, rebuilds a stale index, runs `doctor`, and asks
+  for an MCP server restart when the binary managing the repository changed. A
+  hook githints did not install, or a file without a managed block, is left
+  alone.
+- **`doctor` warns about a stale setup**, each with `githints upgrade` as the
+  fix: a hook that runs a different binary than the one running `doctor`, a
+  managed block that differs from what this version writes, and a missing
+  `.gitignore` block.
+
+- **Writes name the client.** When `record_change`, `record_outcome` or
+  `record_review` get no `agent_id`, githints records
+  `client:<name>/<version>` from the MCP client's `initialize` request (for
+  example `client:claude-code/2.1.0` or `client:opencode/1.0.0`), so rows from
+  different clients can be told apart. The value is cleaned like any recorded
+  text, shortened to the 128-byte cap rather than refused, and set before the
+  row is signed. An explicit `agent_id` still wins.
+- **A reminder about unrecorded edits.** After a successful MCP tool call other
+  than the `record_*` tools, the result can carry one more text block:
+  `[githints] 2 files changed this session without a record: a.go, b.go. Call
+  record_change.` It lists files changed since the server started that have no
+  record since then, leaves out files already dirty at session start, ignored
+  files and `.githints/`, shows at most five names, repeats only when the set
+  changes, and runs `git status` at most every two seconds. Turn it off with
+  `"mcp": {"unrecorded_reminder": false}` in `config.json` or
+  `GITHINTS_MCP_UNRECORDED_REMINDER=0`.
+- **History rewrites are tested and documented.** A test with real hooks runs
+  `commit --amend`, `rebase`, `cherry-pick`, an interactive squash and
+  `git gc` and checks that `githints verify` stays clean through all of them.
+  It does; what a rewrite does change (rows keep the old commit hash, replayed
+  commits get fallback rows) is described under "History rewrites" in
+  `docs/usage.md`.
+
+### Changed
+
+- **The `AGENTS.md` block `init` writes follows the agent loop** (start, check
+  history, edit and record, test and record the outcome, review), says what a
+  reason is for with a good and a bad one, asks for one record per file per
+  logical change, and says what not to record (formatting-only edits,
+  generated files, lockfiles). It is smaller than before. The MCP
+  instructions carry the same rules, and a test keeps both naming every tool.
+- **`githints record` shows the same hints as `record_change`** on its
+  following lines, ending with the `githints outcome` command for the change.
+- The size test for the instructions and tool schemas is set about 5% above
+  what they measure (14.5 KB), down from a flat 16 KiB.
+
+### Fixed
+
+- An index built only by the commit hook, never by a full `githints index`,
+  was reported as built "by an older githints", by `doctor` and by the hook on
+  every commit. `doctor` now says it was never fully built; the hook stays
+  quiet about it.
+
 ## [0.4.0] - 2026-11-01
 
 Searching the change log takes plain words, every MCP tool tells clients

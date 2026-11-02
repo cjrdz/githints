@@ -66,6 +66,9 @@ irm https://raw.githubusercontent.com/cjrdz/githints/main/install.ps1 | iex
 The default is `/usr/local/bin` when writable, otherwise `~/.local/bin`; on
 Windows, `%LOCALAPPDATA%\Programs\githints`, which is added to your user PATH.
 
+A binary installed this way updates itself: `githints update`, then
+`githints upgrade` in each tracked repository (see [Upgrading](#upgrading)).
+
 ### Native packages
 
 Every release attaches `.deb`, `.rpm`, `.apk` and Arch `.pkg.tar.zst` packages
@@ -80,6 +83,9 @@ sudo rpm -i githints_<version>_linux_amd64.rpm               # Fedora, RHEL
 sudo apk add --allow-untrusted githints_<version>_linux_amd64.apk   # Alpine
 ```
 
+Update a packaged binary the same way; `githints update` refuses to replace a
+file the package manager owns and says so.
+
 ### From source
 
 Requires the Go version in `go.mod` (currently 1.26.10) or newer:
@@ -89,6 +95,10 @@ go install github.com/cjrdz/githints@latest   # into $(go env GOPATH)/bin
 go build -o githints .                        # from a checkout
 ```
 
+Run the same `go install` to update; `githints update` leaves `GOPATH/bin` to
+it. A build from a checkout reports its version as `dev`, which `update`
+replaces only with `-force`.
+
 ### Where the binary lives, and why it matters
 
 `githints init` records the binary's resolved path in each repository's git
@@ -96,8 +106,9 @@ hooks, so the hooks work even when a GUI git client runs them with a minimal
 `PATH`. If that path disappears (a package-manager upgrade replacing a versioned
 directory, or you moving the binary), the hooks fall back to `githints` on
 `PATH`. Installing to a stable location, as the scripts and packages do, avoids
-relying on the fallback. After moving the binary yourself, re-run
-`githints init` in each tracked repository.
+relying on the fallback. After moving the binary yourself, run
+`githints upgrade` in each tracked repository; `githints doctor` warns when a
+hook runs a different binary from the one you are running.
 
 ## Set up a repository
 
@@ -136,10 +147,19 @@ what tells an agent to use them. `init` writes a managed block, bracketed by
 | `AGENTS.md` | the workflow rules | opencode, Codex, Gemini CLI, Cursor, Pi and most other agents |
 | `CLAUDE.md` | `@AGENTS.md` | Claude Code, which reads `CLAUDE.md` and follows the import |
 
-So every client sees the same rules from one place. Content outside the markers
-is never touched, and re-running `init` updates the blocks in place. The MCP
-server also sends a condensed form of the rules in its `instructions` field, as
-a backstop for clients that read no file.
+So every client sees the same rules from one place. The block is written as the
+loop an agent works in: start with `get_session_context`, check a file's history
+before editing it, record each change right after the edit (one record per file
+per logical change, with a reason that gives the evidence or constraint), record
+how it turned out after testing, and review before committing. It also says what
+not to record: formatting-only edits, generated files and lockfiles.
+
+Content outside the markers is never touched. Re-running `init`, or
+`githints upgrade` after updating githints, rewrites the blocks in place;
+`doctor` warns when a block differs from what the running version writes. A
+file whose block you deleted is left without one by `upgrade`. The MCP server
+sends the same rules, condensed, in its `instructions` field, for clients that
+read no file.
 
 ## Connect your editors and agents
 
@@ -194,6 +214,20 @@ What `setup` will and will not do:
 
 Restart or reload the client afterwards so it starts the server.
 
+What a client gets from the server, whichever one it is:
+
+- **Tool annotations.** Nine tools are marked read-only; `record_change`,
+  `record_outcome` and `record_review` only append; `record_note` is marked
+  destructive because `replace=true` overwrites a note. None reaches the
+  network. Clients use these to decide which calls need your confirmation.
+- **Its own name on what it records.** A write that passes no `agent_id` is
+  recorded as `client:<name>/<version>` from the client's `initialize` request
+  (`client:claude-code/2.1.0`, `client:opencode/1.0.0`), so `githints log`
+  shows which client made each change.
+- **A reminder about unrecorded edits.** A tool result can carry one extra line
+  naming files changed this session without a record; see
+  [Configuration](#configuration) to turn it off.
+
 ### Writing an entry by hand
 
 Every client needs the same two things: a command that runs `githints serve`,
@@ -238,9 +272,12 @@ handling.
 ## Daily workflow
 
 1. Edit a file.
-2. Record it: the agent calls `record_change` (with `changes=[...]` for several files) with a concrete
-   summary and, where it is not obvious, a reason. By hand:
-   `githints record -file=F -summary="..." -reason="..."`.
+2. Record it: the agent calls `record_change` (with `changes=[...]` for several
+   files) with a concrete summary and a reason, one record per file per logical
+   change. By hand: `githints record -file=F -summary="..." -reason="..."`.
+   Both record what they are given, and both add hints when it is thin: no
+   reason, a generic summary ("Updated function", or the file name), or the
+   same summary as the file's previous change.
 3. Commit as usual. The post-commit hook ties the pending records to the commit
    and writes a fallback entry for any changed file nobody described, so nothing
    is silently lost.
@@ -486,9 +523,11 @@ them as ordinary changes. Upgrade every machine that shares a store.
 ### Limits
 
 Writes and reads are bounded, and exceeding a limit is an error, never a silent
-truncation: summary and reason 4000 bytes each, `agent_id` 128 bytes, batches of
-at most 100 (atomic: all rows land or none), search queries 500 characters, every
-`limit` between 1 and 500. A summary or reason carrying a recognizable credential
+truncation: summary and reason 4000 bytes each, `agent_id` 128 bytes (when an
+MCP client passes none, githints records `client:<name>/<version>` from the
+client's own `initialize` request, shortened to fit), batches of
+at most 100 (atomic: all rows land or none), search queries 500 bytes (in plain
+words, at most 10 words of 64 bytes each), every `limit` between 1 and 500. A summary or reason carrying a recognizable credential
 (cloud or API key, GitHub or Slack token, private key, JWT) is refused. Control
 characters, terminal escapes, bidi overrides and zero-width characters are
 removed before storing.
@@ -612,6 +651,29 @@ githints salt rotate [-force]        # new salt, every row re-signed
 also discards the tamper evidence; use it only when the old salt is gone for
 good.
 
+### History rewrites
+
+`commit --amend`, `rebase` (interactive or not), `cherry-pick` and a later
+`git gc` leave `githints verify` passing: a row's commit hash is outside the
+HMAC, and each anchor names the commit it was written for, which a rewrite
+does not change. What a rewrite does change:
+
+- A row keeps the hash of the commit it was stamped with. After an amend or a
+  rebase that commit is no longer in your history, and once `git gc` removes
+  it, `githints diff -hash=` on it fails with "bad revision". The summary and
+  reason are unaffected.
+- git replays rebased and cherry-picked commits through the post-commit hook.
+  Their records were used up by the original commits, so each replayed commit
+  gets a fallback row ("Change detected by git hook"). `githints log -file=F`
+  then shows the recorded rows on the old hashes and the fallback rows on the
+  new ones; the recorded rows are the ones that say why.
+- An amend gives the amended commit any rows recorded since the original
+  commit; rows the original commit took keep its hash.
+
+Re-pointing rows to the rewritten commits would need a post-rewrite hook that
+also re-anchors them, which the anchors are designed to make visible; see the
+[roadmap](roadmap.md#history-rewrites).
+
 ## Structural index
 
 githints keeps a structural index of the code (symbols, imports, framework
@@ -634,6 +696,9 @@ Per-repository settings live in `.githints/config.json`. Every key is optional:
     "max_file_size": 1048576,
     "parse_timeout_ms": 5000,
     "graph_html": false
+  },
+  "mcp": {
+    "unrecorded_reminder": true
   }
 }
 ```
@@ -646,11 +711,25 @@ Per-repository settings live in `.githints/config.json`. Every key is optional:
 | `index.max_file_size` | Files larger than this are skipped (at most 64 MiB). |
 | `index.parse_timeout_ms` | Per-file parse budget (at most 60 s). |
 | `index.graph_html` | Keep `.githints/graph.html` current after `githints index` and every commit. |
+| `mcp.unrecorded_reminder` | Remind the agent about files it changed without recording them (see below). On by default. |
 
 Environment variables override the file: `GITHINTS_INDEX_ENABLED`,
 `GITHINTS_INDEX_LANGUAGES` (a comma-separated list that replaces the configured
 set), `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
-`GITHINTS_INDEX_PARSE_TIMEOUT_MS` and `GITHINTS_INDEX_GRAPH_HTML`.
+`GITHINTS_INDEX_PARSE_TIMEOUT_MS`, `GITHINTS_INDEX_GRAPH_HTML` and
+`GITHINTS_MCP_UNRECORDED_REMINDER`.
+
+**Unrecorded-edit reminder.** After a successful MCP tool call other than the
+`record_*` tools, the server checks `git status` (at most every two seconds)
+for files changed since the server started that have no recorded change since
+then, and adds one line to the result as its own text block:
+
+    [githints] 2 files changed this session without a record: a.go, b.go. Call record_change.
+
+Files already changed when the session started, ignored files and `.githints/`
+are left out; at most five names are shown; the same set is reported once. A
+record made with `githints record` counts too. The line is part of the tool
+result, never written anywhere else.
 
 Other variables: `GITHINTS_ROOT` (pin the served repository),
 `GITHINTS_PRECOMMIT_BLOCK=1` and `GITHINTS_SECRET_BLOCK=1` (make the
@@ -705,18 +784,48 @@ regenerate every file from the store.
 
 ## Upgrading
 
-Install the new version the way you installed the old one, then in each tracked
-repository:
-
 ```sh
-githints init      # repoints the hooks if the binary path changed
-githints index     # rebuild the index with the new version's resolution
-githints doctor
+githints update          # replace this binary with the latest release
+githints upgrade         # in each tracked repository
 ```
+
+`githints update` is the only command that uses the network. It finds the
+latest release the way `install.sh` does (the redirect from
+`github.com/cjrdz/githints/releases/latest`), downloads the archive for this
+OS and architecture and `checksums.txt`, refuses on a checksum mismatch or a
+missing entry, checks that the new binary runs and reports the expected
+version, and only then replaces the running one by rename (on Windows the old
+binary is kept as `githints.exe.old` until the next run). It prints the
+`gh attestation verify` command for checking build provenance; it does not run
+it.
+
+| Flag | Does |
+| --- | --- |
+| `-check` | Only compare the running and latest versions: exit 0 up to date, 2 update available, 1 error (offline included) |
+| `-version=TAG` | Install that release instead of the latest |
+| `-force` | Reinstall the same release, replace a development build, or, with `-version`, downgrade |
+| `-yes` | In a tracked repository, run `githints upgrade` afterwards without asking |
+
+It refuses to replace a binary a package manager or `go install` owns
+(`/usr/bin`, Homebrew, Nix, snap, Scoop, Chocolatey, winget, `GOPATH/bin`) and
+names the command to use instead. A snapshot build (`X-next`) counts as newer
+than `X`; a development build needs `-force`.
+
+`githints upgrade [-dry-run]` works offline and changes nothing on a second
+run. It repoints githints' hooks at the running binary, refreshes the managed
+blocks in `AGENTS.md`, `CLAUDE.md` and `.gitignore` (a file without a block,
+or a hook githints did not install, is left alone), rebuilds the index when it
+was built by an older version or never fully, runs `doctor`, and asks you to
+restart MCP servers when the binary managing the repository changed. `doctor`
+points at it when a hook runs another binary, a managed block is out of date,
+or the index needs a rebuild.
+
+If you install the new version another way (a package manager, the install
+scripts), run `githints upgrade` in each tracked repository afterwards.
 
 The post-commit hook only rescans changed files, so after an upgrade that
 changes import resolution, the hook and `doctor` both say when a full
-`githints index` is needed. An index from before 0.2.4 has no stored import
+rebuild is needed. An index from before 0.2.4 has no stored import
 keys; the first hook run computes them, so it takes as long as a hook did
 before, and the runs after it are faster. MCP clients pick up the new binary when they next
 start the server.
@@ -729,15 +838,15 @@ predates them does not know the new fields, so it reports outcome rows as
 post-commit hook runs, claims them for a commit and writes an anchor that the new
 version then reports as a problem for good. That happens when a long-running MCP
 server, an editor extension, or a hook that names an old binary path is left
-behind. Restart MCP servers after upgrading, and run `githints init` so each hook
-names the new binary; `githints doctor` shows which binary a hook runs. To go back
+behind. Restart MCP servers after upgrading, and run `githints upgrade` so each
+hook names the new binary; `githints doctor` warns when a hook runs another one. To go back
 to an older version on a store that has outcomes, export first
 (`githints export -o DIR`).
 
 ## CLI reference
 
-Every command takes `-h`. Exit status: 0 ok, 1 error, 2 usage error, 3 `verify`
-found problems.
+Every command takes `-h`. Exit status: 0 ok, 1 error, 2 usage error or (from
+`update -check`) an update is available, 3 `verify` found problems.
 
 | Command | Does |
 | --- | --- |
@@ -747,6 +856,8 @@ found problems.
 | `uninstall [-dry-run] [-force]` | Full removal: hooks, project MCP entries, managed blocks, anchors, `.githints/` and salt |
 | `uninstall -keep-data [-dry-run]` | Stop tracking: remove the git hooks, keep `.githints/` and configs |
 | `doctor` | Check everything githints depends on, and count the log; prints a fix per problem; changes nothing |
+| `update [-check] [-version=TAG] [-force] [-yes]` | Replace this binary with a verified release; the only command that uses the network; see [Upgrading](#upgrading) |
+| `upgrade [-dry-run]` | Repoint the hooks, refresh the managed blocks and rebuild a stale index for the running binary, then run `doctor` |
 | `serve [-root=PATH]` | Run the MCP stdio server |
 | `record -file=F -summary=S [-reason=R] [-agent-id=A]` | Record a change by hand |
 | `export -o DIR [-duckdb] [-no-notes]` | Write the log, hints and notes as JSONL, CSV and markdown, with a manifest; see [Exporting](#exporting) |
@@ -772,9 +883,11 @@ found problems.
 ## Troubleshooting
 
 Start with `githints doctor`. It checks git, the hooks (installed where git runs
-them, executable, pointing at a binary that exists), the config, the store's
-SQLite integrity, the salt, the HMAC chain, the Merkle anchors, the index and
-MCP registration, and prints a fix for each problem.
+them, executable, pointing at a binary that exists and is the one you are
+running), the managed blocks, the config, the store's SQLite integrity, the
+salt, the HMAC chain, the Merkle anchors, the index and MCP registration, and
+prints a fix for each problem. After an update, most of those fixes are
+`githints upgrade`.
 
 **"githints is not set up in this repository".** Run `githints setup` (or
 `init`). Only `init` creates `.githints/`.
@@ -811,11 +924,20 @@ editor or agent, then reopen it and check that `githints version` works. Or run
 `githints setup -update` from a shell where githints is not on `PATH`, which
 writes the binary's absolute path into the configs instead.
 
-**The agent does not use githints.** Check `githints doctor`'s `mcp` line,
-restart the client, and make sure `AGENTS.md` / `CLAUDE.md` have the managed
-block.
+**The agent does not use githints.** Check `githints doctor`'s `mcp` and
+`blocks` lines, restart the client, and make sure `AGENTS.md` / `CLAUDE.md`
+have the managed block (`githints init` adds it back).
 
-**Index links are missing after an upgrade.** Run `githints index` once.
+**Index links are missing after an upgrade.** Run `githints upgrade`; it
+rebuilds the index when it was built by an older version or only ever by
+commits.
+
+**`githints update` refuses.** It names the reason: a binary owned by a package
+manager or `go install` is updated there; a `dev` build needs `-force`; an older
+release needs both `-version` and `-force`; a checksum mismatch or an archive
+missing from `checksums.txt` is never installed. "could not reach GitHub" means
+it is offline or blocked (it honors `HTTPS_PROXY`). `githints update -check`
+exits 0 when current, 2 when an update is available and 1 on error, for scripts.
 
 ## Uninstall
 

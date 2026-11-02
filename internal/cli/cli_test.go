@@ -13,7 +13,9 @@ import (
 	"github.com/cjrdz/githints/internal/cli/indexcmd"
 	"github.com/cjrdz/githints/internal/cli/notecmd"
 	"github.com/cjrdz/githints/internal/cli/record"
+	"github.com/cjrdz/githints/internal/cli/upgrade"
 	"github.com/cjrdz/githints/internal/cli/verify"
+	"github.com/cjrdz/githints/internal/clitest"
 )
 
 func chdirTempRepo(t *testing.T) string {
@@ -93,6 +95,20 @@ func TestUsageMatchesCommandTable(t *testing.T) {
 	}
 }
 
+// update -check reports "update available" as exit 2 without an error line.
+func TestUpdateAvailableExitsTwo(t *testing.T) {
+	commands["test-update-available"] = func([]string) error { return core.ErrUpdateAvailable }
+	defer delete(commands, "test-update-available")
+	var code int
+	stderr, _ := clitest.CaptureStderr(t, func() error {
+		code = Main([]string{"githints", "test-update-available"}, "test")
+		return nil
+	})
+	if code != 2 || stderr != "" {
+		t.Errorf("exit %d, stderr %q", code, stderr)
+	}
+}
+
 // A removed name must not dispatch, and the command it points to must.
 func TestRemovedCommandsPointAtRealOnes(t *testing.T) {
 	for old, now := range removedCommands {
@@ -123,13 +139,14 @@ func TestCommandsRequireInit(t *testing.T) {
 		"index verify": func() error { return indexcmd.Run([]string{"verify"}) },
 		"index facets": func() error { return indexcmd.Run([]string{"facets"}) },
 		"note list":    func() error { return notecmd.Run([]string{"list"}) },
+		"upgrade":      func() error { return upgrade.Run(nil, "test") },
 	} {
 		if err := run(); !errors.Is(err, core.ErrNotInitialized) {
 			t.Errorf("%s before init: got %v, want ErrNotInitialized", name, err)
 		}
 	}
-	// doctor (and status, its alias) reports a missing setup as a failed
-	// check rather than an error value, but must create nothing either.
+	// doctor reports a missing setup as a failed check rather than an error
+	// value, but must create nothing either.
 	_ = doctor.Run() // its verdict is printed; only the side effect matters here
 	if _, err := os.Stat(filepath.Join(dir, ".githints")); err == nil {
 		t.Error("a command other than init created .githints/")
