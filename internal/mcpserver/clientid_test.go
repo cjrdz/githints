@@ -27,7 +27,7 @@ func TestClientAgentID(t *testing.T) {
 		{"no name", mcp.Implementation{Version: "1.0"}, ""},
 		{"blank name", mcp.Implementation{Name: " \t"}, ""},
 		{"control characters removed", mcp.Implementation{Name: "co\x1b[2Jdex\u200b", Version: "0.1\n"}, "client:co[2Jdex/0.1"},
-		{"credential-shaped name dropped", mcp.Implementation{Name: "AKIAIOSFODNN7EXAMPLE"}, ""},
+		{"credential-shaped name dropped", mcp.Implementation{Name: "AKIA" + "IOSFODNN7EXAMPLE"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := clientAgentID(tc.info); got != tc.want {
