@@ -1,5 +1,5 @@
-// Package teardown implements `githints uninstall`, whose -keep-data form was
-// `githints remove`.
+// Package teardown implements `githints uninstall` and its -keep-data form,
+// which removes only the hooks.
 package teardown
 
 import (

@@ -86,7 +86,7 @@ func TestSessionContextReflectsCalledTools(t *testing.T) {
 	if strings.Contains(suggestions, "query_changes") {
 		t.Errorf("already-called tool was suggested again:\n%s", suggestions)
 	}
-	if !strings.Contains(suggestions, "get_diff") {
+	if !strings.Contains(suggestions, "record_change") {
 		t.Errorf("expected the next un-called tool to be suggested:\n%s", suggestions)
 	}
 }

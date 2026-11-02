@@ -1,5 +1,5 @@
 // Package salt implements the salt CLI command: path, export, import and
-// rotate (rotate-salt is a hidden alias of the last).
+// rotate.
 package salt
 
 import (

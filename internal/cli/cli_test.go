@@ -93,6 +93,21 @@ func TestUsageMatchesCommandTable(t *testing.T) {
 	}
 }
 
+// A removed name must not dispatch, and the command it points to must.
+func TestRemovedCommandsPointAtRealOnes(t *testing.T) {
+	for old, now := range removedCommands {
+		if _, ok := commands[old]; ok {
+			t.Errorf("%q is listed as removed but still dispatches", old)
+		}
+		if _, ok := commands[strings.Fields(now)[0]]; !ok {
+			t.Errorf("%q points at %q, which is not a command", old, now)
+		}
+	}
+	if code := Main([]string{"githints", "history"}, "test"); code != 2 {
+		t.Errorf("a removed command exited %d, want 2", code)
+	}
+}
+
 // Every command but init used to create .githints/store.db as a side effect,
 // so `githints serve` in a fresh repository came up with no hooks, no salt,
 // and no explanation.

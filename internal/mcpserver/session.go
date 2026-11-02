@@ -34,10 +34,9 @@ var sessionSuggestions = []struct {
 	why  string
 }{
 	{"query_changes", "catch up on recent work by other agents or plain git commits; with file=..., read why a file is shaped the way it is before editing it"},
-	{"get_diff", "check the real unified diff when a recorded summary looks vague or wrong"},
 	{"record_change", "record what you changed and why, right after each edit (changes[] for several files at once)"},
 	{"record_outcome", "record whether an earlier change worked, partly worked, failed or was reverted"},
-	{"search_notes", "look for a note before re-deriving a design choice, a plan or a hard bug"},
+	{"review_status", "check how deep a review your staged change needs before committing"},
 }
 
 // maxSessionSuggestions caps how many suggestions are returned, so the
@@ -178,7 +177,7 @@ func (t *SessionTracker) ContextReport() string {
 	b.WriteString("githints session context\n\n")
 	fmt.Fprintf(&b, "- session started: %s (%s ago)\n",
 		started.Format(time.RFC3339), time.Since(started).Round(time.Second))
-	fmt.Fprintf(&b, "- recorded changes in store: %d\n", changeCount)
+	fmt.Fprintf(&b, "- recorded changes in store: %d (at session start)\n", changeCount)
 
 	usedNames := make([]string, 0, len(called))
 	for name := range called {
