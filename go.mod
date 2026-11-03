@@ -10,8 +10,8 @@ module github.com/cjrdz/githints
 go 1.26.10
 
 require (
-	github.com/mark3labs/mcp-go v1.4.0
-	modernc.org/sqlite v1.61.0
+	github.com/mark3labs/mcp-go v1.5.0
+	modernc.org/sqlite v1.61.1
 )
 
 require (
