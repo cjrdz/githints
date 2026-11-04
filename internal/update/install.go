@@ -123,15 +123,12 @@ func (c *Client) Install(ctx context.Context, o Options) (Result, error) {
 	}
 	target := o.Target
 	if target == "" {
-		exe, err := os.Executable()
-		if err != nil {
-			return Result{}, fmt.Errorf("find the running binary: %w", err)
-		}
-		if target, err = filepath.EvalSymlinks(exe); err != nil {
-			return Result{}, fmt.Errorf("find the running binary: %w", err)
+		var err error
+		if target, err = RunningBinary(); err != nil {
+			return Result{}, err
 		}
 	}
-	if owner, cmd := ManagedBy(target, goEnv("GOPATH"), goEnv("GOBIN")); owner != "" {
+	if owner, cmd := Owner(target); owner != "" {
 		return Result{}, fmt.Errorf("%s was installed by %s; update it there: %s", target, owner, cmd)
 	}
 
@@ -257,6 +254,25 @@ func runVersion(path string) (string, error) {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, "version").Output()
 	return string(out), err
+}
+
+// RunningBinary is the binary update would replace: this process's
+// executable with links resolved.
+func RunningBinary() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("find the running binary: %w", err)
+	}
+	target, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", fmt.Errorf("find the running binary: %w", err)
+	}
+	return target, nil
+}
+
+// Owner is ManagedBy with this environment's GOPATH and GOBIN.
+func Owner(path string) (owner, command string) {
+	return ManagedBy(path, goEnv("GOPATH"), goEnv("GOBIN"))
 }
 
 // goEnv reads a Go setting from the environment, falling back to the default
