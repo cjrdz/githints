@@ -23,10 +23,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-15, not macos-latest: from 2026-11-02 the macos-latest pool
-        # stopped picking up this repository's jobs (queued, then cancelled
-        # with no runner). Move back once it is reliable again.
-        os: [ubuntu-latest, macos-15, windows-latest]
+        # Intel macOS, not macos-latest or macos-15: both are arm64, and from
+        # 2026-11-02 GitHub's arm64 macOS pool was short of capacity ("The job
+        # was not acquired by Runner of type hosted even after multiple
+        # attempts"). githints is pure Go and the release cross-compiles the
+        # darwin binaries on Linux, so Intel tests the same code. Move back to
+        # macos-latest once arm64 jobs start reliably again.
+        os: [ubuntu-latest, macos-15-intel, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
