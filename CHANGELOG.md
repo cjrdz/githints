@@ -8,7 +8,7 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
-## [0.5.0] - 2026-11-04
+## [0.5.0] - 2026-11-22
 
 githints updates itself: `githints update` installs a checksum-verified release
 and `githints upgrade` brings each repository's hooks, agent instructions and
@@ -95,6 +95,9 @@ tested against the real hooks and documented.
   following lines, ending with the `githints outcome` command for the change.
 - The size test for the instructions and tool schemas is set about 5% above
   what they measure (14.5 KB), down from a flat 16 KiB.
+- Dependencies: `mark3labs/mcp-go` 1.4.0 → 1.6.0 and `modernc.org/sqlite`
+  1.61.0 → 1.62.0. The tool list, annotations and stdio behavior are
+  unchanged.
 
 ### Security
 
