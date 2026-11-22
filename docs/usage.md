@@ -828,6 +828,12 @@ restart MCP servers when the binary managing the repository changed. `doctor`
 points at it when a hook runs another binary, a managed block is out of date,
 or the index needs a rebuild.
 
+`-dry-run` and `doctor` read the index without changing it, so an index from
+another githints is reported as needing a rebuild rather than reset. Like every
+other command, they do bring `store.db` up to the running binary's schema when
+they open it; those migrations only add, and the next record would make them
+anyway.
+
 If you install the new version another way (a package manager, the install
 scripts), run `githints upgrade` in each tracked repository afterwards.
 

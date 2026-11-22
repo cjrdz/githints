@@ -260,11 +260,16 @@ func checkIndex(root string, languages []string) Result {
 	if _, err := os.Stat(dbPath); err != nil {
 		return Result{LevelWarn, "index", "enabled but never built", "githints index"}
 	}
-	db, err := index.Open(dbPath)
+	// Read-only: index.Open resets an index from another schema version, and
+	// doctor (also run by `upgrade -dry-run`) must change nothing.
+	db, err := index.OpenReadOnly(dbPath)
 	if err != nil {
 		return Result{LevelFail, "index", err.Error(), "delete .githints/index.db and run `githints index`"}
 	}
 	defer db.Close()
+	if why := schemaReason(db); why != "" {
+		return Result{LevelWarn, "index", why, "githints upgrade (or githints index)"}
+	}
 	at, err := db.LastIndexedAt()
 	if err != nil || at == 0 {
 		return Result{LevelWarn, "index", "enabled but never built", "githints index"}
@@ -283,7 +288,7 @@ func IndexRebuildReason(root string, languages []string) string {
 	if _, err := os.Stat(path); err != nil {
 		return "" // index.Open would create it; never built is not stale
 	}
-	db, err := index.Open(path)
+	db, err := index.OpenReadOnly(path) // read-only: see checkIndex
 	if err != nil {
 		return ""
 	}
@@ -291,7 +296,25 @@ func IndexRebuildReason(root string, languages []string) string {
 	return rebuildReason(db, root, languages)
 }
 
+// schemaReason says why an index written by another schema version must be
+// rebuilt, or "" when the version matches. index.Open would reset it.
+func schemaReason(db *index.Store) string {
+	ok, stored, err := db.SchemaCurrent()
+	switch {
+	case err != nil:
+		return "its schema version cannot be read (" + err.Error() + ")"
+	case ok:
+		return ""
+	case stored == "":
+		return "it predates versioned index schemas"
+	}
+	return "it was written in index schema " + stored + ", which this githints does not read"
+}
+
 func rebuildReason(db *index.Store, root string, languages []string) string {
+	if why := schemaReason(db); why != "" {
+		return why
+	}
 	if v, err := db.IndexResolverVersion(); err == nil && v < index.ResolverVersion {
 		// 0 is not an old resolver: the hook's incremental scans never stamp
 		// it, so a repository indexed only by commits reads 0.

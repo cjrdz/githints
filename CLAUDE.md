@@ -83,7 +83,10 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   hooks are compared with `managed.HookScriptFor`, and the index with
   `doctor.IndexRebuildReason`, so the two cannot disagree and `upgrade` never
   duplicates `init`. `upgrade` leaves a hook githints did not install and a
-  file without a managed block alone.
+  file without a managed block alone. Both read the index through
+  `index.OpenReadOnly`: `index.Open` resets an index from another schema
+  version, which made `upgrade -dry-run` empty it
+  (`TestDryRunLeavesAnOldSchemaIndexAlone`).
 - **A history rewrite leaves `verify` clean.** `commit_hash` is outside the HMAC
   and each anchor names its own commit; `TestHistoryRewritesKeepVerifyClean`
   runs amend, rebase, cherry-pick, a squash and `gc` through the real hooks.
