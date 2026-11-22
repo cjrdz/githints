@@ -44,6 +44,11 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   explanation. It now says the shell split the flag and to write
   `-version v0.5.0`; the docs, the usage text and the downgrade message use
   that form.
+- `githints update` messages: with `-version`, "up to date" and "newer than"
+  name the requested release instead of calling it the latest; `-yes` outside
+  a tracked repository says no upgrade ran instead of being ignored; and when
+  the `githints upgrade` it runs afterwards fails, the error says the binary
+  was updated rather than a bare "exit status 1".
 - `doctor` told you to run `githints init` for a hook githints installed that
   is out of date (written by an older githints, or pointing at a binary that is
   gone). The fix is `githints upgrade`, which repoints and rewrites those

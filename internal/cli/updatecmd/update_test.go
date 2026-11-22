@@ -144,3 +144,64 @@ func TestSplitVersionFlagIsExplained(t *testing.T) {
 		t.Fatalf("a plain stray argument: err = %v", err)
 	}
 }
+
+// With -version, -check talks about the release asked for, not "latest".
+func TestCheckNamesTheRequestedRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name, running string
+		args          []string
+		want          string
+	}{
+		{"latest", "0.5.0", []string{"-check"}, "up to date (latest: v0.5.0)"},
+		{"requested, same", "0.5.0", []string{"-check", "-version", "v0.5.0"}, "up to date (requested: v0.5.0)"},
+		{"requested, older", "0.6.0", []string{"-check", "-version", "v0.5.0"}, "newer than the requested release (v0.5.0)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake(t, "v0.5.0", nil) // the latest; -version skips looking it up
+			out, err := clitest.CaptureStdout(t, func() error { return Run(tc.args, tc.running) })
+			if err != nil || !strings.Contains(out, tc.want) {
+				t.Errorf("err %v, output %q; want %q", err, out, tc.want)
+			}
+		})
+	}
+}
+
+// A failing `githints upgrade` after a successful update says the update
+// itself worked; it used to surface as a bare "exit status 1".
+func TestUpgradeFailureSaysTheUpdateWorked(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	clitest.ChdirTempRepo(t)
+	if err := initialize.Init(nil); err != nil {
+		t.Fatal(err)
+	}
+	savedInstall, savedUpgrade := install, runUpgrade
+	t.Cleanup(func() { install, runUpgrade = savedInstall, savedUpgrade })
+	install = func(context.Context, string, update.Options) (update.Result, error) {
+		return update.Result{Decision: update.Decision{Install: true, Target: "v0.5.0", Reason: "newer release"}, Path: "/tmp/new-githints"}, nil
+	}
+	runUpgrade = func(string) error { return errors.New("exit status 1") }
+	_, err := clitest.CaptureStdout(t, func() error { return Run([]string{"-yes"}, "0.4.0") })
+	if err == nil || !strings.Contains(err.Error(), "githints was updated to 0.5.0, but `githints upgrade` here then failed (exit status 1)") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// -yes outside a tracked repository says no upgrade ran instead of
+// ignoring the flag.
+func TestYesOutsideARepositorySaysSo(t *testing.T) {
+	t.Chdir(t.TempDir())
+	savedInstall, savedUpgrade := install, runUpgrade
+	t.Cleanup(func() { install, runUpgrade = savedInstall, savedUpgrade })
+	install = func(context.Context, string, update.Options) (update.Result, error) {
+		return update.Result{Decision: update.Decision{Install: true, Target: "v0.5.0", Reason: "newer release"}, Path: "/tmp/new-githints"}, nil
+	}
+	runUpgrade = func(string) error { t.Fatal("upgrade ran outside a repository"); return nil }
+	out, err := clitest.CaptureStdout(t, func() error { return Run([]string{"-yes"}, "0.4.0") })
+	if err != nil || !strings.Contains(out, "-yes: not in a repository githints tracks") {
+		t.Errorf("err %v, output:\n%s", err, out)
+	}
+	out, _ = clitest.CaptureStdout(t, func() error { return Run(nil, "0.4.0") })
+	if strings.Contains(out, "-yes:") {
+		t.Errorf("mentioned -yes without it:\n%s", out)
+	}
+}
