@@ -8,6 +8,19 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+### Security
+
+- A client name over 128 bytes was cut to length before the credential scan,
+  so a key straddling the cut no longer matched and its first part was stored
+  as the row's `agent_id`. The full name is scanned before cutting too.
+- `githints update` installed the first top-level `githints` entry in an
+  archive and ignored the rest. An archive with two such entries, or one that
+  is a link, is now refused, so what is installed cannot depend on entry
+  order. (The checksum already ties the archive to the release; this closes
+  the gap inside it.)
+- Release tags with empty pre-release parts (`v0.5.0-rc..1`, `-rc.`) are no
+  longer accepted as versions.
+
 ### Changed
 
 - MCP tools reject a `limit`, `depth` or `max_nodes` outside the range their
