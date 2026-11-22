@@ -18,6 +18,10 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ### Fixed
 
+- `doctor` and `upgrade` called a managed block in `AGENTS.md`, `CLAUDE.md` or
+  `.gitignore` out of date when only the whitespace around it differed (extra
+  blank lines at the end, no final newline). Only the block itself is compared
+  now.
 - On Windows, a second `githints update` failed with "Access is denied" while
   an MCP server still ran the binary the first update moved aside
   (`githints.exe.old`). The running binary now moves to the next free name
