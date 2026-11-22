@@ -20,6 +20,10 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   the gap inside it.)
 - Release tags with empty pre-release parts (`v0.5.0-rc..1`, `-rc.`) are no
   longer accepted as versions.
+- Release builds are reproducible (`-trimpath`, the commit's timestamp instead
+  of the build's), the `.deb`, `.rpm`, `.apk` and Arch packages get
+  build-provenance attestations like the archives, and a pre-release tag
+  publishes as a pre-release, never as "Latest".
 
 ### Changed
 
