@@ -55,6 +55,10 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   failed made the reminder repeat a set it had already shown; it now keeps
   its last answer. `get_session_context`, whose brief lists uncommitted work,
   no longer carries the reminder.
+- The reminder never named a file that was already dirty when the session
+  started, even after the agent edited it; it now does once the file's size or
+  modification time changes. It also counted only the newest 500 records, so
+  in a long session an early record dropped out and its file was named again.
 - `doctor` told you to run `githints init` for a hook githints installed that
   is out of date (written by an older githints, or pointing at a binary that is
   gone). The fix is `githints upgrade`, which repoints and rewrites those

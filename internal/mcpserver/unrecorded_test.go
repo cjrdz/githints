@@ -19,6 +19,7 @@ import (
 // fakeTree is a working tree and a log the reminder can be pointed at.
 type fakeTree struct {
 	dirty     []string
+	sizes     map[string]int64 // a file's size; change it to edit the file
 	recorded  map[string]bool
 	gitErr    error
 	gitCalls  int
@@ -28,14 +29,17 @@ type fakeTree struct {
 
 func newFakeTree(t *testing.T, dirtyAtStart ...string) *fakeTree {
 	t.Helper()
-	f := &fakeTree{dirty: dirtyAtStart, recorded: map[string]bool{}, clock: time.Unix(1_000_000, 0)}
+	f := &fakeTree{dirty: dirtyAtStart, sizes: map[string]int64{}, recorded: map[string]bool{}, clock: time.Unix(1_000_000, 0)}
 	f.reminders = &editReminder{
 		dirty: func(context.Context) ([]string, error) {
 			f.gitCalls++
 			return append([]string(nil), f.dirty...), f.gitErr
 		},
 		recorded: func(int64) (map[string]bool, error) { return f.recorded, nil },
-		now:      func() time.Time { return f.clock },
+		stat: func(file string) fingerprint {
+			return fingerprint{exists: true, size: f.sizes[file], mod: time.Unix(1, 0)}
+		},
+		now: func() time.Time { return f.clock },
 	}
 	if !f.reminders.start(context.Background()) {
 		t.Fatal("start failed")
@@ -61,6 +65,22 @@ func TestEditReminder(t *testing.T) {
 		f.dirty = []string{"wip.go"}
 		if got := f.next(); got != "" {
 			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("a file dirty at the start and edited again is mentioned", func(t *testing.T) {
+		f := newFakeTree(t, "wip.go", "other.go")
+		f.dirty = []string{"other.go", "wip.go"}
+		if got := f.next(); got != "" {
+			t.Fatalf("untouched: %q", got)
+		}
+		f.sizes["wip.go"] = 42 // the agent edits it
+		if got := f.next(); !strings.Contains(got, "1 file") || !strings.Contains(got, "wip.go") || strings.Contains(got, "other.go") {
+			t.Errorf("edited during the session: %q", got)
+		}
+		f.recorded["wip.go"] = true
+		if got := f.next(); got != "" {
+			t.Errorf("after recording: %q", got)
 		}
 	})
 
@@ -281,6 +301,15 @@ func TestUnrecordedReminderThroughTheServer(t *testing.T) {
 		call("record_change", map[string]any{"file": "a.go", "summary": "Added package a", "reason": "test"})
 		if got := reminderIn(call("query_changes", nil)); got != "" {
 			t.Errorf("on=%v: reminder after recording: %q", on, got)
+		}
+
+		// wip.go was dirty before the session; editing it now counts.
+		if err := os.WriteFile(filepath.Join(dir, "wip.go"), []byte("package a\n\nfunc Edited() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got = reminderIn(call("query_changes", nil))
+		if on && (!strings.Contains(got, "wip.go") || strings.Contains(got, "a.go")) {
+			t.Errorf("after editing a file dirty at the start: %q", got)
 		}
 		closeDBs()
 		st.Close()

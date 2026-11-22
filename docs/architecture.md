@@ -568,12 +568,15 @@ agents sharing one stdio would share the state; that is a property of the
 transport rather than something the tracker can resolve.
 
 The same wrapper adds the unrecorded-edit reminder (`internal/mcpserver/unrecorded.go`).
-At server start it samples `git status`; files dirty then are never mentioned.
-After a successful call to a tool other than `record_*`, it lists files dirty
-now, minus that baseline, `.githints/` and files recorded since the start, and
-appends one line as a separate content block, so a tool whose text is JSON
-stays parseable. The answer is cached for two seconds and dropped after a
-`record_*` call, and a set is reported once. `mcp.unrecorded_reminder` or
+At server start it samples `git status` in the background and keeps the size
+and modification time of each file dirty then; such a file is mentioned only
+once either changes. After a successful call to a tool other than `record_*`
+and `get_session_context`, it lists files dirty now, minus unchanged baseline
+files, `.githints/` and files recorded since the start (`FilesChangedSince`,
+uncapped), and appends one line as a separate content block, so a tool whose
+text is JSON stays parseable. git and SQLite run outside the reminder's lock.
+The answer is cached for two seconds, dropped after a `record_*` call (with any
+check that call overlapped), kept when git fails, and a set is reported once. `mcp.unrecorded_reminder` or
 `GITHINTS_MCP_UNRECORDED_REMINDER=0` turns it off.
 
 Every tool declares `readOnlyHint`, `destructiveHint` and `openWorldHint`
