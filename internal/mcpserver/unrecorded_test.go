@@ -136,6 +136,65 @@ func TestEditReminder(t *testing.T) {
 		}
 	})
 
+	t.Run("a git failure keeps the last answer", func(t *testing.T) {
+		f := newFakeTree(t)
+		f.dirty = []string{"a.go"}
+		if got := f.next(); !strings.Contains(got, "a.go") {
+			t.Fatalf("first: %q", got)
+		}
+		f.gitErr = errors.New("index.lock exists")
+		f.next()
+		f.gitErr = nil
+		// The same set as before the failure: already said, so not again.
+		if got := f.next(); got != "" {
+			t.Errorf("repeated after git recovered: %q", got)
+		}
+	})
+
+	t.Run("a record during the check drops its answer", func(t *testing.T) {
+		f := newFakeTree(t)
+		f.dirty = []string{"a.go"}
+		dirty := f.reminders.dirty
+		f.reminders.dirty = func(ctx context.Context) ([]string, error) {
+			files, err := dirty(ctx)
+			f.recorded["a.go"] = true // record_change lands while git runs
+			f.reminders.forget()
+			return files, err
+		}
+		if got := f.next(); got != "" {
+			t.Errorf("named a file recorded during the check: %q", got)
+		}
+		f.reminders.dirty = dirty
+		if got := f.next(); got != "" {
+			t.Errorf("after the record: %q", got)
+		}
+	})
+
+	t.Run("the lock is not held while git runs", func(t *testing.T) {
+		f := newFakeTree(t)
+		f.dirty = []string{"a.go"}
+		inGit, release := make(chan struct{}), make(chan struct{})
+		dirty := f.reminders.dirty
+		f.reminders.dirty = func(ctx context.Context) ([]string, error) {
+			close(inGit)
+			<-release
+			return dirty(ctx)
+		}
+		f.clock = f.clock.Add(reminderEvery)
+		done := make(chan string)
+		go func() { done <- f.reminders.line(context.Background()) }()
+		<-inGit
+		forgot := make(chan struct{})
+		go func() { f.reminders.forget(); close(forgot) }()
+		select {
+		case <-forgot:
+		case <-time.After(5 * time.Second):
+			t.Fatal("forget blocked behind a running git status")
+		}
+		close(release)
+		<-done
+	})
+
 	t.Run("nil reminder is off", func(t *testing.T) {
 		var r *editReminder
 		r.forget()
@@ -203,6 +262,12 @@ func TestUnrecordedReminderThroughTheServer(t *testing.T) {
 		}
 		if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
 			t.Fatal(err)
+		}
+		if on {
+			// The brief lists uncommitted work itself; no reminder block.
+			if got := reminderIn(call("get_session_context", nil)); got != "" {
+				t.Errorf("reminder on get_session_context: %q", got)
+			}
 		}
 		content := call("get_dependency_graph", nil)
 		got := reminderIn(content)

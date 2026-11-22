@@ -49,6 +49,12 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   a tracked repository says no upgrade ran instead of being ignored; and when
   the `githints upgrade` it runs afterwards fails, the error says the binary
   was updated rather than a bare "exit status 1".
+- The unrecorded-edit reminder held a lock while `git status` ran (up to 3 s),
+  so concurrent tool calls waited behind it; it no longer does, and `serve`
+  no longer waits for git before answering `initialize`. A `git status` that
+  failed made the reminder repeat a set it had already shown; it now keeps
+  its last answer. `get_session_context`, whose brief lists uncommitted work,
+  no longer carries the reminder.
 - `doctor` told you to run `githints init` for a hook githints installed that
   is out of date (written by an older githints, or pointing at a binary that is
   gone). The fix is `githints upgrade`, which repoints and rewrites those
