@@ -85,25 +85,42 @@ func topLevel(name, want string) bool {
 	return name == want || name == "./"+want
 }
 
+// fromTarGz and fromZip return the one top-level entry named want. Every
+// entry is read: a second entry with that name, or one that is not a regular
+// file, refuses the archive rather than installing whichever came first, so
+// what is installed cannot depend on entry order in a crafted archive.
 func fromTarGz(archive []byte, want string) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return nil, fmt.Errorf("read archive: %w", err)
 	}
 	tr := tar.NewReader(gz)
+	var found []byte
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("the archive has no %s", want)
+			break
 		}
 		if err != nil {
 			return nil, fmt.Errorf("read archive: %w", err)
 		}
-		if h.Typeflag != tar.TypeReg || !topLevel(h.Name, want) {
+		if !topLevel(h.Name, want) {
 			continue
 		}
-		return readCapped(tr, want)
+		if h.Typeflag != tar.TypeReg {
+			return nil, fmt.Errorf("%s in the archive is not a regular file", want)
+		}
+		if found != nil {
+			return nil, fmt.Errorf("the archive has more than one %s", want)
+		}
+		if found, err = readCapped(tr, want); err != nil {
+			return nil, err
+		}
 	}
+	if found == nil {
+		return nil, fmt.Errorf("the archive has no %s", want)
+	}
+	return found, nil
 }
 
 func fromZip(archive []byte, want string) ([]byte, error) {
@@ -111,18 +128,28 @@ func fromZip(archive []byte, want string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read archive: %w", err)
 	}
+	var match *zip.File
 	for _, f := range zr.File {
-		if !f.Mode().IsRegular() || !topLevel(f.Name, want) {
+		if !topLevel(f.Name, want) {
 			continue
 		}
-		rc, err := f.Open()
-		if err != nil {
-			return nil, fmt.Errorf("read archive: %w", err)
+		if !f.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s in the archive is not a regular file", want)
 		}
-		defer rc.Close()
-		return readCapped(rc, want)
+		if match != nil {
+			return nil, fmt.Errorf("the archive has more than one %s", want)
+		}
+		match = f
 	}
-	return nil, fmt.Errorf("the archive has no %s", want)
+	if match == nil {
+		return nil, fmt.Errorf("the archive has no %s", want)
+	}
+	rc, err := match.Open()
+	if err != nil {
+		return nil, fmt.Errorf("read archive: %w", err)
+	}
+	defer rc.Close()
+	return readCapped(rc, want)
 }
 
 func readCapped(r io.Reader, name string) ([]byte, error) {

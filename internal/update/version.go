@@ -9,7 +9,13 @@ import (
 // tagRe matches a release tag as goreleaser names it: vMAJOR.MINOR.PATCH with
 // an optional pre-release. It is also what keeps a tag from the network out of
 // paths and URLs: nothing else gets through.
-var tagRe = regexp.MustCompile(`^v?(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-([0-9A-Za-z.-]{1,64}))?$`)
+//
+// The pre-release is semver's: dot-separated identifiers, none empty, so
+// "-rc..1", "-.rc" and "-rc." do not parse. ParseVersion caps it at 64 bytes.
+var tagRe = regexp.MustCompile(`^v?(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
+
+// maxPreLen bounds the pre-release part of a tag.
+const maxPreLen = 64
 
 // Version is a parsed release version. A goreleaser snapshot is stamped
 // "<last tag>-next", built after that tag; Next marks it, and it sorts after
@@ -24,7 +30,7 @@ type Version struct {
 // build ("dev", "") does not parse.
 func ParseVersion(s string) (Version, bool) {
 	m := tagRe.FindStringSubmatch(strings.TrimSpace(s))
-	if m == nil {
+	if m == nil || len(m[4]) > maxPreLen {
 		return Version{}, false
 	}
 	var v Version

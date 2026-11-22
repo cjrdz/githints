@@ -570,6 +570,11 @@ func clientAgentID(info mcp.Implementation) string {
 	if version != "" {
 		id += "/" + version
 	}
+	// Scan before cutting as well as after: a credential that runs past the
+	// cut no longer matches its pattern, and its first part would be kept.
+	if _, secret := secrets.Scan(id); secret {
+		return ""
+	}
 	for len(id) > recorder.MaxAgentIDLen {
 		_, size := utf8.DecodeLastRuneInString(id)
 		id = id[:len(id)-size]

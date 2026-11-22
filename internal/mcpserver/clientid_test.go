@@ -36,6 +36,13 @@ func TestClientAgentID(t *testing.T) {
 		})
 	}
 
+	// A key straddling the 128-byte cut: after cutting only "AKIAIOSFO" is
+	// left, which matches no pattern, so the scan has to see the whole value.
+	straddling := strings.Repeat("x", recorder.MaxAgentIDLen-len("client:")-10) + "-" + "AKIA" + "IOSFODNN7EXAMPLE"
+	if got := clientAgentID(mcp.Implementation{Name: straddling}); got != "" {
+		t.Errorf("a credential cut in half by the length limit was kept: %q", got)
+	}
+
 	got := clientAgentID(mcp.Implementation{Name: long})
 	if len(got) > recorder.MaxAgentIDLen || !strings.HasPrefix(got, "client:é") || !utf8Valid(got) {
 		t.Errorf("long name: %d bytes, %q", len(got), got)

@@ -20,7 +20,8 @@ import (
 )
 
 func TestParseAndCompareVersions(t *testing.T) {
-	for _, bad := range []string{"", "dev", "1.2", "v1.2.3.4", "v01.2.3", "1.2.3-", "1.2.3/../x", "1.2.3-" + strings.Repeat("a", 65)} {
+	for _, bad := range []string{"", "dev", "1.2", "v1.2.3.4", "v01.2.3", "1.2.3-", "1.2.3/../x", "1.2.3-" + strings.Repeat("a", 65),
+		"v0.5.0-rc..1", "v0.5.0-.rc", "v0.5.0-rc.", "v0.5.0-rc_1"} {
 		if _, ok := ParseVersion(bad); ok {
 			t.Errorf("ParseVersion(%q) accepted", bad)
 		}
@@ -132,7 +133,6 @@ func TestExtractBinaryTakesOnlyTheTopLevelBinary(t *testing.T) {
 		file("../githints", "escape"),
 		file("/githints", "absolute"),
 		file("sub/githints", "nested"),
-		tar.Header{Name: "githints", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"},
 		file("README.md", "readme"),
 		file("./githints", "the binary"),
 	)
@@ -140,8 +140,15 @@ func TestExtractBinaryTakesOnlyTheTopLevelBinary(t *testing.T) {
 	if err != nil || string(got) != "the binary" {
 		t.Fatalf("extractBinary = %q, %v", got, err)
 	}
-	if _, err := extractBinary(tarGz(t, file("../githints", "x"), file("bin/githints", "y")), "linux"); err == nil {
-		t.Error("an archive with no top-level binary was accepted")
+	for name, archive := range map[string][]byte{
+		"no top-level binary": tarGz(t, file("../githints", "x"), file("bin/githints", "y")),
+		// Which one would be installed depended on entry order.
+		"two top-level binaries": tarGz(t, file("githints", "first"), file("./githints", "second")),
+		"a link named githints":  tarGz(t, tar.Header{Name: "githints", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}, file("./githints", "the binary")),
+	} {
+		if got, err := extractBinary(archive, "linux"); err == nil {
+			t.Errorf("%s: accepted, got %q", name, got)
+		}
 	}
 
 	var zbuf bytes.Buffer
@@ -153,6 +160,17 @@ func TestExtractBinaryTakesOnlyTheTopLevelBinary(t *testing.T) {
 	_ = zw.Close()
 	if got, err := extractBinary(zbuf.Bytes(), "windows"); err != nil || string(got) != "win binary" {
 		t.Errorf("zip: %q, %v", got, err)
+	}
+
+	zbuf.Reset()
+	zw = zip.NewWriter(&zbuf)
+	for _, body := range []string{"first", "second"} {
+		w, _ := zw.Create("githints.exe")
+		_, _ = w.Write([]byte(body))
+	}
+	_ = zw.Close()
+	if got, err := extractBinary(zbuf.Bytes(), "windows"); err == nil {
+		t.Errorf("zip with two githints.exe: accepted, got %q", got)
 	}
 }
 
