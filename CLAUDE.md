@@ -59,9 +59,10 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   Diagnostics go to stderr.
 - **The unrecorded-edit reminder lives in the tool result, as its own content
   block.** Appending it to a tool's text would break tools that return JSON
-  (`get_dependency_graph`). Files dirty when the server started are never
-  named, `record_*` calls drop the cached answer, and git runs at most every
-  `reminderEvery`. `TestUnrecordedReminderThroughTheServer` drives it with real
+  (`get_dependency_graph`). Files dirty when the server started are named
+  only once their size or modification time changes, `record_*` calls drop the cached answer (and any check they overlap),
+  git runs at most every `reminderEvery` and never under the reminder's lock,
+  and a failed check keeps the last answer. `TestUnrecordedReminderThroughTheServer` drives it with real
   git, on and off.
 - **Every MCP tool declares all three annotations.** mcp-go's `NewTool`
   defaults `destructiveHint` and `openWorldHint` to true, so a tool that sets

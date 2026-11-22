@@ -720,14 +720,15 @@ set), `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
 `GITHINTS_MCP_UNRECORDED_REMINDER`.
 
 **Unrecorded-edit reminder.** After a successful MCP tool call other than the
-`record_*` tools, the server checks `git status` (at most every two seconds)
+`record_*` tools and `get_session_context`, the server checks `git status` (at most every two seconds)
 for files changed since the server started that have no recorded change since
 then, and adds one line to the result as its own text block:
 
     [githints] 2 files changed this session without a record: a.go, b.go. Call record_change.
 
-Files already changed when the session started, ignored files and `.githints/`
-are left out; at most five names are shown; the same set is reported once. A
+Files already changed when the session started are left out until they are
+edited again (their size or modification time changes); ignored files and
+`.githints/` are always left out; at most five names are shown; the same set is reported once. A
 record made with `githints record` counts too. The line is part of the tool
 result, never written anywhere else.
 

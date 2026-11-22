@@ -122,6 +122,9 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 	addTool := func(tool mcp.Tool, h server.ToolHandlerFunc) {
 		name := tool.Name
 		records := strings.HasPrefix(name, "record_")
+		// The brief already lists uncommitted work, and it is the first call
+		// of a session, when nothing can be unrecorded yet.
+		reminds := name != "get_session_context"
 		s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			defer session.MarkToolCalled(name)
 			res, err := h(ctx, req)
@@ -129,7 +132,7 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				reminder.forget()
 				return res, err
 			}
-			if err == nil && res != nil && !res.IsError {
+			if reminds && err == nil && res != nil && !res.IsError {
 				if line := reminder.line(ctx); line != "" {
 					res.Content = append(res.Content, mcp.NewTextContent(line))
 				}

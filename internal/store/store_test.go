@@ -1033,3 +1033,22 @@ func TestQueryChangesQueryTooLong(t *testing.T) {
 		t.Errorf("error should say the query is too long: %v", err)
 	}
 }
+
+// Every file recorded since the cutoff, however many: the reminder used to
+// read the newest 500 rows, so in a long session an early record dropped out.
+func TestFilesChangedSince(t *testing.T) {
+	st, cleanup := openTestStore(t)
+	defer cleanup()
+	mustInsert(t, st, Change{FilePath: "before.go", Source: "agent", Summary: "x", RecordedAt: 99})
+	for i := range 600 {
+		mustInsert(t, st, Change{FilePath: fmt.Sprintf("f%03d.go", i), Source: "agent", Summary: "x", RecordedAt: int64(100 + i)})
+	}
+	mustInsert(t, st, Change{FilePath: "f000.go", Source: "agent", Summary: "again", RecordedAt: 800})
+	files, err := st.FilesChangedSince(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 600 || !files["f000.go"] || !files["f599.go"] || files["before.go"] {
+		t.Errorf("%d files; f000 %v, f599 %v, before %v", len(files), files["f000.go"], files["f599.go"], files["before.go"])
+	}
+}

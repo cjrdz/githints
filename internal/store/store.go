@@ -484,6 +484,27 @@ const noDuplicateFallback = `c.kind = 'change' AND NOT (c.source = 'fallback' AN
 	  AND c2.kind = 'change'
 ))`
 
+// FilesChangedSince is the set of files with a recorded change at or after
+// since, however many rows that is. The unrecorded-edit reminder asks it once
+// per check; it used to read the newest 500 rows instead, so in a long session
+// an early record dropped out and its file was reported as unrecorded.
+func (s *Store) FilesChangedSince(since int64) (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT file_path FROM changes WHERE kind = 'change' AND recorded_at >= ?`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	files := map[string]bool{}
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, err
+		}
+		files[f] = true
+	}
+	return files, rows.Err()
+}
+
 // Query selects recorded changes. Every field is optional and they combine:
 // File restricts to one path, Text is an FTS5 MATCH over summary and reason,
 // and Since/Until (Unix seconds, inclusive, 0 for unbounded) restrict
