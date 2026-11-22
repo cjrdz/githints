@@ -53,7 +53,7 @@ func Decide(current, target string, explicit, force bool) (Decision, error) {
 	case explicit && force:
 		d.Install, d.Reason = true, "downgrading (-version with -force)"
 	default:
-		return d, fmt.Errorf("%w: %s is older than the running %s; downgrading needs both -version=%s and -force", ErrNotNewer, target, cv, target)
+		return d, fmt.Errorf("%w: %s is older than the running %s; downgrading needs both -version %s and -force", ErrNotNewer, target, cv, target)
 	}
 	return d, nil
 }
