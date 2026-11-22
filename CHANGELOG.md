@@ -23,6 +23,10 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   githints' schema version as a side effect of checking it, so a dry run could
   empty the index it was only meant to report on. They now open the index
   read-only and report it as needing a rebuild.
+- The first `githints upgrade` in a repository asked you to restart MCP servers
+  even when the binary that ran `init` was the one upgrading, so nothing had
+  changed. `init` now records which githints set the repository up, and
+  `upgrade` asks for a restart only when a different binary takes over.
 - `doctor` told you to run `githints init` for a hook githints installed that
   is out of date (written by an older githints, or pointing at a binary that is
   gone). The fix is `githints upgrade`, which repoints and rewrites those

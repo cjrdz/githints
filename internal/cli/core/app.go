@@ -14,6 +14,17 @@ import (
 	"github.com/cjrdz/githints/internal/store"
 )
 
+// Version is the running binary's version, set once by cli.Main. It is empty
+// when a test calls a command directly, and nothing may depend on it then.
+var Version string
+
+// MetaManagedBy is the store meta key holding the githints version that set
+// up or last upgraded this repository. `upgrade` compares it with the running
+// version to tell whether MCP servers may still run an older binary; `init`
+// writes it on a fresh setup so the first `upgrade` with the same binary does
+// not ask for a restart that changes nothing.
+const MetaManagedBy = "upgraded_by"
+
 // ErrNotInitialized is returned by every command but init when the repository
 // has no .githints/store.db yet.
 var ErrNotInitialized = errors.New("githints is not set up in this repository")

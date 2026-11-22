@@ -34,6 +34,7 @@ import (
 // Exit codes: 0 ok, 1 error, 2 usage error, 3 verify found problems.
 func Main(args []string, version string) int {
 	cliVersion = version
+	core.Version = versionString()
 	update.CleanupOld()
 	if len(args) < 2 {
 		usage()
