@@ -95,8 +95,9 @@ func TestUsageMatchesCommandTable(t *testing.T) {
 	}
 }
 
-// update -check reports "update available" as exit 2 without an error line.
-func TestUpdateAvailableExitsTwo(t *testing.T) {
+// update -check reports "update available" as exit 10, without an error line;
+// 2 stays the usage-error code.
+func TestUpdateAvailableExitCode(t *testing.T) {
 	commands["test-update-available"] = func([]string) error { return core.ErrUpdateAvailable }
 	defer delete(commands, "test-update-available")
 	var code int
@@ -104,7 +105,7 @@ func TestUpdateAvailableExitsTwo(t *testing.T) {
 		code = Main([]string{"githints", "test-update-available"}, "test")
 		return nil
 	})
-	if code != 2 || stderr != "" {
+	if code != 10 || stderr != "" {
 		t.Errorf("exit %d, stderr %q", code, stderr)
 	}
 }

@@ -8,7 +8,7 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
-## [0.5.0] - 2026-11-01
+## [0.5.0] - 2026-11-04
 
 githints updates itself: `githints update` installs a checksum-verified release
 and `githints upgrade` brings each repository's hooks, agent instructions and
@@ -20,6 +20,11 @@ tested against the real hooks and documented.
 
 ### Upgrade notes
 
+- **From 0.4.0 or older, reinstall once.** `githints update` is new in this
+  release, so an older binary does not have it. Install 0.5.0 the way you
+  installed githints before (the install script, your package manager, or
+  `go install github.com/cjrdz/githints@latest`), then run `githints upgrade` in
+  each tracked repository. From 0.5.0 on, `githints update` does the install.
 - **`githints update` uses the network; nothing else does.** githints used to
   open no network connections at all. `update` is now the one exception: it
   runs only when you type it, talks https to github.com and GitHub's
@@ -28,7 +33,7 @@ tested against the real hooks and documented.
 - After this release, `githints update` followed by `githints upgrade` in each
   tracked repository replaces reinstalling and re-running `init` and `index`.
   A binary installed by a package manager or `go install` is updated there;
-  `update` says which command to use.
+  `update` and `update -check` name the command to use.
 - Run `githints upgrade` in each tracked repository once to get the rewritten
   `AGENTS.md` block; `doctor` warns until then.
 
@@ -42,7 +47,8 @@ tested against the real hooks and documented.
   refuses to replace a binary owned by a package manager or `go install`,
   never downgrades without `-version` and `-force`, and prints the
   `gh attestation verify` command for build provenance. `-check` exits 0 when
-  up to date, 2 when an update is available, 1 on error.
+  up to date, 10 when an update is available, 1 on error (2 stays a usage
+  error, so a mistyped flag cannot read as "update available").
 - **`githints upgrade [-dry-run]`.** Offline and idempotent: repoints githints'
   hooks at the running binary, refreshes the managed blocks in `AGENTS.md`,
   `CLAUDE.md` and `.gitignore`, rebuilds a stale index, runs `doctor`, and asks

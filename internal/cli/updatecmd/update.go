@@ -33,8 +33,11 @@ var (
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		return cmd.Run()
 	}
-	stdin       io.Reader = os.Stdin
-	interactive           = func() bool {
+	// runningBinary is the binary -check reports on; tests point it at a
+	// package-manager path.
+	runningBinary           = update.RunningBinary
+	stdin         io.Reader = os.Stdin
+	interactive             = func() bool {
 		fi, err := os.Stdin.Stat()
 		return err == nil && fi.Mode()&os.ModeCharDevice != 0
 	}
@@ -42,11 +45,12 @@ var (
 
 // Run updates the running binary to the latest release (or -version).
 //
-// Exit codes for -check: 0 up to date, 2 an update is available
-// (core.ErrUpdateAvailable), 1 anything else, offline included.
+// Exit codes for -check: 0 up to date, 10 an update is available
+// (core.ErrUpdateAvailable), 1 anything else, offline included; 2 stays a
+// usage error, so a mistyped flag cannot read as "update available".
 func Run(args []string, version string) error {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
-	check := fs.Bool("check", false, "only report the running and latest versions (exit 0 current, 2 update available, 1 error)")
+	check := fs.Bool("check", false, "only report the running and latest versions (exit 0 current, 10 update available, 1 error)")
 	tag := fs.String("version", "", "install this release tag (e.g. v0.5.0) instead of the latest")
 	force := fs.Bool("force", false, "reinstall the same release, replace a development build, or (with -version) downgrade")
 	yes := fs.Bool("yes", false, "after updating, run `githints upgrade` here without asking")
@@ -115,7 +119,7 @@ func runCheck(ctx context.Context, version, tag string) error {
 	d, err := update.Decide(version, tag, false, false)
 	switch {
 	case err == nil && d.Install:
-		fmt.Printf("githints %s: %s is available; run `githints update`\n", version, tag)
+		fmt.Printf("githints %s: %s is available; %s\n", version, tag, howToUpdate())
 		return core.ErrUpdateAvailable
 	case err == nil:
 		fmt.Printf("githints %s is up to date (latest: %s)\n", version, tag)
@@ -129,4 +133,18 @@ func runCheck(ctx context.Context, version, tag string) error {
 		return core.ErrUpdateAvailable
 	}
 	return err
+}
+
+// howToUpdate is the command that updates this binary: `githints update`, or
+// the package manager's own command when one owns it, since update would
+// refuse.
+func howToUpdate() string {
+	bin, err := runningBinary()
+	if err != nil {
+		return "run `githints update`"
+	}
+	if owner, cmd := update.Owner(bin); owner != "" {
+		return fmt.Sprintf("it was installed by %s, so update it there: %s", owner, cmd)
+	}
+	return "run `githints update`"
 }

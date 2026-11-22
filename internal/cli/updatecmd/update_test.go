@@ -15,9 +15,10 @@ import (
 // fake replaces the network calls for one test.
 func fake(t *testing.T, latest string, latestErr error) {
 	t.Helper()
-	savedLatest, savedInstall := latestTag, install
-	t.Cleanup(func() { latestTag, install = savedLatest, savedInstall })
+	savedLatest, savedInstall, savedBinary := latestTag, install, runningBinary
+	t.Cleanup(func() { latestTag, install, runningBinary = savedLatest, savedInstall, savedBinary })
 	latestTag = func(context.Context, string) (string, error) { return latest, latestErr }
+	runningBinary = func() (string, error) { return "/home/me/.local/bin/githints", nil }
 	install = func(_ context.Context, version string, o update.Options) (update.Result, error) {
 		t.Fatal("-check must not install")
 		return update.Result{}, nil
@@ -52,6 +53,25 @@ func TestCheck(t *testing.T) {
 				t.Errorf("output %q lacks %q", out, tc.wantOut)
 			}
 		})
+	}
+}
+
+// -check must not tell a packaged install to run an update that refuses it.
+func TestCheckNamesThePackageManager(t *testing.T) {
+	for _, tc := range []struct{ bin, want string }{
+		{"/usr/bin/githints", "your system package manager"},
+		{"/opt/homebrew/Cellar/githints/0.4.0/bin/githints", "brew upgrade githints"},
+		{"/home/me/.local/bin/githints", "run `githints update`"},
+	} {
+		fake(t, "v0.5.0", nil)
+		runningBinary = func() (string, error) { return tc.bin, nil }
+		out, err := clitest.CaptureStdout(t, func() error { return Run([]string{"-check"}, "0.4.0") })
+		if !errors.Is(err, core.ErrUpdateAvailable) || !strings.Contains(out, tc.want) {
+			t.Errorf("%s: err %v, output %q, want %q", tc.bin, err, out, tc.want)
+		}
+		if tc.want != "run `githints update`" && strings.Contains(out, "githints update") {
+			t.Errorf("%s: still advises githints update: %q", tc.bin, out)
+		}
 	}
 }
 

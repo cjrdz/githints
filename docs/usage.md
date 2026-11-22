@@ -789,6 +789,12 @@ githints update          # replace this binary with the latest release
 githints upgrade         # in each tracked repository
 ```
 
+**Coming from 0.4.0 or older?** `githints update` arrived in 0.5.0, so an older
+binary does not have it. Reinstall once the way you installed githints (the
+install script, your package manager, or `go install`), then run
+`githints upgrade` in each tracked repository. From 0.5.0 on, `githints update`
+does the install.
+
 `githints update` is the only command that uses the network. It finds the
 latest release the way `install.sh` does (the redirect from
 `github.com/cjrdz/githints/releases/latest`), downloads the archive for this
@@ -801,7 +807,7 @@ it.
 
 | Flag | Does |
 | --- | --- |
-| `-check` | Only compare the running and latest versions: exit 0 up to date, 2 update available, 1 error (offline included) |
+| `-check` | Only compare the running and latest versions: exit 0 up to date, 10 update available, 1 error (offline included); for a packaged install it names the package manager's command |
 | `-version=TAG` | Install that release instead of the latest |
 | `-force` | Reinstall the same release, replace a development build, or, with `-version`, downgrade |
 | `-yes` | In a tracked repository, run `githints upgrade` afterwards without asking |
@@ -845,8 +851,8 @@ to an older version on a store that has outcomes, export first
 
 ## CLI reference
 
-Every command takes `-h`. Exit status: 0 ok, 1 error, 2 usage error or (from
-`update -check`) an update is available, 3 `verify` found problems.
+Every command takes `-h`. Exit status: 0 ok, 1 error, 2 usage error, 3 `verify`
+found problems, 10 (`update -check`) an update is available.
 
 | Command | Does |
 | --- | --- |
@@ -937,7 +943,8 @@ manager or `go install` is updated there; a `dev` build needs `-force`; an older
 release needs both `-version` and `-force`; a checksum mismatch or an archive
 missing from `checksums.txt` is never installed. "could not reach GitHub" means
 it is offline or blocked (it honors `HTTPS_PROXY`). `githints update -check`
-exits 0 when current, 2 when an update is available and 1 on error, for scripts.
+exits 0 when current, 10 when an update is available and 1 on error, for scripts
+(2 is a usage error, such as a mistyped flag).
 
 ## Uninstall
 

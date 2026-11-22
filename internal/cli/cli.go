@@ -60,7 +60,7 @@ func Main(args []string, version string) int {
 	}
 	if err := cmd(args[2:]); err != nil {
 		if errors.Is(err, core.ErrUpdateAvailable) {
-			return 2 // update -check printed its own line
+			return core.ExitUpdateAvailable // update -check printed its own line
 		}
 		fmt.Fprintln(os.Stderr, "githints: "+err.Error())
 		if errors.Is(err, core.ErrVerifyFailed) {
@@ -186,7 +186,7 @@ Usage:
   githints help                   show this list
 
 Run any command with -h for its flags. Exit status: 0 ok, 1 error,
-2 usage error or (update -check) an update is available, 3 verify found problems.`
+2 usage error, 3 verify found problems, 10 (update -check) an update is available.`
 
 func cmdHelp() error {
 	fmt.Println(usageText)
