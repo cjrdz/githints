@@ -15,6 +15,10 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   (`githints.exe.old`). The running binary now moves to the next free name
   (`githints.exe.old-1`, ...), and every leftover is removed once nothing runs
   it.
+- `githints update` into a directory you cannot write to (a root-owned
+  `/usr/local/bin`, `Program Files`) stopped at "permission denied". It now
+  prints the `sudo` command to run (an elevated terminal on Windows) and how to
+  reinstall into a directory you own.
 
 ## [0.5.0] - 2026-11-22
 

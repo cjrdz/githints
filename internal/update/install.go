@@ -186,7 +186,7 @@ func replaceBinary(target string, bin []byte, want, goos string, checkRun func(s
 	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, ".githints-update-*")
 	if err != nil {
-		return fmt.Errorf("cannot write next to %s: %w", target, err)
+		return fmt.Errorf("cannot write next to %s: %w%s", target, err, permissionHint(err, target, goos))
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = fsys.Remove(tmpPath) } // best effort; the error being returned matters more
@@ -217,7 +217,7 @@ func replaceBinary(target string, bin []byte, want, goos string, checkRun func(s
 	if goos != "windows" {
 		if err := fsys.Rename(tmpPath, target); err != nil {
 			cleanup()
-			return fmt.Errorf("replace %s: %w", target, err)
+			return fmt.Errorf("replace %s: %w%s", target, err, permissionHint(err, target, goos))
 		}
 		return nil
 	}
@@ -228,7 +228,7 @@ func replaceBinary(target string, bin []byte, want, goos string, checkRun func(s
 	}
 	if err := fsys.Rename(target, old); err != nil {
 		cleanup()
-		return fmt.Errorf("move the running binary aside: %w", err)
+		return fmt.Errorf("move the running binary aside: %w%s", err, permissionHint(err, target, goos))
 	}
 	if err := fsys.Rename(tmpPath, target); err != nil {
 		if rerr := fsys.Rename(old, target); rerr != nil {
@@ -238,6 +238,26 @@ func replaceBinary(target string, bin []byte, want, goos string, checkRun func(s
 		return fmt.Errorf("replace %s: %w; the previous binary is back", target, err)
 	}
 	return nil
+}
+
+// permissionHint says what to do when err is a permission failure on the
+// directory holding target, which is where a binary installed system-wide
+// (/usr/local/bin, Program Files) ends up: githints can do nothing about it
+// itself, and the bare "permission denied" left people guessing.
+func permissionHint(err error, target, goos string) string {
+	if !errors.Is(err, fs.ErrPermission) {
+		return ""
+	}
+	if goos == "windows" {
+		return fmt.Sprintf("\n%s is in a folder this account cannot write to. Run `githints update` from an elevated (administrator) terminal, or reinstall into a folder you own with install.ps1 (it defaults to %%LOCALAPPDATA%%\\Programs\\githints; GITHINTS_BIN_DIR picks another).", target)
+	}
+	return fmt.Sprintf("\n%s is in a directory this user cannot write to. Run `sudo %s update`, or reinstall into a directory you own:\n  curl -fsSL https://raw.githubusercontent.com/cjrdz/githints/main/install.sh | GITHINTS_BIN_DIR=\"$HOME/.local/bin\" sh", target, shellQuote(target))
+}
+
+// shellQuote quotes s for a POSIX shell, so a suggested command still works
+// for a path with spaces or quotes in it.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // maxAside bounds the names asideName tries: one per githints process still
