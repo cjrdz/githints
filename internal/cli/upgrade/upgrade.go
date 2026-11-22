@@ -16,10 +16,6 @@ import (
 	"github.com/cjrdz/githints/internal/managed"
 )
 
-// metaUpgradedBy records the githints version that last ran upgrade here, so
-// a later run can tell whether MCP servers are serving an older binary.
-const metaUpgradedBy = "upgraded_by"
-
 // Run refreshes the hooks, the managed blocks and the index, then runs doctor.
 func Run(args []string, version string) error {
 	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
@@ -122,10 +118,12 @@ func Run(args []string, version string) error {
 		}
 	}
 
-	previous, _ := st.MetaGet(metaUpgradedBy) // missing: no earlier upgrade, so restart to be safe
+	// Missing means a repository set up before init wrote the stamp, so by an
+	// older githints: restart to be safe.
+	previous, _ := st.MetaGet(core.MetaManagedBy)
 	newBinary := previous != version
 	if newBinary && !*dryRun {
-		if err := st.MetaSet(metaUpgradedBy, version); err != nil {
+		if err := st.MetaSet(core.MetaManagedBy, version); err != nil {
 			return err
 		}
 	}

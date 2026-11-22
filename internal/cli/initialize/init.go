@@ -42,6 +42,20 @@ func runInit(args []string, verbose bool) error {
 	}
 	defer st.Close()
 
+	// A fresh setup records which githints manages the repository, so the
+	// first `upgrade` by this same binary has nothing to restart. An existing
+	// stamp is left alone: a newer binary re-running init has not restarted
+	// the MCP servers, and upgrade should still say so.
+	if core.Version != "" {
+		if v, err := st.MetaGet(core.MetaManagedBy); err != nil {
+			return fmt.Errorf("read store metadata: %w", err)
+		} else if v == "" {
+			if err := st.MetaSet(core.MetaManagedBy, core.Version); err != nil {
+				return fmt.Errorf("write store metadata: %w", err)
+			}
+		}
+	}
+
 	if err := hint.RenderChangelog(st, root, recorder.ChangelogLimit); err != nil {
 		return err
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/cli/initialize"
 	"github.com/cjrdz/githints/internal/clitest"
 	"github.com/cjrdz/githints/internal/index"
@@ -176,5 +177,46 @@ func TestDryRunLeavesAnOldSchemaIndexAlone(t *testing.T) {
 	}
 	if n != 1 || version != "1" {
 		t.Errorf("after the dry run: %d symbols, schema %q; want the old index untouched", n, version)
+	}
+}
+
+// The restart message is for a binary change, which a fresh init by the same
+// binary is not. It used to appear on the first upgrade of every repository.
+func TestRestartMessageOnlyWhenTheBinaryChanged(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	clitest.ChdirTempRepo(t)
+	old := core.Version
+	t.Cleanup(func() { core.Version = old })
+
+	core.Version = "9.9.9"
+	if err := initialize.Init(nil); err != nil {
+		t.Fatal(err)
+	}
+	upgrade := func(version string) string {
+		t.Helper()
+		out, err := clitest.CaptureStdout(t, func() error { return Run(nil, version) })
+		if err != nil {
+			t.Logf("upgrade %s: %v", version, err) // doctor may warn here; the message is what matters
+		}
+		return out
+	}
+	if out := upgrade("9.9.9"); strings.Contains(out, "restart your MCP servers") {
+		t.Errorf("first upgrade by the binary that ran init asked for a restart:\n%s", out)
+	}
+	if out := upgrade("9.9.10"); !strings.Contains(out, "githints 9.9.10 now manages this repository: restart your MCP servers") {
+		t.Errorf("a newer binary did not ask for a restart:\n%s", out)
+	}
+	if out := upgrade("9.9.10"); strings.Contains(out, "restart your MCP servers") {
+		t.Errorf("a second upgrade by the same binary asked again:\n%s", out)
+	}
+
+	// Re-running init with a newer binary keeps the stamp, so upgrade still
+	// says the servers may be on an older binary.
+	core.Version = "9.9.11"
+	if err := initialize.Init(nil); err != nil {
+		t.Fatal(err)
+	}
+	if out := upgrade("9.9.11"); !strings.Contains(out, "restart your MCP servers") {
+		t.Errorf("init by a newer binary hid the restart:\n%s", out)
 	}
 }
