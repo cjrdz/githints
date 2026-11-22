@@ -91,6 +91,7 @@ func runChecks() []Result {
 	}
 
 	out = append(out, CheckHooks(root)...)
+	out = append(out, checkBlocks(root)...)
 
 	cfg, cfgErr := config.Load(root)
 	if cfgErr != nil {
@@ -154,6 +155,30 @@ func CheckHooks(root string) []Result {
 		// Group per-hook statuses under the "hooks" check name; the detail
 		// still names the specific hook.
 		out = append(out, Result{level, "hooks", s.Detail, s.Fix})
+	}
+	return out
+}
+
+// checkBlocks compares the managed blocks with what this binary's init would
+// write. A missing block in AGENTS.md or CLAUDE.md is left alone, since a
+// repository may write its own instructions; a missing .gitignore block is
+// not, because it keeps the salt and the databases out of commits.
+func checkBlocks(root string) []Result {
+	var out []Result
+	for _, b := range managed.Blocks(root) {
+		name := filepath.Base(b.Path)
+		state, err := b.State()
+		switch {
+		case err != nil:
+			out = append(out, Result{LevelWarn, "blocks", err.Error(), ""})
+		case state == managed.BlockStale:
+			out = append(out, Result{LevelWarn, "blocks", "the githints block in " + name + " differs from what this githints writes", "githints upgrade"})
+		case state == managed.BlockMissing && name == ".gitignore":
+			out = append(out, Result{LevelWarn, "blocks", ".gitignore has no githints block, so .githints/ could be committed", "githints upgrade"})
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, Result{LevelOK, "blocks", "managed blocks are current", ""})
 	}
 	return out
 }
@@ -245,17 +270,44 @@ func checkIndex(root string, languages []string) Result {
 		return Result{LevelWarn, "index", "enabled but never built", "githints index"}
 	}
 	age := time.Since(time.Unix(at, 0)).Round(time.Minute)
+	if why := rebuildReason(db, root, languages); why != "" {
+		return Result{LevelWarn, "index", fmt.Sprintf("last indexed %s ago; %s", age, why), "githints upgrade (or githints index)"}
+	}
+	return Result{LevelOK, "index", fmt.Sprintf("last indexed %s ago", age), ""}
+}
+
+// IndexRebuildReason says why the index needs a full rebuild, or "" when it
+// does not (or does not exist yet).
+func IndexRebuildReason(root string, languages []string) string {
+	path := lang.IndexDBPath(root)
+	if _, err := os.Stat(path); err != nil {
+		return "" // index.Open would create it; never built is not stale
+	}
+	db, err := index.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	return rebuildReason(db, root, languages)
+}
+
+func rebuildReason(db *index.Store, root string, languages []string) string {
 	if v, err := db.IndexResolverVersion(); err == nil && v < index.ResolverVersion {
-		return Result{LevelWarn, "index", fmt.Sprintf("last indexed %s ago, by an older githints: import links may be missing", age), "githints index"}
+		// 0 is not an old resolver: the hook's incremental scans never stamp
+		// it, so a repository indexed only by commits reads 0.
+		if v == 0 {
+			return "only commits have indexed it, never a full scan, so files no commit touched are missing"
+		}
+		return "it was built by an older githints, so import links may be missing"
 	}
 	// Lenient resolution, as on the hook path: an unknown name is a config
 	// problem the scan itself reports, not a reason to hide this check.
 	if parsers, _, err := lang.NewRegistryForRoot(root).ResolveKnownLanguages(languages); err == nil {
 		if why, err := db.LanguagesStaleness(lang.ParserNames(parsers)); err == nil && why != "" {
-			return Result{LevelWarn, "index", fmt.Sprintf("last indexed %s ago; the index was %s", age, why), "githints index"}
+			return "the index was " + why
 		}
 	}
-	return Result{LevelOK, "index", fmt.Sprintf("last indexed %s ago", age), ""}
+	return ""
 }
 
 // checkMCP looks for githints in the project-level config of every client

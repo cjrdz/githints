@@ -6,7 +6,7 @@ conventions and releases. The design is described in
 
 ## Requirements
 
-- The Go version in `go.mod` (currently 1.26.10) or later. The floor tracks
+- The Go version in `go.mod` (currently 1.26.11) or later. The floor tracks
   standard-library CVEs rather than language features, and `govulncheck` in CI
   enforces it; `os.Root.MkdirAll`, which the file-confinement code depends on,
   arrived in 1.25. CI reads the version from `go.mod`, so bumping it there is the
@@ -166,7 +166,9 @@ change with `./githints record` as [AGENTS.md](AGENTS.md) describes.
 `AGENTS.md` here is hand-written and more detailed than the generic block
 `githints init` installs, so running `init` in this repository appends a
 redundant managed block to it; delete that block afterwards (everything between
-the `<!-- >>> githints (managed) -->` markers). `CLAUDE.md` is the normal case:
+the `<!-- >>> githints (managed) -->` markers). `githints upgrade` leaves a file
+without a block alone, so after building, `./githints upgrade` is the safe way
+to point the hooks at the new binary. `CLAUDE.md` is the normal case:
 its managed block is the `@AGENTS.md` import, and the development guidance lives
 below it.
 

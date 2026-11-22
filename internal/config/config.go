@@ -21,6 +21,14 @@ import (
 type Config struct {
 	Index  Index  `json:"index"`
 	Review Review `json:"review"`
+	MCP    MCP    `json:"mcp"`
+}
+
+// MCP configures the MCP server's behavior toward agents.
+type MCP struct {
+	// UnrecordedReminder appends one line to a tool result when files changed
+	// during the session have no recorded change yet.
+	UnrecordedReminder bool `json:"unrecorded_reminder"`
 }
 
 // Review configures risk-scaled review (see internal/risk). Rules add a class
@@ -73,6 +81,7 @@ func Default() Config {
 			MaxFileSize:    defaultIndexMaxFileSize,
 			ParseTimeoutMS: defaultIndexParseTimeoutMS,
 		},
+		MCP: MCP{UnrecordedReminder: true},
 	}
 }
 
@@ -135,6 +144,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("GITHINTS_INDEX_GRAPH_HTML"); v != "" {
 		cfg.Index.GraphHTML = truthy(v)
+	}
+	if v := os.Getenv("GITHINTS_MCP_UNRECORDED_REMINDER"); v != "" {
+		cfg.MCP.UnrecordedReminder = truthy(v)
 	}
 }
 

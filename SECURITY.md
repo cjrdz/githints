@@ -110,8 +110,13 @@ model, keep them out of the working tree.
 **`.githints/config.json` is repository content.** It can therefore arrive in a
 clone. It holds only index settings, whose limits have fixed ceilings, and
 nothing in it can make githints open a network connection: the MCP server
-speaks over stdio, and no githints package imports `net` since the optional
-Ollama integration was removed.
+speaks over stdio, and githints has no network access except when you run
+`githints update`. That command lives in `internal/update`, the only package
+that imports `net/http` (`TestOnlyUpdateImportsNetHTTP` fails otherwise); it
+never runs from a hook, the MCP server, `doctor`, `brief` or `init`. It talks
+https to github.com and GitHub's release-asset hosts only, refuses a redirect
+anywhere else, caps every response, and installs nothing whose SHA-256 does not
+match the release's `checksums.txt`.
 
 **Notes are not integrity-checked.** Nothing signs a note in `.githints/notes/`:
 whoever can write that directory can write a note. githints scans notes for

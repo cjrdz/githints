@@ -17,6 +17,32 @@ import (
 // ChainedSuffix names where init -chain moves a pre-existing hook.
 const ChainedSuffix = ".pre-githints"
 
+// Hook is one git hook githints installs and the subcommand it runs.
+type Hook struct{ Name, Command string }
+
+// Hooks are the hooks init installs, in a fixed order.
+var Hooks = []Hook{{"post-commit", "hook-run"}, {"pre-commit", "hook-precommit"}}
+
+// HookIsCurrent reports whether the hook at path is exactly what init would
+// write for exe now.
+func HookIsCurrent(path, exe, cmd string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	return string(data) == HookScriptFor(exe, cmd), nil
+}
+
+// RunningBinary is this process's executable with links resolved, as init
+// records it.
+func RunningBinary() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(exe)
+}
+
 // HookExistsAndManaged reports whether path is an existing file that was
 // written by githints (and may safely be re-initialized).
 func HookExistsAndManaged(path string) (exists bool, managed bool, err error) {
@@ -95,6 +121,15 @@ func WriteHook(path, script string) error {
 	return f.Close()
 }
 
+func sameFile(a, b string) bool {
+	fa, err := os.Stat(filepath.FromSlash(a))
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	return err == nil && os.SameFile(fa, fb)
+}
+
 // shellQuote returns s as a single POSIX sh word that expands to exactly s.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
@@ -132,8 +167,10 @@ func CheckHooks(root string) ([]HookStatus, error) {
 	if err != nil {
 		return nil, err
 	}
+	running, _ := RunningBinary() // unknown: the comparison below is skipped
 	var out []HookStatus
-	for _, name := range []string{"post-commit", "pre-commit"} {
+	for _, h := range Hooks {
+		name := h.Name
 		path := filepath.Join(dir, name)
 		data, err := os.ReadFile(path)
 		switch {
@@ -162,13 +199,14 @@ func CheckHooks(root string) ([]HookStatus, error) {
 			}
 			continue
 		}
-		if runtime.GOOS == "windows" {
-			// Execute bits mean nothing on Windows; Git for Windows runs hooks through sh.
-			out = append(out, HookStatus{name, HookOK, name + " -> " + bin, ""})
+		// Execute bits mean nothing on Windows; Git for Windows runs hooks through sh.
+		if fi, err := os.Stat(path); runtime.GOOS != "windows" && err == nil && fi.Mode()&0o111 == 0 {
+			out = append(out, HookStatus{name, HookFail, name + " is not executable, so git skips it", "chmod +x " + path})
 			continue
 		}
-		if fi, err := os.Stat(path); err == nil && fi.Mode()&0o111 == 0 {
-			out = append(out, HookStatus{name, HookFail, name + " is not executable, so git skips it", "chmod +x " + path})
+		// Identity, not path: the same binary can be reached through a link.
+		if running != "" && !sameFile(bin, running) {
+			out = append(out, HookStatus{name, HookWarn, name + " runs " + bin + ", not this githints (" + running + ")", "githints upgrade (repoints the hooks)"})
 			continue
 		}
 		out = append(out, HookStatus{name, HookOK, name + " -> " + bin, ""})

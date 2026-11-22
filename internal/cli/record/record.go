@@ -41,6 +41,7 @@ func Record(args []string) error {
 		return fmt.Errorf("integrity key: %w", err)
 	}
 
+	prevSummary := recorder.PreviousSummary(st, *file)
 	c, err := recorder.RecordChange(st, root, key, recorder.Input{
 		FilePath: *file,
 		Summary:  *summary,
@@ -51,8 +52,16 @@ func Record(args []string) error {
 	if err != nil {
 		return err
 	}
-	// The id is what `githints outcome -id` takes later.
+	// The id is what `githints outcome -id` takes later. The hints follow it,
+	// so a script reading the first line is unaffected.
 	fmt.Printf("recorded change #%d for %s\n", c.ID, textsafe.OneLine(*file))
+	if hints := recorder.Hints(*file, *summary, *reason, prevSummary); len(hints) > 0 {
+		fmt.Println("hints (recorded anyway):")
+		for _, h := range hints {
+			fmt.Println("  - " + h)
+		}
+		fmt.Printf("once you know how it turned out: githints outcome -id=%d -state=worked|failed -note=\"...\"\n", c.ID)
+	}
 	return nil
 }
 

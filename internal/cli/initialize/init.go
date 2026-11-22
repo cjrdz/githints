@@ -101,7 +101,8 @@ func runInit(args []string, verbose bool) error {
 	postCommit := filepath.Join(hooksDir, "post-commit")
 	preCommit := filepath.Join(hooksDir, "pre-commit")
 
-	for _, path := range []string{postCommit, preCommit} {
+	for _, h := range managed.Hooks {
+		path := filepath.Join(hooksDir, h.Name)
 		exists, managedHook, err := managed.HookExistsAndManaged(path)
 		if err != nil {
 			return err
@@ -127,9 +128,9 @@ func runInit(args []string, verbose bool) error {
 		}
 	}
 
-	for path, cmd := range map[string]string{postCommit: "hook-run", preCommit: "hook-precommit"} {
-		if err := managed.WriteHook(path, hookScript(cmd)); err != nil {
-			return fmt.Errorf("write %s hook: %w", filepath.Base(path), err)
+	for _, h := range managed.Hooks {
+		if err := managed.WriteHook(filepath.Join(hooksDir, h.Name), hookScript(h.Command)); err != nil {
+			return fmt.Errorf("write %s hook: %w", h.Name, err)
 		}
 	}
 

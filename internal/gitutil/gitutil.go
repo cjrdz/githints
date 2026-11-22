@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -238,6 +239,26 @@ func ChangedFiles(hash string) ([]string, error) {
 // name by default, while the row it undoes was recorded under the new one.
 func ChangedFilesNoRenames(hash string) ([]string, error) {
 	return changedFiles(hash, true)
+}
+
+// DirtyFiles lists the repo-relative paths in dir's working tree that differ
+// from HEAD or the index, untracked files included and ignored files left out,
+// sorted. A rename is listed as the old path and the new one.
+func DirtyFiles(ctx context.Context, dir string) ([]string, error) {
+	out, err := RunIn(ctx, dir, nil, MaxOutputBytes,
+		"status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range strings.Split(string(out), "\x00") {
+		// "XY path": two status letters and a space, then the path verbatim.
+		if len(entry) > 3 {
+			paths = append(paths, entry[3:])
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 func changedFiles(hash string, noRenames bool) ([]string, error) {

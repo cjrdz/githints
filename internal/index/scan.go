@@ -505,9 +505,12 @@ func parseWithTimeout(p lang.LanguageParser, rel string, src []byte, timeout tim
 // when their path no longer exists on disk; existing files are parsed and
 // their rows replaced. This is the hook path used in Phase 2.
 func IncrementalScan(db *Store, opts lang.ScanOptions, paths []string, maxBytes int) error {
-	if v, err := db.IndexResolverVersion(); err == nil && v < ResolverVersion {
+	// Only a full scan stamps the resolver version, so 0 means "never fully
+	// built", not "built by an older githints"; the hook only warns about the
+	// second, or a repository indexed by commits alone would hear it every time.
+	if v, err := db.IndexResolverVersion(); err == nil && v > 0 && v < ResolverVersion {
 		if n, err := db.FileCount(); err == nil && n > 0 {
-			fmt.Fprintln(os.Stderr, "githints: the index was built by an older githints whose import resolution differs; run `githints index` once to rebuild it")
+			fmt.Fprintln(os.Stderr, "githints: the index was built by an older githints whose import resolution differs; run `githints upgrade` (or `githints index`) once to rebuild it")
 		}
 	}
 	// Lenient on purpose: see openScan.

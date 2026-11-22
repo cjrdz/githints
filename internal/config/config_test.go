@@ -49,6 +49,39 @@ func TestLoadIgnoresRemovedOllamaBlock(t *testing.T) {
 	}
 }
 
+func TestUnrecordedReminderSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name, json, env string
+		want            bool
+	}{
+		{"default on", "", "", true},
+		{"config.json without the key keeps the default", `{"mcp":{}}`, "", true},
+		{"config.json turns it off", `{"mcp":{"unrecorded_reminder":false}}`, "", false},
+		{"env turns it off", "", "0", false},
+		{"env turns it back on over config.json", `{"mcp":{"unrecorded_reminder":false}}`, "1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.json != "" {
+				if err := os.MkdirAll(filepath.Join(dir, ".githints"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, ".githints", "config.json"), []byte(tc.json), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("GITHINTS_MCP_UNRECORDED_REMINDER", tc.env)
+			cfg, err := Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.MCP.UnrecordedReminder != tc.want {
+				t.Errorf("unrecorded_reminder = %v, want %v", cfg.MCP.UnrecordedReminder, tc.want)
+			}
+		})
+	}
+}
+
 // writeIndexConfig writes a config.json selecting the given languages.
 func writeIndexConfig(t *testing.T, langs string) string {
 	t.Helper()

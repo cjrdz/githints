@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -61,14 +62,15 @@ const instructions = `githints records what changed in this repo and why, per fi
    find_facets(facet="route") (or model, component, service, job, infra...),
    find_symbol(name), get_dependency_graph(file). search_notes(query) before
    re-deriving a design choice or a hard bug.
-3. Right after each edit: record_change(file, summary, reason); changes=[...]
-   for several files in one step (all land or none). Summary: what changed,
-   specifically. Good: "Replaced the linear scan in FindUser with a map
-   lookup". Bad: "Updated function". Reason: why (the bug, constraint or
-   request), not the summary again. Do not record pure formatting, generated
-   files or lockfiles.
-4. When you learn how a change turned out: record_outcome(change_id, outcome,
-   note). Changes are listed with a #id; failures stay in the history so
+3. Right after each edit: record_change(file, summary, reason), one record per
+   file per logical change; changes=[...] for several files in one step (all
+   land or none). Summary: "Replaced the linear scan in FindUser with a map
+   lookup", not "Updated function". Reason: the evidence or constraint. Good:
+   "Login latency was profiled at 10k users; the map is built once at
+   startup." Bad: "To improve performance." Do not record formatting-only
+   edits, generated files or lockfiles.
+4. After testing, and whenever you learn how a change turned out:
+   record_outcome(change_id, outcome, note). Changes are listed with a #id; failures stay in the history so
    nobody repeats them.
 5. Before the change is committed: stage it, call review_status(), review it by
    the lenses it asks for, then record_review(verdict, findings, lenses).
@@ -107,14 +109,32 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 	// get_session_context reads it when it runs.
 	var notesDB *index.Store
 
+	var reminder *editReminder
+	if cfg.MCP.UnrecordedReminder {
+		reminder = newEditReminder(root, st)
+	}
+
 	// addTool registers a tool and marks it as used whenever it runs. Taking
 	// the name from the tool itself means a new tool cannot be registered
-	// without being tracked, and no name literal is repeated.
+	// without being tracked, and no name literal is repeated. After any other
+	// successful call it appends the unrecorded-edits reminder as a separate
+	// content block, so a tool whose text is JSON stays parseable.
 	addTool := func(tool mcp.Tool, h server.ToolHandlerFunc) {
 		name := tool.Name
+		records := strings.HasPrefix(name, "record_")
 		s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			defer session.MarkToolCalled(name)
-			return h(ctx, req)
+			res, err := h(ctx, req)
+			if records {
+				reminder.forget()
+				return res, err
+			}
+			if err == nil && res != nil && !res.IsError {
+				if line := reminder.line(ctx); line != "" {
+					res.Content = append(res.Content, mcp.NewTextContent(line))
+				}
+			}
+			return res, err
 		})
 	}
 
@@ -157,7 +177,7 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				}),
 			),
 			mcp.WithString("agent_id",
-				mcp.Description("Optional agent/session fingerprint, e.g. claude-code-session-abc123")),
+				mcp.Description("Optional session fingerprint; defaults to client:<name>/<version> of the MCP client")),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithOpenWorldHintAnnotation(false),
 		),
@@ -476,7 +496,7 @@ func handleRecordReview(root string, st *store.Store, cfg config.Review, idx *in
 			Verdict:  verdict,
 			Findings: req.GetString("findings", ""),
 			Lenses:   lenses,
-			AgentID:  req.GetString("agent_id", ""),
+			AgentID:  agentIDFor(ctx, req),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -519,20 +539,47 @@ func handleGetSessionContext(root string, st *store.Store, session *SessionTrack
 	}
 }
 
-// recordChangeHints is advice appended to a successful record_change, never a
-// rejection: refusing a weak summary would only make an agent retry with a
-// different weak one. prevSummary is the file's latest change before this one.
-func recordChangeHints(id int64, file, summary, reason, prevSummary string) string {
-	var hints []string
-	if strings.TrimSpace(reason) == "" {
-		hints = append(hints, "no reason: say why (the bug, constraint or request behind it); it is what the next reader needs most")
+// agentIDFor is the agent_id a write records: the caller's, or else the name
+// and version the client sent in its initialize request. Agents rarely pass
+// agent_id, and without it a row cannot be told apart from another client's.
+func agentIDFor(ctx context.Context, req mcp.CallToolRequest) string {
+	if id := req.GetString("agent_id", ""); id != "" {
+		return id
 	}
-	if isGenericSummary(file, summary) {
-		hints = append(hints, `generic summary: say what specifically changed, e.g. "Replaced the linear scan in FindUser with a map lookup"`)
+	if sess, ok := server.ClientSessionFromContext(ctx).(server.SessionWithClientInfo); ok {
+		return clientAgentID(sess.GetClientInfo())
 	}
-	if prevSummary != "" && strings.EqualFold(strings.TrimSpace(prevSummary), strings.TrimSpace(summary)) {
-		hints = append(hints, "same summary as the previous change to this file: say what is different this time")
+	return ""
+}
+
+// clientAgentID formats clientInfo as client:<name>/<version>. The values come
+// from the client, so they are cleaned like any recorded text, and shortened
+// rather than rejected: the recorder refuses an over-long agent_id, which here
+// would make every write from that client fail. A value that looks like a
+// credential is dropped for the same reason.
+func clientAgentID(info mcp.Implementation) string {
+	clean := func(s string) string { return strings.TrimSpace(textsafe.Remove(s)) }
+	name, version := clean(info.Name), clean(info.Version)
+	if name == "" {
+		return ""
 	}
+	id := "client:" + name
+	if version != "" {
+		id += "/" + version
+	}
+	for len(id) > recorder.MaxAgentIDLen {
+		_, size := utf8.DecodeLastRuneInString(id)
+		id = id[:len(id)-size]
+	}
+	if _, secret := secrets.Scan(id); secret {
+		return ""
+	}
+	return id
+}
+
+// formatHints renders recorder.Hints for a record_change result, ending with
+// the record_outcome call for this change.
+func formatHints(id int64, hints []string) string {
 	if len(hints) == 0 {
 		return ""
 	}
@@ -545,28 +592,6 @@ func recordChangeHints(id int64, file, summary, reason, prevSummary string) stri
 	return b.String()
 }
 
-// genericVerbs open summaries that say nothing when little follows them.
-var genericVerbs = map[string]bool{
-	"update": true, "updated": true, "updates": true,
-	"fix": true, "fixed": true, "fixes": true,
-	"change": true, "changed": true, "changes": true,
-	"modify": true, "modified": true, "edit": true, "edited": true,
-	"refactor": true, "refactored": true, "tweak": true, "tweaked": true,
-	"wip": true, "misc": true, "cleanup": true,
-}
-
-// isGenericSummary reports a summary that names no specific change: the file
-// name alone, or a generic verb followed by at most two words ("Updated
-// function", "fix bug"). "Fix the race in token refresh" is specific enough.
-func isGenericSummary(file, summary string) bool {
-	s := strings.TrimSpace(summary)
-	if strings.EqualFold(s, file) || strings.EqualFold(s, filepath.Base(file)) {
-		return true
-	}
-	words := strings.Fields(strings.ToLower(strings.TrimRight(s, ".!")))
-	return len(words) > 0 && len(words) <= 3 && genericVerbs[words[0]]
-}
-
 // handleRecordChange records one change (file, summary, reason) or, given
 // changes[], several in one transaction: all land or none do.
 func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
@@ -575,7 +600,7 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 			if req.GetString("file", "") != "" || req.GetString("summary", "") != "" {
 				return mcp.NewToolResultError("pass either file and summary, or changes[], not both"), nil
 			}
-			return recordBatch(root, st, req)
+			return recordBatch(ctx, root, st, req)
 		}
 		file, err := req.RequireString("file")
 		if err != nil {
@@ -589,23 +614,14 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		reason := req.GetString("reason", "")
-		agentID := req.GetString("agent_id", "")
+		agentID := agentIDFor(ctx, req)
 
 		key, err := integrity.KeyFromRepo(root)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		// Read before recording: afterwards the newest row is this one.
-		prevSummary := ""
-		if prev, err := st.FileHistory(file, 5); err == nil { // no comparison on error; the hint is optional
-			for _, p := range prev {
-				if p.Kind == "" || p.Kind == store.KindChange {
-					prevSummary = p.Summary
-					break
-				}
-			}
-		}
+		prevSummary := recorder.PreviousSummary(st, file)
 
 		c, err := recorder.RecordChange(st, root, key, recorder.Input{
 			FilePath: file,
@@ -619,7 +635,7 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 		}
 
 		text := fmt.Sprintf("recorded change #%d for %s", c.ID, oneLine(file))
-		if hints := recordChangeHints(c.ID, file, summary, reason, prevSummary); hints != "" {
+		if hints := formatHints(c.ID, recorder.Hints(file, summary, reason, prevSummary)); hints != "" {
 			text += "\n\n" + hints
 		}
 		return mcp.NewToolResultText(text), nil
@@ -779,7 +795,7 @@ func handleRecordOutcome(root string, st *store.Store) server.ToolHandlerFunc {
 			ChangeID: int64(req.GetInt("change_id", 0)),
 			State:    state,
 			Note:     req.GetString("note", ""),
-			AgentID:  req.GetString("agent_id", ""),
+			AgentID:  agentIDFor(ctx, req),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -871,7 +887,7 @@ func handleGetDiff() server.ToolHandlerFunc {
 	}
 }
 
-func recordBatch(root string, st *store.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func recordBatch(ctx context.Context, root string, st *store.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	raw, ok := req.GetArguments()["changes"]
 	if !ok {
 		return mcp.NewToolResultError("missing required argument: changes"), nil
@@ -893,7 +909,7 @@ func recordBatch(root string, st *store.Store, req mcp.CallToolRequest) (*mcp.Ca
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	agentID := req.GetString("agent_id", "")
+	agentID := agentIDFor(ctx, req)
 
 	inputs := make([]recorder.Input, 0, len(arr))
 	for i, item := range arr {

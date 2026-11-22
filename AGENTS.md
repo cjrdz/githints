@@ -13,10 +13,11 @@ below. In this repository it usually is not: githints runs as the binary built
 at the repository root, so use the CLI from the root:
 
     go build -o githints .        # after pulling or changing githints' code
+    ./githints upgrade            # point the hooks at that build (once per build location)
     ./githints brief
 
 Every MCP read tool has a CLI twin with the same limits; the table below pairs
-them.
+them. `./githints doctor` warns when the hooks run some other githints.
 
 ## MCP tools
 
@@ -26,7 +27,7 @@ Use them instead of the CLI twins.
 | Tool | When to call it |
 | --- | --- |
 | `get_session_context()` | **At the start of every session**, before reading files or editing. Ends with a brief: failed or reverted attempts, uncommitted work, recent commits, blast radius, co-changing files. |
-| `record_change(file, summary, reason)` | **Right after editing a file.** Summaries must be specific; reason is optional but valuable. Pass `changes=[...]` instead for several files changed in one step: all land or none. |
+| `record_change(file, summary, reason)` | **Right after editing a file**, one record per file per logical change. A specific summary and a reason with the evidence or constraint; a thin record still lands but comes back with hints. Pass `changes=[...]` instead for several files changed in one step: all land or none. Without `agent_id`, the row names your MCP client. |
 | `record_outcome(change_id, outcome, note)` | When you learn how an earlier change turned out: `worked`, `partial`, `failed`, `reverted`, `unknown`. Changes are listed with a `#id`; a note is required unless the outcome is worked or unknown. |
 | `record_note(title, body, tags, related_files)` | When you work something out that the change log cannot hold (a design choice, a plan, a hard bug). Notes are private to this machine and not integrity-checked. |
 | `search_notes(query, file, tag, name)` | Before re-deriving something that took effort. `name` reads one note in full. |
@@ -35,6 +36,10 @@ Use them instead of the CLI twins.
 | `review_status(paths)`, `record_review(verdict, findings, lenses)` | Before committing: how deep a review the staged change needs, and a signed receipt of the review. |
 | `find_symbol(name)` or `find_symbol(file)`, `get_dependents(file)`, `get_dependency_graph(file, depth)` | Explore the structural index before changing unfamiliar code. `get_dependents()` with no file gives totals and hub files. |
 | `find_facets(facet)` | Routes, models, components and the rest, across frameworks. |
+
+A tool result can end with a separate line, `[githints] N files changed this
+session without a record: ...`. Record those files; the line names each set
+once.
 
 If no MCP server is registered in your client, use the CLI twins below.
 
@@ -61,9 +66,17 @@ does not repeat an approach that failed:
 
 Outcomes are appended, never edited; record a new one if the result changes.
 
-`summary` must be specific: "Replaced the linear scan in FindUser with a map
-lookup", not "Updated function". `reason` is optional but is the part future
-readers need most.
+One record per file per logical change. `summary` must be specific: "Replaced
+the linear scan in FindUser with a map lookup", not "Updated function".
+`reason` is the part future readers need most: the evidence or constraint behind
+the change. Good: "Login latency was profiled at 10k users; the map is built
+once at startup." Bad: "To improve performance." Do not record formatting-only
+edits, generated files or lockfiles.
+
+A thin record (no reason, a generic summary, the same summary as the file's
+last change) is stored anyway and comes back with hints, from both
+`record_change` and `./githints record`. Act on them with a follow-up record
+rather than ignoring them.
 
 ## Rule: review a high-risk change before it is committed
 
@@ -114,7 +127,8 @@ Ask the index before reading files to find something: one `find_facets` or
 is named `Class::member`, so a class name also finds its members.
 
 Index responses include `last_indexed_at`; if it is stale, run
-`./githints index`. If a note's links look wrong, `./githints index verify`
+`./githints index` (or `./githints upgrade`, which rebuilds it only when it
+needs a full scan). If a note's links look wrong, `./githints index verify`
 reports drift (stale notes, ghost rows, stale import keys).
 
 ## Rule: verify the diff when a summary is unclear
@@ -148,8 +162,9 @@ Exceeding a limit is an error, never a silent truncation:
   letters, digits and hyphens. `search_notes` query: 500 bytes, 20 words.
 - `agent_id`: 128 bytes. `file`: repo-relative, no `..`, no control characters.
 - `record_change` with `changes=[...]`: at most 100 changes. `query_changes`
-  query: 500 characters (plain words, or an FTS5 `MATCH` expression with
-  `raw=true`). Every `limit`: 1 to 500.
+  query: 500 bytes; plain words by default (every word required, at most 10
+  words of 64 bytes), or an FTS5 `MATCH` expression with `raw=true`. Every
+  `limit`: 1 to 500.
 
 ## Do not
 
@@ -160,8 +175,11 @@ Exceeding a limit is an error, never a silent truncation:
   machine's paths, or `*.githints-backup` files. `.gitignore` covers them; see
   [What to commit](docs/usage.md#what-to-commit-and-what-to-keep-local).
 - Hand-edit the `githints (managed)` blocks in `AGENTS.md`, `CLAUDE.md` or
-  `.gitignore` of a tracked repository; `githints init` rewrites them.
-  (This repository's `AGENTS.md` is hand-written instead; see
+  `.gitignore` of a tracked repository; `githints init` and `githints upgrade`
+  rewrite them. (This repository's `AGENTS.md` is hand-written instead, and
+  `upgrade` leaves a file without a block alone; see
   [CONTRIBUTING.md](CONTRIBUTING.md#self-tracking).)
+- Run `githints update` from an agent session. It is the one command that uses
+  the network and replaces the binary; that is the person's call.
 
 
