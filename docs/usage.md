@@ -88,7 +88,7 @@ file the package manager owns and says so.
 
 ### From source
 
-Requires the Go version in `go.mod` (currently 1.26.10) or newer:
+Requires the Go version in `go.mod` (currently 1.26.11) or newer:
 
 ```sh
 go install github.com/cjrdz/githints@latest   # into $(go env GOPATH)/bin
