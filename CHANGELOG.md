@@ -19,6 +19,10 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   `/usr/local/bin`, `Program Files`) stopped at "permission denied". It now
   prints the `sudo` command to run (an elevated terminal on Windows) and how to
   reinstall into a directory you own.
+- `githints upgrade -dry-run` and `doctor` reset an index written by another
+  githints' schema version as a side effect of checking it, so a dry run could
+  empty the index it was only meant to report on. They now open the index
+  read-only and report it as needing a rebuild.
 
 ## [0.5.0] - 2026-11-22
 
