@@ -800,8 +800,10 @@ latest release the way `install.sh` does (the redirect from
 `github.com/cjrdz/githints/releases/latest`), downloads the archive for this
 OS and architecture and `checksums.txt`, refuses on a checksum mismatch or a
 missing entry, checks that the new binary runs and reports the expected
-version, and only then replaces the running one by rename (on Windows the old
-binary is kept as `githints.exe.old` until the next run). It prints the
+version, and only then replaces the running one by rename. On Windows the old
+binary is kept as `githints.exe.old` until a later run removes it, or as
+`githints.exe.old-1`, `-2`... while an MCP server still runs an earlier one.
+It prints the
 `gh attestation verify` command for checking build provenance; it does not run
 it.
 
