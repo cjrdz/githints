@@ -186,16 +186,16 @@ func CheckHooks(root string) ([]HookStatus, error) {
 		}
 		m := hookBinRe.FindStringSubmatch(string(data))
 		if m == nil {
-			out = append(out, HookStatus{name, HookWarn, name + " was written by an older githints", "githints init (rewrites it)"})
+			out = append(out, HookStatus{name, HookWarn, name + " was written by an older githints", "githints upgrade (rewrites it)"})
 			continue
 		}
 		bin := strings.ReplaceAll(m[1], `'\''`, `'`)
 		// Windows has no execute bits; there, existing is enough.
 		if fi, err := os.Stat(filepath.FromSlash(bin)); err != nil || (runtime.GOOS != "windows" && fi.Mode()&0o111 == 0) {
 			if _, perr := exec.LookPath("githints"); perr == nil {
-				out = append(out, HookStatus{name, HookWarn, name + " points at " + bin + ", which is gone; it falls back to githints on PATH", "githints init (repoints it)"})
+				out = append(out, HookStatus{name, HookWarn, name + " points at " + bin + ", which is gone; it falls back to githints on PATH", "githints upgrade (repoints it)"})
 			} else {
-				out = append(out, HookStatus{name, HookFail, name + " points at " + bin + ", which is gone, and githints is not on PATH", "githints init"})
+				out = append(out, HookStatus{name, HookFail, name + " points at " + bin + ", which is gone, and githints is not on PATH", "githints upgrade, run with the githints you use now (repoints it)"})
 			}
 			continue
 		}
