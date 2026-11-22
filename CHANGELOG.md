@@ -8,6 +8,14 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+### Changed
+
+- MCP tools reject a `limit`, `depth` or `max_nodes` outside the range their
+  schema declares (for example `limit` 1 to 500) instead of quietly clamping
+  it, so `limit=1000` is an error rather than 500 rows. This matches the CLI's
+  `-limit` and the "never a silent truncation" rule in `AGENTS.md`; an
+  omitted value still takes its default.
+
 ### Fixed
 
 - On Windows, a second `githints update` failed with "Access is denied" while

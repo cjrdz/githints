@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,22 +146,50 @@ func TestHandleFileHistoryRejectsTraversal(t *testing.T) {
 	}
 }
 
-func TestClampLimit(t *testing.T) {
-	tests := []struct {
-		n, def, max, want int
+// An out-of-range limit is an error, as the CLI's -limit is; it used to be
+// clamped in silence, so limit=1000 quietly meant 500. Absent means the
+// default, and a string-encoded number still counts as a number.
+func TestIntArg(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args map[string]any
+		want int
+		err  bool
 	}{
-		{0, 10, 500, 10},
-		{-5, 10, 500, 10},
-		{5, 10, 500, 5},
-		{100, 10, 500, 100},
-		{501, 10, 500, 500},
-	}
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%d-%d-%d", tt.n, tt.def, tt.max), func(t *testing.T) {
-			if got := clampLimit(tt.n, tt.def, tt.max); got != tt.want {
-				t.Errorf("clampLimit(%d,%d,%d) = %d, want %d", tt.n, tt.def, tt.max, got, tt.want)
+		{"absent", map[string]any{}, 20, false},
+		{"null", map[string]any{"limit": nil}, 20, false},
+		{"in range", map[string]any{"limit": 7.0}, 7, false},
+		{"the max", map[string]any{"limit": 500.0}, 500, false},
+		{"string number", map[string]any{"limit": "30"}, 30, false},
+		{"zero", map[string]any{"limit": 0.0}, 0, true},
+		{"negative", map[string]any{"limit": -5.0}, 0, true},
+		{"over", map[string]any{"limit": 501.0}, 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := mcp.CallToolRequest{}
+			req.Params.Arguments = tt.args
+			got, err := intArg(req, "limit", 20, 500)
+			if (err != nil) != tt.err || got != tt.want {
+				t.Errorf("intArg = %d, %v; want %d, error %v", got, err, tt.want, tt.err)
+			}
+			if err != nil && !strings.Contains(err.Error(), "limit must be between 1 and 500") {
+				t.Errorf("message %q", err)
 			}
 		})
+	}
+}
+
+func TestQueryChangesRejectsAnOutOfRangeLimit(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if text, isErr := callText(t, handleQueryChanges(st), map[string]any{"limit": 1000.0}); !isErr || !strings.Contains(text, "between 1 and 500, got 1000") {
+		t.Errorf("limit=1000: %q (error %v)", text, isErr)
+	}
+	if text, isErr := callText(t, handleQueryChanges(st), map[string]any{"limit": 5.0}); isErr {
+		t.Errorf("limit=5: %q", text)
 	}
 }
 
@@ -421,10 +448,20 @@ func TestHandleGetDependencyGraph(t *testing.T) {
 		t.Error("graph output lacks the untrusted-data notice")
 	}
 
-	// String-encoded numbers are accepted, and caps are enforced in Go.
-	text, isErr = call(map[string]any{"max_nodes": "100000", "depth": "99", "file": "internal/store/user.go"})
+	// String-encoded numbers are accepted, and caps are enforced in Go: a
+	// value past the schema's maximum is an error, not quietly cut to it.
+	text, isErr = call(map[string]any{"max_nodes": "50", "depth": "2", "file": "internal/store/user.go"})
 	if isErr || !strings.Contains(text, `"nodes"`) {
-		t.Fatalf("json with oversized caps:\n%s", text)
+		t.Fatalf("json with string-encoded caps:\n%s", text)
+	}
+	for _, args := range []map[string]any{
+		{"max_nodes": "100000", "file": "internal/store/user.go"},
+		{"depth": "99", "file": "internal/store/user.go"},
+		{"max_nodes": 0.0},
+	} {
+		if text, isErr := call(args); !isErr || !strings.Contains(text, "must be between 1 and") {
+			t.Errorf("accepted oversized %v: %q", args, text)
+		}
 	}
 
 	for _, bad := range []map[string]any{

@@ -809,11 +809,15 @@ func handleRecordOutcome(root string, st *store.Store) server.ToolHandlerFunc {
 // combination of them. It replaced four tools whose arguments overlapped.
 func handleQueryChanges(st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		limit, err := intArg(req, "limit", 20, 500)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		q := store.Query{
 			File:  req.GetString("file", ""),
 			Text:  req.GetString("query", ""),
 			Raw:   req.GetBool("raw", false),
-			Limit: clampLimit(req.GetInt("limit", 20), 20, 500),
+			Limit: limit,
 		}
 		if q.File != "" {
 			if err := recorder.ValidateFilePath(q.File); err != nil {
@@ -833,7 +837,6 @@ func handleQueryChanges(st *store.Store) server.ToolHandlerFunc {
 			}
 			return mcp.NewToolResultText(text), nil
 		}
-		var err error
 		if v := req.GetString("since", ""); v != "" {
 			if q.Since, err = store.ParseTimestamp(v); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("since: %v", err)), nil
@@ -975,16 +978,20 @@ func oneLine(s string) string {
 	return textsafe.OneLine(s)
 }
 
-// clampLimit clamps a user-supplied limit to a sane range. Non-positive
-// values fall back to def; anything above max is capped at max.
-func clampLimit(n, def, max int) int {
-	if n <= 0 {
-		return def
+// intArg reads an optional integer argument: def when it is absent, an error
+// when it is outside 1..max. Out-of-range values used to be clamped in
+// silence, so limit=1000 quietly meant 500; AGENTS.md promises an error, never
+// a silent truncation, and the CLI's -limit already refuses (core.CheckLimit).
+// GetInt does the reading, so a string-encoded number still works.
+func intArg(req mcp.CallToolRequest, name string, def, max int) (int, error) {
+	if v, ok := req.GetArguments()[name]; !ok || v == nil {
+		return def, nil
 	}
-	if n > max {
-		return max
+	n := req.GetInt(name, def)
+	if n < 1 || n > max {
+		return 0, fmt.Errorf("%s must be between 1 and %d, got %d", name, max, n)
 	}
-	return n
+	return n, nil
 }
 
 // Index MCP tool handlers.
@@ -1001,7 +1008,10 @@ func listSymbols(db *index.Store, req mcp.CallToolRequest, file, prefix string) 
 	if err := recorder.ValidateFilePath(file); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	limit := clampLimit(req.GetInt("limit", 50), 50, 500)
+	limit, err := intArg(req, "limit", 50, 500)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	all, err := db.SymbolsForFile(file)
 	if err != nil {
@@ -1053,7 +1063,10 @@ func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 		if name == "" {
 			return mcp.NewToolResultError("pass name (a symbol name prefix) or file (to list what it defines)"), nil
 		}
-		limit := clampLimit(req.GetInt("limit", 20), 20, 500)
+		limit, err := intArg(req, "limit", 20, 500)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// One extra row says whether there are more than limit matches
 		// without counting the whole table.
@@ -1126,7 +1139,10 @@ func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
 // indexSummary is get_dependents without a file: totals, languages, and the
 // most imported (hub) files.
 func indexSummary(db *index.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := clampLimit(req.GetInt("limit", 10), 10, 100)
+	limit, err := intArg(req, "limit", 10, 100)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	meta, err := db.Meta()
 	if err != nil {
@@ -1181,11 +1197,15 @@ func handleFindFacets(db *index.Store) server.ToolHandlerFunc {
 		if db == nil {
 			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
 		}
+		limit, err := intArg(req, "limit", 50, 500)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		filter := index.FacetFilter{
 			Facet:     req.GetString("facet", ""),
 			Framework: req.GetString("framework", ""),
 			File:      req.GetString("file", ""),
-			Limit:     clampLimit(req.GetInt("limit", 50), 50, 500),
+			Limit:     limit,
 		}
 		if filter.File != "" {
 			if err := recorder.ValidateFilePath(filter.File); err != nil {
@@ -1260,12 +1280,18 @@ func handleGetDependencyGraph(root string, db *index.Store) server.ToolHandlerFu
 		if format != "json" && format != "mermaid" {
 			return mcp.NewToolResultError("format must be json or mermaid"), nil
 		}
+		maxNodes, err := intArg(req, "max_nodes", 100, maxGraphNodesMCP)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		opts := index.GraphOptions{
 			Focus:    filepath.ToSlash(file),
-			MaxNodes: clampLimit(req.GetInt("max_nodes", 100), 100, maxGraphNodesMCP),
+			MaxNodes: maxNodes,
 		}
 		if file != "" {
-			opts.Depth = clampLimit(req.GetInt("depth", 1), 1, maxGraphDepth)
+			if opts.Depth, err = intArg(req, "depth", 1, maxGraphDepth); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 		}
 		g, err := index.BuildGraph(db, root, opts)
 		if err != nil {

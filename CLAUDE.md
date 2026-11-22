@@ -170,7 +170,8 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   separator, so an unchecked one is parsed as a git option.
 - **Caps stay enforced in Go**, not just declared in the tool schema:
   `recorder.MaxSummaryLen`, `MaxReasonLen`, `MaxAgentIDLen`, `MaxBatchSize`,
-  `clampLimit`, `store.MaxSearchQueryLen`, `maxSearchWords`, `maxSearchWordLen`,
+  `intArg` (an out-of-range MCP `limit`, `depth` or `max_nodes` is an error,
+  as the CLI's `-limit` is), `store.MaxSearchQueryLen`, `maxSearchWords`, `maxSearchWordLen`,
   `maxSymbolNameLen`, `secrets.MaxDiffResultBytes`, `maxGraphNodesMCP`,
   `gitutil.MaxOutputBytes`, the `config.json` index ceilings, and in
   `internal/update` `maxArchiveBytes`, `maxChecksumsBytes`, `maxBinaryBytes`.
