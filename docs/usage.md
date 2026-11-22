@@ -810,7 +810,7 @@ it.
 | Flag | Does |
 | --- | --- |
 | `-check` | Only compare the running and latest versions: exit 0 up to date, 10 update available, 1 error (offline included); for a packaged install it names the package manager's command |
-| `-version=TAG` | Install that release instead of the latest |
+| `-version TAG` | Install that release instead of the latest. Write it with a space: Windows PowerShell 5.1 splits an unquoted `-version=v0.5.0` at the first dot |
 | `-force` | Reinstall the same release, replace a development build, or, with `-version`, downgrade |
 | `-yes` | In a tracked repository, run `githints upgrade` afterwards without asking |
 
@@ -870,7 +870,7 @@ found problems, 10 (`update -check`) an update is available.
 | `uninstall [-dry-run] [-force]` | Full removal: hooks, project MCP entries, managed blocks, anchors, `.githints/` and salt |
 | `uninstall -keep-data [-dry-run]` | Stop tracking: remove the git hooks, keep `.githints/` and configs |
 | `doctor` | Check everything githints depends on, and count the log; prints a fix per problem; changes nothing |
-| `update [-check] [-version=TAG] [-force] [-yes]` | Replace this binary with a verified release; the only command that uses the network; see [Upgrading](#upgrading) |
+| `update [-check] [-version TAG] [-force] [-yes]` | Replace this binary with a verified release; the only command that uses the network; see [Upgrading](#upgrading) |
 | `upgrade [-dry-run]` | Repoint the hooks, refresh the managed blocks and rebuild a stale index for the running binary, then run `doctor` |
 | `serve [-root=PATH]` | Run the MCP stdio server |
 | `record -file=F -summary=S [-reason=R] [-agent-id=A]` | Record a change by hand |

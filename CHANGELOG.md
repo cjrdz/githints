@@ -27,6 +27,11 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   even when the binary that ran `init` was the one upgrading, so nothing had
   changed. `init` now records which githints set the repository up, and
   `upgrade` asks for a restart only when a different binary takes over.
+- Windows PowerShell 5.1 splits an unquoted `githints update -version=v0.5.0`
+  at the first dot, and `update` refused the stray `.5.0` with no
+  explanation. It now says the shell split the flag and to write
+  `-version v0.5.0`; the docs, the usage text and the downgrade message use
+  that form.
 - `doctor` told you to run `githints init` for a hook githints installed that
   is out of date (written by an older githints, or pointing at a binary that is
   gone). The fix is `githints upgrade`, which repoints and rewrites those

@@ -131,3 +131,16 @@ func TestUpgradeAfterUpdate(t *testing.T) {
 		})
 	}
 }
+
+// Windows PowerShell 5.1 hands githints `-version=v0` and `.5.0` for an
+// unquoted -version=v0.5.0; the error says so instead of a bare "no arguments".
+func TestSplitVersionFlagIsExplained(t *testing.T) {
+	err := Run([]string{"-version=v0", ".5.0"}, "0.4.0")
+	if err == nil || !strings.Contains(err.Error(), "write it as -version v0.5.0, with a space") {
+		t.Fatalf("err = %v", err)
+	}
+	err = Run([]string{"extra"}, "0.4.0")
+	if err == nil || strings.Contains(err.Error(), "split") {
+		t.Fatalf("a plain stray argument: err = %v", err)
+	}
+}

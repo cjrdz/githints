@@ -58,6 +58,11 @@ func Run(args []string, version string) error {
 		return err
 	}
 	if rest := fs.Args(); len(rest) > 0 {
+		if *tag != "" && strings.HasPrefix(rest[0], ".") {
+			// Windows PowerShell 5.1 splits an unquoted -version=v0.5.0 at the
+			// first dot before githints sees it: -version=v0 and .5.0.
+			return fmt.Errorf("update takes no arguments, got %q: the shell split -version=%s%s at a dot (Windows PowerShell 5.1 does); write it as -version %s%s, with a space", rest[0], *tag, rest[0], *tag, rest[0])
+		}
 		return fmt.Errorf("update takes no arguments, got %q", rest[0])
 	}
 	if *tag != "" {
