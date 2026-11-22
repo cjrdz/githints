@@ -85,7 +85,7 @@ func Run(args []string, version string) error {
 		return err
 	}
 	if !res.Install {
-		fmt.Printf("githints %s is %s (latest: %s)\n", version, res.Reason, res.Target)
+		fmt.Printf("githints %s is %s (%s: %s)\n", version, res.Reason, which(*tag), res.Target)
 		return nil
 	}
 	fmt.Printf("updated githints %s -> %s at %s (%s)\n", version, strings.TrimPrefix(res.Target, "v"), res.Path, res.Reason)
@@ -98,6 +98,11 @@ func Run(args []string, version string) error {
 	fmt.Println("  run `githints upgrade` in each repository githints tracks")
 
 	if _, err := core.InitializedRoot(); err != nil {
+		if *yes {
+			// Say so rather than ignore the flag: the person asked for an
+			// upgrade and would otherwise assume one ran.
+			fmt.Println("\n-yes: not in a repository githints tracks, so no upgrade ran here")
+		}
 		return nil // not in a tracked repository: nothing to offer
 	}
 	if !*yes {
@@ -111,10 +116,26 @@ func Run(args []string, version string) error {
 		}
 	}
 	fmt.Println()
-	return runUpgrade(res.Path)
+	if err := runUpgrade(res.Path); err != nil {
+		// The binary is already replaced; a bare "exit status 1" from the
+		// child read as if the update itself had failed.
+		return fmt.Errorf("githints was updated to %s, but `githints upgrade` here then failed (%v); see its output above and run it again once that is fixed",
+			strings.TrimPrefix(res.Target, "v"), err)
+	}
+	return nil
+}
+
+// which names the release a message talks about: the one -version asked for,
+// or the latest.
+func which(tag string) string {
+	if tag != "" {
+		return "requested"
+	}
+	return "latest"
 }
 
 func runCheck(ctx context.Context, version, tag string) error {
+	label := which(tag)
 	if tag == "" {
 		var err error
 		if tag, err = latestTag(ctx, version); err != nil {
@@ -127,14 +148,14 @@ func runCheck(ctx context.Context, version, tag string) error {
 		fmt.Printf("githints %s: %s is available; %s\n", version, tag, howToUpdate())
 		return core.ErrUpdateAvailable
 	case err == nil:
-		fmt.Printf("githints %s is up to date (latest: %s)\n", version, tag)
+		fmt.Printf("githints %s is up to date (%s: %s)\n", version, label, tag)
 		return nil
 	case errors.Is(err, update.ErrNotNewer):
-		fmt.Printf("githints %s is newer than the latest release (%s)\n", version, tag)
+		fmt.Printf("githints %s is newer than the %s release (%s)\n", version, label, tag)
 		return nil
 	}
 	if _, ok := update.ParseVersion(version); !ok {
-		fmt.Printf("githints %s is a development build; the latest release is %s\n", version, tag)
+		fmt.Printf("githints %s is a development build; the %s release is %s\n", version, label, tag)
 		return core.ErrUpdateAvailable
 	}
 	return err
