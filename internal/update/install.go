@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -179,8 +180,8 @@ func (osFiles) Remove(path string) error     { return os.Remove(path) }
 // swaps it in by rename, so target is never half-written and the running
 // binary stays until the new one has proved it starts. Windows cannot rename
 // over a running executable but can rename it away, so there the old binary
-// becomes target.old first (removed by CleanupOld on a later run) and comes
-// back if the second rename fails.
+// moves to a free name from asideName first (removed by CleanupOld on a later
+// run) and comes back if the second rename fails.
 func replaceBinary(target string, bin []byte, want, goos string, checkRun func(string) (string, error), fsys files) error {
 	dir := filepath.Dir(target)
 	tmp, err := os.CreateTemp(dir, ".githints-update-*")
@@ -220,8 +221,11 @@ func replaceBinary(target string, bin []byte, want, goos string, checkRun func(s
 		}
 		return nil
 	}
-	old := target + ".old"
-	_ = fsys.Remove(old) // a leftover from an earlier update; absent is fine
+	old, err := asideName(target, fsys)
+	if err != nil {
+		cleanup()
+		return err
+	}
 	if err := fsys.Rename(target, old); err != nil {
 		cleanup()
 		return fmt.Errorf("move the running binary aside: %w", err)
@@ -236,17 +240,73 @@ func replaceBinary(target string, bin []byte, want, goos string, checkRun func(s
 	return nil
 }
 
-// CleanupOld removes the binary a Windows update moved aside, once it is no
-// longer running. Elsewhere there is nothing to clean up.
+// maxAside bounds the names asideName tries: one per githints process still
+// running an older binary from this directory, which is a handful at most.
+const maxAside = 32
+
+// asideName returns where the running binary can be moved on Windows:
+// target.old, or target.old-1, target.old-2... when an earlier one is still
+// running. An MCP server keeps the binary it started with, so after one update
+// target.old is often locked, and renaming onto it fails with "Access is
+// denied" (seen on a real second update of 0.5.0). Leftovers that are no
+// longer running are removed on the way.
+func asideName(target string, fsys files) (string, error) {
+	for i := range maxAside {
+		name := target + ".old"
+		if i > 0 {
+			name = fmt.Sprintf("%s.old-%d", target, i)
+		}
+		_ = fsys.Remove(name) // absent, or still running: the Lstat below decides
+		if _, err := os.Lstat(name); errors.Is(err, fs.ErrNotExist) {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("move the running binary aside: %d earlier githints binaries next to %s are still running; stop githints MCP servers and try again", maxAside, target)
+}
+
+// isAsideName reports whether name is one asideName gives for base.
+func isAsideName(name, base string) bool {
+	if name == base+".old" {
+		return true
+	}
+	n, ok := strings.CutPrefix(name, base+".old-")
+	if !ok || n == "" {
+		return false
+	}
+	for _, r := range n {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// CleanupOld removes the binaries a Windows update moved aside, once they are
+// no longer running. Elsewhere there is nothing to clean up.
 func CleanupOld() {
 	if runtime.GOOS != "windows" {
 		return
 	}
-	exe, err := os.Executable()
+	exe, err := RunningBinary()
 	if err != nil {
 		return
 	}
-	_ = os.Remove(exe + ".old") // usually absent; a failure is retried next run
+	cleanupOld(exe, osFiles{})
+}
+
+// cleanupOld removes every asideName leftover next to exe. One still running
+// fails to delete and is retried on a later run.
+func cleanupOld(exe string, fsys files) {
+	dir, base := filepath.Split(exe)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && isAsideName(e.Name(), base) {
+			_ = fsys.Remove(filepath.Join(dir, e.Name())) // locked: retried next run
+		}
+	}
 }
 
 func runVersion(path string) (string, error) {

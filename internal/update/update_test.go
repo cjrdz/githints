@@ -367,9 +367,12 @@ func TestInstall(t *testing.T) {
 	})
 }
 
-// failingRename fails renames onto one path and records the sequence.
+// failingRename fails renames onto one path and records the sequence. Paths
+// in locked behave like a Windows executable that is still running: they
+// cannot be removed or replaced.
 type failingRename struct {
 	failOnto string
+	locked   map[string]bool
 	calls    []string
 }
 
@@ -379,9 +382,18 @@ func (f *failingRename) Rename(from, to string) error {
 		f.failOnto = "" // fail once, so the restore can succeed
 		return errors.New("access denied")
 	}
+	if f.locked[to] {
+		return errors.New("access denied")
+	}
 	return os.Rename(from, to)
 }
-func (f *failingRename) Remove(p string) error { return os.Remove(p) }
+
+func (f *failingRename) Remove(p string) error {
+	if f.locked[p] {
+		return errors.New("access denied")
+	}
+	return os.Remove(p)
+}
 
 func TestReplaceBinaryOnWindows(t *testing.T) {
 	ok := func(string) (string, error) { return "0.5.0", nil }
@@ -408,5 +420,74 @@ func TestReplaceBinaryOnWindows(t *testing.T) {
 	}
 	if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(p), ".githints-update-*")); len(leftovers) != 0 {
 		t.Errorf("temporary files left: %v", leftovers)
+	}
+}
+
+// A second update while an MCP server still runs the binary the first one
+// moved aside: githints.old is locked, so the running binary must go to a new
+// name instead of failing with "Access is denied" (seen on Windows with 0.5.0).
+func TestReplaceBinaryOnWindowsWithAnOldBinaryStillRunning(t *testing.T) {
+	ok := func(string) (string, error) { return "0.5.0", nil }
+	write := func(p, s string) {
+		if err := os.WriteFile(p, []byte(s), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := target(t)
+	write(p+".old", "running server")
+	write(p+".old-1", "stopped server") // not running: removed and reused
+	fs := &failingRename{locked: map[string]bool{p + ".old": true}}
+	if err := replaceBinary(p, []byte("new"), "0.5.0", "windows", ok, fs); err != nil {
+		t.Fatal(err)
+	}
+	if contents(t, p) != "new" || contents(t, p+".old") != "running server" || contents(t, p+".old-1") != "old binary" {
+		t.Errorf("after replace: %q, .old %q, .old-1 %q", contents(t, p), contents(t, p+".old"), contents(t, p+".old-1"))
+	}
+
+	// Every name taken by a running binary: refuse, leaving the target alone.
+	p = target(t)
+	fs = &failingRename{locked: map[string]bool{}}
+	for i := range maxAside {
+		name := p + ".old"
+		if i > 0 {
+			name = fmt.Sprintf("%s.old-%d", p, i)
+		}
+		write(name, "running")
+		fs.locked[name] = true
+	}
+	err := replaceBinary(p, []byte("new"), "0.5.0", "windows", ok, fs)
+	if err == nil || !strings.Contains(err.Error(), "stop githints MCP servers") {
+		t.Fatalf("err = %v", err)
+	}
+	if contents(t, p) != "old binary" {
+		t.Errorf("target changed to %q", contents(t, p))
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(p), ".githints-update-*")); len(leftovers) != 0 {
+		t.Errorf("temporary files left: %v", leftovers)
+	}
+}
+
+func TestCleanupOldRemovesOnlyMovedAsideBinaries(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "githints.exe")
+	keep := []string{"githints.exe", "githints.exe.old-x", "githints.exe.old-", "githints.exe.older", "other.exe.old", "githints.exe.bak"}
+	gone := []string{"githints.exe.old", "githints.exe.old-1", "githints.exe.old-12"}
+	locked := "githints.exe.old-2"
+	for _, n := range append(append(append([]string{}, keep...), gone...), locked) {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(n), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cleanupOld(exe, &failingRename{locked: map[string]bool{filepath.Join(dir, locked): true}})
+	for _, n := range append(keep, locked) {
+		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
+			t.Errorf("%s was removed: %v", n, err)
+		}
+	}
+	for _, n := range gone {
+		if _, err := os.Stat(filepath.Join(dir, n)); err == nil {
+			t.Errorf("%s was left", n)
+		}
 	}
 }

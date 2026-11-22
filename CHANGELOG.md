@@ -8,6 +8,14 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+### Fixed
+
+- On Windows, a second `githints update` failed with "Access is denied" while
+  an MCP server still ran the binary the first update moved aside
+  (`githints.exe.old`). The running binary now moves to the next free name
+  (`githints.exe.old-1`, ...), and every leftover is removed once nothing runs
+  it.
+
 ## [0.5.0] - 2026-11-22
 
 githints updates itself: `githints update` installs a checksum-verified release
