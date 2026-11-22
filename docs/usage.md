@@ -943,7 +943,11 @@ commits.
 **`githints update` refuses.** It names the reason: a binary owned by a package
 manager or `go install` is updated there; a `dev` build needs `-force`; an older
 release needs both `-version` and `-force`; a checksum mismatch or an archive
-missing from `checksums.txt` is never installed. "could not reach GitHub" means
+missing from `checksums.txt` is never installed. "cannot write next to" means
+the binary is in a directory you cannot write to, such as a root-owned
+`/usr/local/bin`: run the `sudo` command it prints (an elevated terminal on
+Windows), or reinstall into a directory you own with `GITHINTS_BIN_DIR`. The
+installed binary is left as it was. "could not reach GitHub" means
 it is offline or blocked (it honors `HTTPS_PROXY`). `githints update -check`
 exits 0 when current, 10 when an update is available and 1 on error, for scripts
 (2 is a usage error, such as a mistyped flag).

@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -489,5 +490,55 @@ func TestCleanupOldRemovesOnlyMovedAsideBinaries(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, n)); err == nil {
 			t.Errorf("%s was left", n)
 		}
+	}
+}
+
+func TestPermissionHint(t *testing.T) {
+	denied := &os.PathError{Op: "open", Path: "/usr/local/bin/x", Err: os.ErrPermission}
+	if got := permissionHint(errors.New("disk full"), "/usr/local/bin/githints", "linux"); got != "" {
+		t.Errorf("hint for a non-permission error: %q", got)
+	}
+	got := permissionHint(denied, "/opt/my tools/githints", "linux")
+	for _, want := range []string{"sudo '/opt/my tools/githints' update", "GITHINTS_BIN_DIR=\"$HOME/.local/bin\" sh"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("linux hint %q lacks %q", got, want)
+		}
+	}
+	got = permissionHint(denied, `C:\Program Files\githints\githints.exe`, "windows")
+	for _, want := range []string{"elevated", "install.ps1", "GITHINTS_BIN_DIR"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("windows hint %q lacks %q", got, want)
+		}
+	}
+	if strings.Contains(got, "sudo") {
+		t.Errorf("windows hint suggests sudo: %q", got)
+	}
+	if shellQuote("it's") != `'it'\''s'` {
+		t.Errorf("shellQuote(it's) = %s", shellQuote("it's"))
+	}
+}
+
+// An install into a directory this user cannot write to, like a root-owned
+// /usr/local/bin: refused with the hint, and the binary is unchanged.
+func TestInstallIntoAReadOnlyDirectoryExplains(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits do not stop writes on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	c, _ := newFakeRelease(t, "v0.5.0", "binary 0.5.0").serve()
+	p := target(t)
+	dir := filepath.Dir(p)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) }) // so TempDir can remove it
+	_, err := c.Install(context.Background(), opts(p))
+	if err == nil || !strings.Contains(err.Error(), "cannot write next to") || !strings.Contains(err.Error(), "sudo") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := contents(t, p); got != "old binary" {
+		t.Errorf("target changed to %q", got)
 	}
 }
