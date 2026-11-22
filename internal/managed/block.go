@@ -103,18 +103,39 @@ const (
 	BlockMissing
 )
 
-// State compares the block on disk with b.
+// State compares the block on disk with b. Only the block counts: it used to
+// compare the whole file with what EnsureBlock would write, so a trailing
+// blank line or a missing final newline outside the block, which EnsureBlock
+// normalizes, made a current block read as stale to doctor and upgrade.
 func (b Block) State() (BlockState, error) {
-	want, have, found, err := renderBlock(b.Path, b.Start, b.End, b.Body)
+	_, have, found, err := renderBlock(b.Path, b.Start, b.End, b.Body)
 	switch {
 	case err != nil:
 		return BlockMissing, err
 	case !found:
 		return BlockMissing, nil
-	case want != have:
+	}
+	want := append(append([]string{b.Start}, b.Body...), b.End)
+	if got := blockLines(have, b.Start, b.End); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		return BlockStale, nil
 	}
 	return BlockCurrent, nil
+}
+
+// blockLines returns the first managed block in content, markers included,
+// found the way renderBlock finds it.
+func blockLines(content, startMarker, endMarker string) []string {
+	lines := strings.Split(content, "\n")
+	start := -1
+	for i, line := range lines {
+		if line == startMarker {
+			start = i
+		}
+		if line == endMarker && start != -1 {
+			return lines[start : i+1]
+		}
+	}
+	return nil
 }
 
 // Ensure writes b.
