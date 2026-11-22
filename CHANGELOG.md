@@ -23,6 +23,10 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
   githints' schema version as a side effect of checking it, so a dry run could
   empty the index it was only meant to report on. They now open the index
   read-only and report it as needing a rebuild.
+- `doctor` told you to run `githints init` for a hook githints installed that
+  is out of date (written by an older githints, or pointing at a binary that is
+  gone). The fix is `githints upgrade`, which repoints and rewrites those
+  hooks; `init` is still named for a hook that is not installed.
 
 ## [0.5.0] - 2026-11-22
 
