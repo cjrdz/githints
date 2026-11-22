@@ -96,6 +96,12 @@ tested against the real hooks and documented.
 - The size test for the instructions and tool schemas is set about 5% above
   what they measure (14.5 KB), down from a flat 16 KiB.
 
+### Security
+
+- Built with Go 1.26.11 (the `go.mod` floor), which fixes GO-2026-6859, an
+  HTTP/1 server crash in `net/http`. githints runs no HTTP server, but
+  `govulncheck` reaches the package and release binaries should not carry it.
+
 ### Fixed
 
 - An index built only by the commit hook, never by a full `githints index`,
