@@ -16,8 +16,14 @@ builds:
     goarch:
       - amd64
       - arm64
+    # Reproducible: the same commit builds the same bytes anywhere. -trimpath
+    # drops this machine's paths, the stamped date is the commit's rather than
+    # the build's, and file times in the archives are the commit's too.
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.CommitDate}}
 
 archives:
   - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
@@ -85,6 +91,10 @@ snapshot:
   version_template: "{{ .Tag }}-next"
 
 release:
+  # A tag with a pre-release part (v0.6.0-rc.1) publishes as a pre-release, so
+  # it never becomes "Latest": install.sh, install.ps1 and `githints update`
+  # all follow releases/latest, and would otherwise hand everyone the rc.
+  prerelease: auto
   # The annotated tag's body becomes the top of the release notes, so a
   # per-release upgrade warning is written once — in the tag — instead of being
   # bolted on afterwards with `gh release edit`.

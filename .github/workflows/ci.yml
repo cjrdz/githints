@@ -143,6 +143,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # A module version is immutable: go install checks it against the
+      # checksum database (sum.golang.org), so @v1.8.0 cannot be re-pointed
+      # the way a moved git tag on an action could. That is why this is pinned
+      # by version while the actions above are pinned by commit hash.
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
