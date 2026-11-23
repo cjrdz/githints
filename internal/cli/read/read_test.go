@@ -14,6 +14,7 @@ import (
 // The CLI diff is what CLI-mode agents read, so it carries the same
 // guarantee as get_diff: credential files are redacted on the default path.
 func TestCLIDiffScrubsUnconditionally(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
 	dir := clitest.ChdirTempRepo(t)
 	env := filepath.Join(dir, ".env")
 	if err := os.WriteFile(env, []byte("A=1\n"), 0o644); err != nil {
@@ -21,6 +22,9 @@ func TestCLIDiffScrubsUnconditionally(t *testing.T) {
 	}
 	clitest.RunGit(t, dir, "add", ".env")
 	clitest.RunGit(t, dir, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "env")
+	if err := initialize.InitQuiet(nil); err != nil { // diff refuses before init
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(env, []byte("A=1\nDB_PASSWORD=hunter2-very-secret\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
