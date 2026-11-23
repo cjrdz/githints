@@ -201,10 +201,11 @@ func BatchRecord(st *store.Store, root string, key []byte, inputs []Input) error
 // clock-tamper flag. It does not sign or insert.
 //
 // The tamper flag is decided here, before signing, so it ends up inside the
-// HMAC payload. Note that the flag's high-water mark is process-global and
-// therefore not rolled back if the surrounding transaction aborts; the mark is
-// monotonic, so the only effect is that later checks stay slightly more
-// conservative.
+// HMAC payload. The flag's high-water mark lives on the *store.Store (one per
+// open database, seeded from githints_meta.last_recorded_at when it opens),
+// not in the transaction, so it is not rolled back if the transaction aborts;
+// the mark is monotonic, so the only effect is that later checks stay slightly
+// more conservative.
 func prepare(st *store.Store, in Input) (store.Change, error) {
 	if in.FilePath == "" || in.Summary == "" {
 		return store.Change{}, fmt.Errorf("file and summary are required")
