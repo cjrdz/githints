@@ -651,6 +651,59 @@ githints salt rotate [-force]        # new salt, every row re-signed
 also discards the tamper evidence; use it only when the old salt is gone for
 good.
 
+### Checking anchors in CI
+
+CI cannot run `githints verify`: it needs `store.db` and the salt, and neither
+leaves your machine (a tracked `store.db` is refused). What CI can check is the
+part that is public once pushed: that every commit in a pull request carries an
+anchor note, so it was made with githints' hooks running and its anchors were
+pushed (`githints anchors push`). This needs only git, not githints or the salt:
+
+```yaml
+# .github/workflows/githints-anchors.yml
+name: githints anchors
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  anchors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Every commit in the pull request has a githints anchor
+        shell: bash
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! git fetch --no-tags origin "+refs/notes/githints:refs/notes/githints"; then
+            echo "::error::no githints anchors on origin; run githints anchors push"
+            exit 1
+          fi
+          missing=0
+          for c in $(git rev-list --no-merges "origin/$BASE..$HEAD_SHA"); do
+            # Bots (Dependabot) commit on GitHub's side, without the hooks.
+            case "$(git log -1 --format=%ae "$c")" in *"[bot]@users.noreply.github.com") continue ;; esac
+            if ! git notes --ref=githints show "$c" >/dev/null 2>&1; then
+              echo "::error::$(git log -1 --format='%h %s' "$c"): no githints anchor"
+              missing=1
+            fi
+          done
+          exit "$missing"
+```
+
+The branch name and SHA reach the script through `env`, not `${{ }}` inside
+`run`, so a crafted branch name cannot become shell code. Limits: a pull request
+from a fork cannot push notes to your repository, so this suits branches in the
+same repository; an anchor proves the hook ran on that commit, not that an
+agent recorded why (a commit nobody recorded gets a fallback row and still an
+anchor); and a squash or rebase merge makes new commits on the base branch that
+have no anchors, so run it on pull requests rather than on pushes. The check
+that catches an edited log is still `githints anchors fetch && githints verify`
+on a machine that has the store, for example before tagging a release.
+
 ### History rewrites
 
 `commit --amend`, `rebase` (interactive or not), `cherry-pick` and a later
