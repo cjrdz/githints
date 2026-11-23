@@ -1,6 +1,8 @@
 package index
 
 import (
+	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,5 +93,37 @@ func TestOpenReadOnlyNeverCreates(t *testing.T) {
 	defer ro.Close()
 	if ok, stored, err := ro.SchemaCurrent(); err != nil || !ok {
 		t.Errorf("a current index: SchemaCurrent = %v, %q, %v", ok, stored, err)
+	}
+}
+
+// synchronous and busy_timeout are per connection, so they ride the DSN: an
+// Exec set them on one pooled connection only.
+func TestIndexPragmasReachEveryConnection(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.db.SetMaxOpenConns(4)
+	conns := make([]*sql.Conn, 4)
+	for i := range conns {
+		c, err := s.db.Conn(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		conns[i] = c
+	}
+	for i, c := range conns {
+		var sync, timeout int
+		if err := c.QueryRowContext(context.Background(), "PRAGMA synchronous").Scan(&sync); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&timeout); err != nil {
+			t.Fatal(err)
+		}
+		if sync != 1 || timeout != 5000 {
+			t.Errorf("connection %d: synchronous %d, busy_timeout %d; want 1 and 5000", i, sync, timeout)
+		}
 	}
 }
