@@ -68,6 +68,9 @@ are vulnerabilities:
 
 ## Threat model
 
+The one-page summary, with each threat and where it is handled, is
+[docs/threat-model.md](docs/threat-model.md). The detail follows.
+
 githints is a local, single-user tool. Everything below is a known and accepted
 limit, not a bug — reports about these are welcome as design discussion but will
 not be treated as vulnerabilities.
