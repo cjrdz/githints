@@ -130,7 +130,7 @@ func runChecks() []Result {
 		out = append(out, checkIndex(root, cfg.Index.Languages))
 	}
 
-	out = append(out, checkMCP(root))
+	out = append(out, checkMCP(root)...)
 	return out
 }
 
@@ -334,9 +334,9 @@ func rebuildReason(db *index.Store, root string, languages []string) string {
 }
 
 // checkMCP looks for githints in the project-level config of every client
-// setup knows. Global configs are not checked; that is a warning, not a
-// failure, since the CLI works without any.
-func checkMCP(root string) Result {
+// setup knows, then checks the command each one runs. Global configs are not
+// checked; that is a warning, not a failure, since the CLI works without any.
+func checkMCP(root string) []Result {
 	var found []string
 	for _, p := range mcpcfg.ProjectConfigFiles(root) {
 		data, err := os.ReadFile(p)
@@ -345,8 +345,40 @@ func checkMCP(root string) Result {
 		}
 	}
 	if len(found) == 0 {
-		return Result{LevelWarn, "mcp", "no project MCP config registers githints (global configs are not checked)",
-			"githints setup"}
+		return []Result{{LevelWarn, "mcp", "no project MCP config registers githints (global configs are not checked)",
+			"githints setup"}}
 	}
-	return Result{LevelOK, "mcp", "registered in " + strings.Join(found, ", "), ""}
+	out := []Result{{LevelOK, "mcp", "registered in " + strings.Join(found, ", "), ""}}
+	running, _ := managed.RunningBinary() // unknown: only "gone" is checked
+	for _, c := range mcpcfg.ProjectCommands(root) {
+		if r, bad := checkMCPCommand(root, c, running); bad {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// checkMCPCommand says when a config's command cannot start this githints:
+// an absolute path that is gone, or that is another binary (an older install
+// left behind), or a bare "githints" with none on PATH. setup writes the
+// absolute path when githints is not on PATH, so a reinstall elsewhere leaves
+// the client failing to start the server with no hint why.
+func checkMCPCommand(root string, c mcpcfg.ConfiguredCommand, running string) (Result, bool) {
+	file := mcpcfg.DisplayPath(root, c.Path)
+	const fix = "githints setup -update (rewrites githints' entry, nothing else), then restart the client"
+	switch {
+	case c.Command == "githints":
+		if _, err := exec.LookPath("githints"); err != nil {
+			return Result{LevelWarn, "mcp", file + " runs githints from PATH, and there is none on PATH", fix}, true
+		}
+	case filepath.IsAbs(c.Command):
+		if _, err := os.Stat(c.Command); err != nil {
+			return Result{LevelWarn, "mcp", file + " runs " + c.Command + ", which is gone", fix}, true
+		}
+		if running != "" && !managed.SameBinary(c.Command, running) {
+			return Result{LevelWarn, "mcp", file + " runs " + c.Command + ", not this githints (" + running + ")",
+				fix + "; or leave it if that is the binary you want"}, true
+		}
+	}
+	return Result{}, false
 }
