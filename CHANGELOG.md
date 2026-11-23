@@ -8,6 +8,33 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+## [0.6.0] - 2026-11-22
+
+Fixes from a review of 0.5.0 and from running `githints update` for real on
+Linux and Windows: a second update on Windows with an MCP server running, a
+permission error with no way forward, a dry run that could empty the index,
+and reminders that missed edits or held up tool calls. MCP tools now refuse an
+out-of-range `limit` instead of shrinking it, `doctor` checks that each MCP
+config still starts this githints, and release builds are reproducible with
+every package attested. There is now a [threat model](docs/threat-model.md)
+and a [CI check for anchors](docs/usage.md#checking-anchors-in-ci).
+
+### Upgrade notes
+
+- **From 0.5.0:** `githints update`, then `githints upgrade` in each tracked
+  repository, then restart your MCP servers (`upgrade` asks you to). From 0.4.0
+  or older, reinstall once; see the 0.5.0 notes.
+- **MCP clients that send a `limit` above 500** (or `depth`, `max_nodes` past
+  their maximum, or 0) now get an error instead of a shortened answer. Agents
+  that follow the tool schemas are unaffected.
+- **`githints diff` refuses in a repository without `githints init`,** like
+  every other command but `init`.
+- **On Windows, 0.5.0 still performs this update.** If you already ran
+  `githints update` on 0.5.0 while an MCP server was running, stop the server
+  before updating to 0.6.0, or the update fails with "Access is denied"
+  (0.6.0 handles this itself from then on). In Windows PowerShell 5.1, write
+  `-version v0.6.0` with a space.
+
 ### Added
 
 - `githints doctor` reads the command in each project MCP config githints is
