@@ -35,6 +35,18 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ### Fixed
 
+- `githints upgrade` repointed githints' hooks in a hooks directory committed
+  to the repository (`core.hooksPath` set by husky, lefthook or a committed
+  `.githooks/`), which `init` refuses without `-force` because it commits this
+  machine's binary path for everyone. `upgrade` now leaves those hooks alone
+  and says so.
+- `githints diff` ran in a repository where `githints init` never ran; like
+  every other command but `init`, it now refuses there.
+- MCP errors for a missing notes or structural index said only "not
+  available"; they now say what to run (`githints index`, `githints doctor`)
+  and that the server needs a restart afterwards.
+- `index.db` set `synchronous=NORMAL` on one pooled connection only; it is now
+  part of the connection string, like `store.db`'s pragmas.
 - `doctor` and `upgrade` called a managed block in `AGENTS.md`, `CLAUDE.md` or
   `.gitignore` out of date when only the whitespace around it differed (extra
   blank lines at the end, no final newline). Only the block itself is compared
