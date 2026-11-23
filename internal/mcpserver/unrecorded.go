@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -28,56 +30,106 @@ const (
 type editReminder struct {
 	dirty    func(ctx context.Context) ([]string, error)
 	recorded func(since int64) (map[string]bool, error)
+	stat     func(file string) fingerprint
 	now      func() time.Time
 
+	// started is closed once start has sampled the tree; ok says whether it
+	// could. since and baseline are written before the close and only read
+	// after it, so they need no lock.
+	started  chan struct{}
+	ok       bool
+	since    int64
+	baseline map[string]fingerprint
+
+	// mu guards the cached answer only. It is never held while git or SQLite
+	// run: a slow git status (up to reminderGitTimeout) used to block every
+	// concurrent tool call behind it.
 	mu        sync.Mutex
-	since     int64
-	baseline  map[string]bool
 	checkedAt time.Time
+	checking  bool
+	gen       int // bumped by forget, so a check that overlapped a record is dropped
 	pending   []string
 	lastShown string
 }
 
+// fingerprint is what a file looked like at session start: enough to tell
+// that it was edited since, without reading it.
+type fingerprint struct {
+	exists bool
+	size   int64
+	mod    time.Time
+}
+
+func (a fingerprint) same(b fingerprint) bool {
+	return a.exists == b.exists && a.size == b.size && a.mod.Equal(b.mod)
+}
+
+// statFile fingerprints a repository-relative path without following a link.
+func statFile(root string) func(string) fingerprint {
+	return func(file string) fingerprint {
+		fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(file)))
+		if err != nil {
+			return fingerprint{}
+		}
+		return fingerprint{exists: true, size: fi.Size(), mod: fi.ModTime()}
+	}
+}
+
 // newEditReminder samples the working tree at session start: files dirty then
-// are someone else's work in progress and never mentioned. It returns nil
-// (no reminders) outside a git repository.
+// are someone else's work in progress, mentioned only once they change again
+// (by size or modification time) during the session.
 func newEditReminder(root string, st *store.Store) *editReminder {
 	r := &editReminder{
-		dirty: func(ctx context.Context) ([]string, error) { return gitutil.DirtyFiles(ctx, root) },
-		recorded: func(since int64) (map[string]bool, error) {
-			rows, err := st.QueryChanges(store.Query{Since: since, Limit: 500})
-			if err != nil {
-				return nil, err
-			}
-			files := make(map[string]bool, len(rows))
-			for _, c := range rows {
-				files[c.FilePath] = true
-			}
-			return files, nil
-		},
-		now: time.Now,
+		dirty:    func(ctx context.Context) ([]string, error) { return gitutil.DirtyFiles(ctx, root) },
+		recorded: st.FilesChangedSince,
+		stat:     statFile(root),
+		now:      time.Now,
+		started:  make(chan struct{}), // before the goroutine, so line always sees it
 	}
-	if !r.start(context.Background()) {
-		return nil
-	}
+	// In the background: serve answers initialize without waiting for git.
+	// The first reminder waits for it instead (see line).
+	go r.start(context.Background())
 	return r
 }
 
-// start records the session start and the files already dirty then. It
-// reports false when git cannot answer.
+// start records the session start and the files already dirty then, and
+// reports whether git could answer. Without an answer there are no reminders:
+// outside a git repository, for one.
 func (r *editReminder) start(ctx context.Context) bool {
+	if r.started == nil {
+		r.started = make(chan struct{})
+	}
+	defer close(r.started)
 	ctx, cancel := context.WithTimeout(ctx, reminderGitTimeout)
 	defer cancel()
+	r.since = r.now().Unix()
 	files, err := r.dirty(ctx)
 	if err != nil {
 		return false
 	}
-	r.since = r.now().Unix()
-	r.baseline = make(map[string]bool, len(files))
+	r.baseline = make(map[string]fingerprint, len(files))
 	for _, f := range files {
-		r.baseline[f] = true
+		r.baseline[f] = r.stat(f)
 	}
+	r.ok = true
 	return true
+}
+
+// ready waits for start, at most reminderGitTimeout, and reports whether it
+// sampled the tree.
+func (r *editReminder) ready(ctx context.Context) bool {
+	if r.started == nil {
+		return false
+	}
+	t := time.NewTimer(reminderGitTimeout)
+	defer t.Stop()
+	select {
+	case <-r.started:
+		return r.ok
+	case <-ctx.Done():
+	case <-t.C:
+	}
+	return false
 }
 
 // forget drops the cached answer, so the call after a record sees it.
@@ -87,6 +139,7 @@ func (r *editReminder) forget() {
 	}
 	r.mu.Lock()
 	r.checkedAt = time.Time{}
+	r.gen++
 	r.mu.Unlock()
 }
 
@@ -94,15 +147,39 @@ func (r *editReminder) forget() {
 // changed this session is recorded, git cannot answer, or this same set was
 // already reported.
 func (r *editReminder) line(ctx context.Context) string {
-	if r == nil {
+	if r == nil || !r.ready(ctx) {
 		return ""
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if now := r.now(); r.checkedAt.IsZero() || now.Sub(r.checkedAt) >= reminderEvery {
-		r.checkedAt = now
-		r.pending = r.unrecorded(ctx)
+	now := r.now()
+	due := !r.checking && (r.checkedAt.IsZero() || now.Sub(r.checkedAt) >= reminderEvery)
+	gen := r.gen
+	if due {
+		r.checking, r.checkedAt = true, now
 	}
+	r.mu.Unlock()
+
+	if due {
+		files, ok := r.unrecorded(ctx)
+		r.mu.Lock()
+		r.checking = false
+		switch {
+		case r.gen != gen:
+			// A record landed while git ran, so this answer may name the file
+			// just recorded. Drop it; the next call checks again.
+			r.checkedAt = time.Time{}
+			r.mu.Unlock()
+			return ""
+		case ok:
+			r.pending = files
+		}
+		// Not ok (git or the store failed): keep the last answer. Clearing it
+		// made the same set count as new, and be shown again, once git recovered.
+		r.mu.Unlock()
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	key := strings.Join(r.pending, "\x00")
 	if key == r.lastShown {
 		return ""
@@ -114,25 +191,33 @@ func (r *editReminder) line(ctx context.Context) string {
 	return formatReminder(r.pending)
 }
 
-func (r *editReminder) unrecorded(ctx context.Context) []string {
+// unrecorded lists the files changed this session without a record, and
+// reports false when git or the store could not answer.
+func (r *editReminder) unrecorded(ctx context.Context) ([]string, bool) {
 	ctx, cancel := context.WithTimeout(ctx, reminderGitTimeout)
 	defer cancel()
 	files, err := r.dirty(ctx)
 	if err != nil {
-		return nil // no reminder is better than a wrong one
+		return nil, false // no reminder is better than a wrong one
 	}
 	recorded, err := r.recorded(r.since)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var out []string
 	for _, f := range files {
-		if r.baseline[f] || recorded[f] || f == ".githints" || strings.HasPrefix(f, ".githints/") {
+		if recorded[f] || f == ".githints" || strings.HasPrefix(f, ".githints/") {
+			continue
+		}
+		// Dirty at the start: someone's earlier work, unless it changed since.
+		// Ignoring it outright hid an agent's edits to any file that happened
+		// to be dirty when the session began.
+		if was, ok := r.baseline[f]; ok && r.stat(f).same(was) {
 			continue
 		}
 		out = append(out, f)
 	}
-	return out
+	return out, true
 }
 
 // formatReminder names the files through oneLine: a file name is untrusted

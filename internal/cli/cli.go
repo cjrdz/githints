@@ -34,6 +34,7 @@ import (
 // Exit codes: 0 ok, 1 error, 2 usage error, 3 verify found problems.
 func Main(args []string, version string) int {
 	cliVersion = version
+	core.Version = versionString()
 	update.CleanupOld()
 	if len(args) < 2 {
 		usage()
@@ -177,7 +178,7 @@ Usage:
                                   every client detected (Claude Code, opencode, Codex,
                                   VS Code, Cursor, Zed, Kiro, Gemini, Junie, ...);
                                   -print -clients=NAME only prints that client's entry
-  githints update [-check] [-version=TAG] [-force] [-yes]
+  githints update [-check] [-version TAG] [-force] [-yes]
                                   replace this binary with the latest verified release
                                   (the only command that uses the network)
   githints upgrade [-dry-run]     refresh this repository's hooks, managed blocks and

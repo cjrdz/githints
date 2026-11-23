@@ -207,7 +207,16 @@ git push origin v0.2.5
   the release workflow.
 - Releases build exactly the committed module graph (no `go mod tidy` at release
   time), with pinned tool versions, without a restored build cache, and with
-  build-provenance attestations.
+  build-provenance attestations for the archives, the native packages and
+  `checksums.txt`.
+- **The binaries are reproducible.** `-trimpath`, the commit's timestamp for file
+  times and for the stamped date: `goreleaser build --snapshot --clean` twice on
+  the same commit gives identical binaries. (Archives and packages also hold
+  LICENSE and the docs, whose file times come from the checkout.)
+- **A tag with a pre-release part (`v0.6.0-rc.1`) publishes as a pre-release**
+  (`prerelease: auto`), so it never becomes "Latest", which the install scripts
+  and `githints update` follow. `githints update -version v0.6.0-rc.1` installs
+  one on purpose.
 
 To check what a release would produce without publishing:
 

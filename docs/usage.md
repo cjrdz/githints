@@ -651,6 +651,59 @@ githints salt rotate [-force]        # new salt, every row re-signed
 also discards the tamper evidence; use it only when the old salt is gone for
 good.
 
+### Checking anchors in CI
+
+CI cannot run `githints verify`: it needs `store.db` and the salt, and neither
+leaves your machine (a tracked `store.db` is refused). What CI can check is the
+part that is public once pushed: that every commit in a pull request carries an
+anchor note, so it was made with githints' hooks running and its anchors were
+pushed (`githints anchors push`). This needs only git, not githints or the salt:
+
+```yaml
+# .github/workflows/githints-anchors.yml
+name: githints anchors
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  anchors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Every commit in the pull request has a githints anchor
+        shell: bash
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! git fetch --no-tags origin "+refs/notes/githints:refs/notes/githints"; then
+            echo "::error::no githints anchors on origin; run githints anchors push"
+            exit 1
+          fi
+          missing=0
+          for c in $(git rev-list --no-merges "origin/$BASE..$HEAD_SHA"); do
+            # Bots (Dependabot) commit on GitHub's side, without the hooks.
+            case "$(git log -1 --format=%ae "$c")" in *"[bot]@users.noreply.github.com") continue ;; esac
+            if ! git notes --ref=githints show "$c" >/dev/null 2>&1; then
+              echo "::error::$(git log -1 --format='%h %s' "$c"): no githints anchor"
+              missing=1
+            fi
+          done
+          exit "$missing"
+```
+
+The branch name and SHA reach the script through `env`, not `${{ }}` inside
+`run`, so a crafted branch name cannot become shell code. Limits: a pull request
+from a fork cannot push notes to your repository, so this suits branches in the
+same repository; an anchor proves the hook ran on that commit, not that an
+agent recorded why (a commit nobody recorded gets a fallback row and still an
+anchor); and a squash or rebase merge makes new commits on the base branch that
+have no anchors, so run it on pull requests rather than on pushes. The check
+that catches an edited log is still `githints anchors fetch && githints verify`
+on a machine that has the store, for example before tagging a release.
+
 ### History rewrites
 
 `commit --amend`, `rebase` (interactive or not), `cherry-pick` and a later
@@ -720,14 +773,15 @@ set), `GITHINTS_INDEX_MAX_BYTES`, `GITHINTS_INDEX_MAX_FILE_SIZE`,
 `GITHINTS_MCP_UNRECORDED_REMINDER`.
 
 **Unrecorded-edit reminder.** After a successful MCP tool call other than the
-`record_*` tools, the server checks `git status` (at most every two seconds)
+`record_*` tools and `get_session_context`, the server checks `git status` (at most every two seconds)
 for files changed since the server started that have no recorded change since
 then, and adds one line to the result as its own text block:
 
     [githints] 2 files changed this session without a record: a.go, b.go. Call record_change.
 
-Files already changed when the session started, ignored files and `.githints/`
-are left out; at most five names are shown; the same set is reported once. A
+Files already changed when the session started are left out until they are
+edited again (their size or modification time changes); ignored files and
+`.githints/` are always left out; at most five names are shown; the same set is reported once. A
 record made with `githints record` counts too. The line is part of the tool
 result, never written anywhere else.
 
@@ -800,15 +854,17 @@ latest release the way `install.sh` does (the redirect from
 `github.com/cjrdz/githints/releases/latest`), downloads the archive for this
 OS and architecture and `checksums.txt`, refuses on a checksum mismatch or a
 missing entry, checks that the new binary runs and reports the expected
-version, and only then replaces the running one by rename (on Windows the old
-binary is kept as `githints.exe.old` until the next run). It prints the
+version, and only then replaces the running one by rename. On Windows the old
+binary is kept as `githints.exe.old` until a later run removes it, or as
+`githints.exe.old-1`, `-2`... while an MCP server still runs an earlier one.
+It prints the
 `gh attestation verify` command for checking build provenance; it does not run
 it.
 
 | Flag | Does |
 | --- | --- |
 | `-check` | Only compare the running and latest versions: exit 0 up to date, 10 update available, 1 error (offline included); for a packaged install it names the package manager's command |
-| `-version=TAG` | Install that release instead of the latest |
+| `-version TAG` | Install that release instead of the latest. Write it with a space: Windows PowerShell 5.1 splits an unquoted `-version=v0.5.0` at the first dot |
 | `-force` | Reinstall the same release, replace a development build, or, with `-version`, downgrade |
 | `-yes` | In a tracked repository, run `githints upgrade` afterwards without asking |
 
@@ -825,6 +881,12 @@ was built by an older version or never fully, runs `doctor`, and asks you to
 restart MCP servers when the binary managing the repository changed. `doctor`
 points at it when a hook runs another binary, a managed block is out of date,
 or the index needs a rebuild.
+
+`-dry-run` and `doctor` read the index without changing it, so an index from
+another githints is reported as needing a rebuild rather than reset. Like every
+other command, they do bring `store.db` up to the running binary's schema when
+they open it; those migrations only add, and the next record would make them
+anyway.
 
 If you install the new version another way (a package manager, the install
 scripts), run `githints upgrade` in each tracked repository afterwards.
@@ -862,7 +924,7 @@ found problems, 10 (`update -check`) an update is available.
 | `uninstall [-dry-run] [-force]` | Full removal: hooks, project MCP entries, managed blocks, anchors, `.githints/` and salt |
 | `uninstall -keep-data [-dry-run]` | Stop tracking: remove the git hooks, keep `.githints/` and configs |
 | `doctor` | Check everything githints depends on, and count the log; prints a fix per problem; changes nothing |
-| `update [-check] [-version=TAG] [-force] [-yes]` | Replace this binary with a verified release; the only command that uses the network; see [Upgrading](#upgrading) |
+| `update [-check] [-version TAG] [-force] [-yes]` | Replace this binary with a verified release; the only command that uses the network; see [Upgrading](#upgrading) |
 | `upgrade [-dry-run]` | Repoint the hooks, refresh the managed blocks and rebuild a stale index for the running binary, then run `doctor` |
 | `serve [-root=PATH]` | Run the MCP stdio server |
 | `record -file=F -summary=S [-reason=R] [-agent-id=A]` | Record a change by hand |
@@ -891,8 +953,9 @@ found problems, 10 (`update -check`) an update is available.
 Start with `githints doctor`. It checks git, the hooks (installed where git runs
 them, executable, pointing at a binary that exists and is the one you are
 running), the managed blocks, the config, the store's SQLite integrity, the
-salt, the HMAC chain, the Merkle anchors, the index and MCP registration, and
-prints a fix for each problem. After an update, most of those fixes are
+salt, the HMAC chain, the Merkle anchors, the index and MCP registration
+(including whether each project config's command still starts this githints),
+and prints a fix for each problem. After an update, most of those fixes are
 `githints upgrade`.
 
 **"githints is not set up in this repository".** Run `githints setup` (or
@@ -932,7 +995,12 @@ writes the binary's absolute path into the configs instead.
 
 **The agent does not use githints.** Check `githints doctor`'s `mcp` and
 `blocks` lines, restart the client, and make sure `AGENTS.md` / `CLAUDE.md`
-have the managed block (`githints init` adds it back).
+have the managed block (`githints init` adds it back). When githints is not on
+`PATH`, `setup` writes the binary's absolute path into the configs; once that
+binary moves or is replaced by another install, `doctor` warns that the config
+runs a binary that is gone, or not this one, and `githints setup -update`
+rewrites githints' entry (and nothing else) to the current binary. JSONC
+configs with comments and global configs are not checked.
 
 **Index links are missing after an upgrade.** Run `githints upgrade`; it
 rebuilds the index when it was built by an older version or only ever by
@@ -941,7 +1009,11 @@ commits.
 **`githints update` refuses.** It names the reason: a binary owned by a package
 manager or `go install` is updated there; a `dev` build needs `-force`; an older
 release needs both `-version` and `-force`; a checksum mismatch or an archive
-missing from `checksums.txt` is never installed. "could not reach GitHub" means
+missing from `checksums.txt` is never installed. "cannot write next to" means
+the binary is in a directory you cannot write to, such as a root-owned
+`/usr/local/bin`: run the `sudo` command it prints (an elevated terminal on
+Windows), or reinstall into a directory you own with `GITHINTS_BIN_DIR`. The
+installed binary is left as it was. "could not reach GitHub" means
 it is offline or blocked (it honors `HTTPS_PROXY`). `githints update -check`
 exits 0 when current, 10 when an update is available and 1 on error, for scripts
 (2 is a usage error, such as a mistyped flag).

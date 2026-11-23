@@ -121,6 +121,11 @@ func WriteHook(path, script string) error {
 	return f.Close()
 }
 
+// SameBinary reports whether a and b are the same file, by identity rather
+// than path: the same binary can be reached through a link, and a junction is
+// not resolved by EvalSymlinks on Windows.
+func SameBinary(a, b string) bool { return sameFile(a, b) }
+
 func sameFile(a, b string) bool {
 	fa, err := os.Stat(filepath.FromSlash(a))
 	if err != nil {
@@ -146,6 +151,20 @@ const (
 
 func (l HookLevel) String() string {
 	return [...]string{"ok", "warn", "fail"}[l]
+}
+
+// HooksInWorkTree reports whether git runs hooks from a directory inside the
+// work tree (core.hooksPath set by husky, lefthook or a committed .githooks/)
+// rather than under .git/, and that directory relative to root. Such files
+// are committed and shared, so writing a hook carrying this machine's binary
+// path there would ship that path to everyone. init refuses without -force;
+// upgrade leaves those hooks alone.
+func HooksInWorkTree(root, hooksDir string) (string, bool) {
+	rel, err := filepath.Rel(root, hooksDir)
+	if err != nil || !filepath.IsLocal(rel) || strings.HasPrefix(filepath.ToSlash(rel), ".git/") {
+		return "", false
+	}
+	return rel, true
 }
 
 // HookStatus is the result of checking one installed hook.
@@ -186,16 +205,16 @@ func CheckHooks(root string) ([]HookStatus, error) {
 		}
 		m := hookBinRe.FindStringSubmatch(string(data))
 		if m == nil {
-			out = append(out, HookStatus{name, HookWarn, name + " was written by an older githints", "githints init (rewrites it)"})
+			out = append(out, HookStatus{name, HookWarn, name + " was written by an older githints", "githints upgrade (rewrites it)"})
 			continue
 		}
 		bin := strings.ReplaceAll(m[1], `'\''`, `'`)
 		// Windows has no execute bits; there, existing is enough.
 		if fi, err := os.Stat(filepath.FromSlash(bin)); err != nil || (runtime.GOOS != "windows" && fi.Mode()&0o111 == 0) {
 			if _, perr := exec.LookPath("githints"); perr == nil {
-				out = append(out, HookStatus{name, HookWarn, name + " points at " + bin + ", which is gone; it falls back to githints on PATH", "githints init (repoints it)"})
+				out = append(out, HookStatus{name, HookWarn, name + " points at " + bin + ", which is gone; it falls back to githints on PATH", "githints upgrade (repoints it)"})
 			} else {
-				out = append(out, HookStatus{name, HookFail, name + " points at " + bin + ", which is gone, and githints is not on PATH", "githints init"})
+				out = append(out, HookStatus{name, HookFail, name + " points at " + bin + ", which is gone, and githints is not on PATH", "githints upgrade, run with the githints you use now (repoints it)"})
 			}
 			continue
 		}

@@ -10,11 +10,6 @@ import (
 
 	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/cli/doctor"
-	"github.com/cjrdz/githints/internal/cli/indexcmd"
-	"github.com/cjrdz/githints/internal/cli/notecmd"
-	"github.com/cjrdz/githints/internal/cli/record"
-	"github.com/cjrdz/githints/internal/cli/upgrade"
-	"github.com/cjrdz/githints/internal/cli/verify"
 	"github.com/cjrdz/githints/internal/clitest"
 )
 
@@ -128,22 +123,62 @@ func TestRemovedCommandsPointAtRealOnes(t *testing.T) {
 // Every command but init used to create .githints/store.db as a side effect,
 // so `githints serve` in a fresh repository came up with no hooks, no salt,
 // and no explanation.
+// Every command but init refuses before init, and the list comes from the
+// commands table: a new command is either checked here or exempted with a
+// reason, so it cannot be forgotten (this list used to be written by hand).
+// Arguments get each command past its own usage checks to the init check.
 func TestCommandsRequireInit(t *testing.T) {
 	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
 	dir := chdirTempRepo(t)
-	for name, run := range map[string]func() error{
-		"verify": verify.Run,
-		"record": func() error { return record.Record([]string{"-file=a.go", "-summary=x"}) },
-		// index.Open creates .githints/ by itself, so these once did.
-		"index":        func() error { return indexcmd.Run(nil) },
-		"index status": func() error { return indexcmd.Run([]string{"status"}) },
-		"index verify": func() error { return indexcmd.Run([]string{"verify"}) },
-		"index facets": func() error { return indexcmd.Run([]string{"facets"}) },
-		"note list":    func() error { return notecmd.Run([]string{"list"}) },
-		"upgrade":      func() error { return upgrade.Run(nil, "test") },
-	} {
-		if err := run(); !errors.Is(err, core.ErrNotInitialized) {
-			t.Errorf("%s before init: got %v, want ErrNotInitialized", name, err)
+	reaches := map[string][]string{
+		"anchors":  {"push"},
+		"brief":    nil,
+		"diff":     {"-file=a.go"},
+		"export":   {"-o", filepath.Join(t.TempDir(), "pack")},
+		"hook-run": nil,
+		"index":    nil,
+		"log":      nil,
+		"note":     {"list"},
+		"outcome":  {"-id=1", "-state=worked"},
+		"record":   {"-file=a.go", "-summary=x"},
+		"render":   nil,
+		"review":   nil,
+		"serve":    nil,
+		"upgrade":  nil,
+		"verify":   nil,
+	}
+	exempt := map[string]string{
+		"init":           "it creates .githints/",
+		"setup":          "it runs init first",
+		"doctor":         "it reports a missing setup as a failed check; the side effect is checked below",
+		"hook-precommit": "a pre-commit hook must never fail a commit for githints' own state",
+		"uninstall":      "it removes whatever exists, which before init is nothing",
+		"salt":           "the salt lives outside .githints/, and each subcommand reports its own missing state",
+		"update":         "it replaces the binary, not a repository's state, and uses the network",
+		"help":           "it prints usage",
+		"version":        "it prints the version",
+	}
+	for name := range commands {
+		_, checked := reaches[name]
+		if _, ok := exempt[name]; ok == checked {
+			t.Errorf("command %q must be in exactly one of reaches and exempt", name)
+		}
+	}
+	for name, args := range reaches {
+		run, ok := commands[name]
+		if !ok {
+			t.Errorf("%q is not a command", name)
+			continue
+		}
+		if err := run(args); !errors.Is(err, core.ErrNotInitialized) {
+			t.Errorf("%s %v before init: got %v, want ErrNotInitialized", name, args, err)
+		}
+	}
+	// These subcommands open the index themselves; index.Open used to create
+	// .githints/ on the way.
+	for _, args := range [][]string{{"status"}, {"verify"}, {"facets"}} {
+		if err := commands["index"](args); !errors.Is(err, core.ErrNotInitialized) {
+			t.Errorf("index %v before init: got %v", args, err)
 		}
 	}
 	// doctor reports a missing setup as a failed check rather than an error

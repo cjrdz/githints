@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/gitutil"
@@ -41,6 +40,20 @@ func runInit(args []string, verbose bool) error {
 		return err
 	}
 	defer st.Close()
+
+	// A fresh setup records which githints manages the repository, so the
+	// first `upgrade` by this same binary has nothing to restart. An existing
+	// stamp is left alone: a newer binary re-running init has not restarted
+	// the MCP servers, and upgrade should still say so.
+	if core.Version != "" {
+		if v, err := st.MetaGet(core.MetaManagedBy); err != nil {
+			return fmt.Errorf("read store metadata: %w", err)
+		} else if v == "" {
+			if err := st.MetaSet(core.MetaManagedBy, core.Version); err != nil {
+				return fmt.Errorf("write store metadata: %w", err)
+			}
+		}
+	}
 
 	if err := hint.RenderChangelog(st, root, recorder.ChangelogLimit); err != nil {
 		return err
@@ -83,11 +96,9 @@ func runInit(args []string, verbose bool) error {
 	if err != nil {
 		return fmt.Errorf("locate git hooks directory: %w", err)
 	}
-	// core.hooksPath pointing inside the work tree is a hook manager (husky,
-	// lefthook, a committed .githooks/). Those files are committed and shared,
-	// so writing a hook carrying this machine's binary path there would ship
-	// it to everyone. Say what to add instead.
-	if rel, err := filepath.Rel(root, hooksDir); err == nil && filepath.IsLocal(rel) && !strings.HasPrefix(filepath.ToSlash(rel), ".git/") && !*force {
+	// core.hooksPath inside the work tree: say what to add instead of writing
+	// this machine's binary path into committed files (see HooksInWorkTree).
+	if rel, inside := managed.HooksInWorkTree(root, hooksDir); inside && !*force {
 		return fmt.Errorf("git runs hooks from %s, inside the repository (core.hooksPath; husky or lefthook?).\n"+
 			"githints will not write machine-specific hooks into a committed directory. Add these lines to the hooks there:\n"+
 			"  post-commit:  githints hook-run\n"+

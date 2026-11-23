@@ -1,13 +1,17 @@
 package upgrade
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cjrdz/githints/internal/cli/core"
 	"github.com/cjrdz/githints/internal/cli/initialize"
 	"github.com/cjrdz/githints/internal/clitest"
+	"github.com/cjrdz/githints/internal/index"
+	"github.com/cjrdz/githints/internal/index/lang"
 	"github.com/cjrdz/githints/internal/managed"
 )
 
@@ -119,5 +123,126 @@ func TestUpgradeLeavesForeignFilesAlone(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// An index written by another schema version: a dry run says it would rebuild
+// it and leaves every row in place. It used to open the index read-write,
+// which reset it on the spot, as doctor (run by the dry run) also did.
+func TestDryRunLeavesAnOldSchemaIndexAlone(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := clitest.ChdirTempRepo(t)
+	if err := initialize.Init(nil); err != nil {
+		t.Fatal(err)
+	}
+	path := lang.IndexDBPath(dir)
+	s, err := index.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	exec := func(q string) {
+		t.Helper()
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO symbols (name, kind, file_path, line_start, line_end) VALUES ('Keep', 'func', 'a.go', 1, 2)`)
+	exec(`UPDATE meta SET value = '1' WHERE key = 'schema_version'`)
+
+	out, err := clitest.CaptureStdout(t, func() error { return Run([]string{"-dry-run"}, "9.9.9") })
+	if err != nil {
+		t.Logf("dry run: %v", err) // doctor may warn about other things here
+	}
+	if !strings.Contains(out, "would rebuild the index: it was written in index schema 1") {
+		t.Errorf("dry run output lacks the schema reason:\n%s", out)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	var version string
+	if err := db.QueryRow(`SELECT COUNT(*) FROM symbols`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || version != "1" {
+		t.Errorf("after the dry run: %d symbols, schema %q; want the old index untouched", n, version)
+	}
+}
+
+// The restart message is for a binary change, which a fresh init by the same
+// binary is not. It used to appear on the first upgrade of every repository.
+func TestRestartMessageOnlyWhenTheBinaryChanged(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	clitest.ChdirTempRepo(t)
+	old := core.Version
+	t.Cleanup(func() { core.Version = old })
+
+	core.Version = "9.9.9"
+	if err := initialize.Init(nil); err != nil {
+		t.Fatal(err)
+	}
+	upgrade := func(version string) string {
+		t.Helper()
+		out, err := clitest.CaptureStdout(t, func() error { return Run(nil, version) })
+		if err != nil {
+			t.Logf("upgrade %s: %v", version, err) // doctor may warn here; the message is what matters
+		}
+		return out
+	}
+	if out := upgrade("9.9.9"); strings.Contains(out, "restart your MCP servers") {
+		t.Errorf("first upgrade by the binary that ran init asked for a restart:\n%s", out)
+	}
+	if out := upgrade("9.9.10"); !strings.Contains(out, "githints 9.9.10 now manages this repository: restart your MCP servers") {
+		t.Errorf("a newer binary did not ask for a restart:\n%s", out)
+	}
+	if out := upgrade("9.9.10"); strings.Contains(out, "restart your MCP servers") {
+		t.Errorf("a second upgrade by the same binary asked again:\n%s", out)
+	}
+
+	// Re-running init with a newer binary keeps the stamp, so upgrade still
+	// says the servers may be on an older binary.
+	core.Version = "9.9.11"
+	if err := initialize.Init(nil); err != nil {
+		t.Fatal(err)
+	}
+	if out := upgrade("9.9.11"); !strings.Contains(out, "restart your MCP servers") {
+		t.Errorf("init by a newer binary hid the restart:\n%s", out)
+	}
+}
+
+// Hooks in a committed directory (core.hooksPath inside the repository) were
+// written there only with init -force; upgrade must not commit this machine's
+// binary path into them, as init refuses to without -force.
+func TestUpgradeLeavesCommittedHooksAlone(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := clitest.ChdirTempRepo(t)
+	clitest.RunGit(t, dir, "config", "core.hooksPath", ".husky")
+	if err := initialize.Init([]string{"-force"}); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(dir, ".husky", "post-commit")
+	stale := managed.HookScriptFor(filepath.Join(t.TempDir(), "old-githints"), "hook-run")
+	write(t, hook, stale)
+
+	out, err := clitest.CaptureStdout(t, func() error { return Run(nil, "9.9.9") })
+	if err != nil {
+		t.Logf("upgrade: %v", err) // doctor may warn about the stale hook
+	}
+	if read(t, hook) != stale {
+		t.Error("upgrade rewrote a hook in a committed hooks directory")
+	}
+	if !strings.Contains(out, "git runs them from .husky, inside the repository; left alone") {
+		t.Errorf("output does not say why the hooks were skipped:\n%s", out)
 	}
 }

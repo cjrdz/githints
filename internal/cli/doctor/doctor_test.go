@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cjrdz/githints/internal/cli/initialize"
+	"github.com/cjrdz/githints/internal/cli/mcpcfg"
 	"github.com/cjrdz/githints/internal/clitest"
 	"github.com/cjrdz/githints/internal/index"
 	"github.com/cjrdz/githints/internal/index/lang"
@@ -155,5 +157,55 @@ func TestDoctorIsReadOnly(t *testing.T) {
 	runChecks()
 	if entries, _ := os.ReadDir(saltDir); len(entries) != 0 {
 		t.Fatalf("doctor created %d salt file(s)", len(entries))
+	}
+}
+
+// A config's command that cannot start this githints is a warning naming the
+// file and `githints setup -update`; one that runs this binary is fine.
+func TestCheckMCPCommand(t *testing.T) {
+	root := t.TempDir()
+	cfg := filepath.Join(root, ".mcp.json")
+	bins := t.TempDir()
+	running := filepath.Join(bins, "githints-now")
+	other := filepath.Join(bins, "githints-old")
+	for _, p := range []string{running, other} {
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(cmd string) (Result, bool) {
+		return checkMCPCommand(root, mcpcfg.ConfiguredCommand{Path: cfg, Command: cmd}, running)
+	}
+	if r, bad := check(filepath.Join(bins, "gone")); !bad || !strings.Contains(r.Detail, "which is gone") || !strings.Contains(r.Fix, "githints setup -update") {
+		t.Errorf("gone: %+v %v", r, bad)
+	}
+	if r, bad := check(other); !bad || !strings.Contains(r.Detail, "not this githints") {
+		t.Errorf("another binary: %+v %v", r, bad)
+	}
+	if r, bad := check(running); bad {
+		t.Errorf("this binary: %+v", r)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if r, bad := check("githints"); !bad || !strings.Contains(r.Detail, "none on PATH") {
+		t.Errorf("bare githints, none on PATH: %+v %v", r, bad)
+	}
+}
+
+// Through checkMCP: a project config whose absolute command is gone warns.
+func TestCheckMCPReadsTheConfigsCommand(t *testing.T) {
+	root := t.TempDir()
+	gone := filepath.Join(t.TempDir(), "githints")
+	data := `{"mcpServers":{"githints":{"type":"stdio","command":` + strconv.Quote(gone) + `,"args":["serve"]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".mcp.json"), []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var warned bool
+	for _, r := range checkMCP(root) {
+		if r.Level == LevelWarn && strings.Contains(r.Detail, ".mcp.json runs "+gone+", which is gone") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("no warning for a gone command: %+v", checkMCP(root))
 	}
 }

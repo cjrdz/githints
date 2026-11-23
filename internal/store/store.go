@@ -484,6 +484,27 @@ const noDuplicateFallback = `c.kind = 'change' AND NOT (c.source = 'fallback' AN
 	  AND c2.kind = 'change'
 ))`
 
+// FilesChangedSince is the set of files with a recorded change at or after
+// since, however many rows that is. The unrecorded-edit reminder asks it once
+// per check; it used to read the newest 500 rows instead, so in a long session
+// an early record dropped out and its file was reported as unrecorded.
+func (s *Store) FilesChangedSince(since int64) (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT file_path FROM changes WHERE kind = 'change' AND recorded_at >= ?`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	files := map[string]bool{}
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, err
+		}
+		files[f] = true
+	}
+	return files, rows.Err()
+}
+
 // Query selects recorded changes. Every field is optional and they combine:
 // File restricts to one path, Text is an FTS5 MATCH over summary and reason,
 // and Since/Until (Unix seconds, inclusive, 0 for unbounded) restrict
@@ -595,17 +616,6 @@ func (s *Store) FileHistory(filePath string, limit int) ([]Change, error) {
 // RecentChanges returns the most recent changes across the whole repo.
 func (s *Store) RecentChanges(limit int) ([]Change, error) {
 	return s.QueryChanges(Query{Limit: limit})
-}
-
-// Search runs an FTS5 query over summary + reason text.
-func (s *Store) Search(query string, limit int) ([]Change, error) {
-	return s.QueryChanges(Query{Text: query, Limit: limit})
-}
-
-// ChangesInRange returns changes with recorded_at between since and until
-// (inclusive), optionally filtered to one file. Newest first.
-func (s *Store) ChangesInRange(since, until int64, filePath string, limit int) ([]Change, error) {
-	return s.QueryChanges(Query{File: filePath, Since: since, Until: until, Limit: limit})
 }
 
 // ChangesForCommit returns all rows associated with one commit hash.
@@ -985,21 +995,6 @@ func ClaimPendingTx(tx *sql.Tx, filePath, commitHash string) (int64, error) {
 		return 0, fmt.Errorf("claim pending rows for %s: %w", filePath, err)
 	}
 	return res.RowsAffected()
-}
-
-// LastHMAC returns the hmac of the most recently inserted row (by id), or
-// an empty string if the table is empty. It is used to link a new row into
-// the tamper-evident chain.
-func (s *Store) LastHMAC() (string, error) {
-	var hmac string
-	err := s.db.QueryRow(`SELECT COALESCE(hmac,'') FROM changes ORDER BY id DESC LIMIT 1`).Scan(&hmac)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("last hmac: %w", err)
-	}
-	return hmac, nil
 }
 
 // LastRecordedAtTx returns the recorded_at of the newest row by id, or 0 if

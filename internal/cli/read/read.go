@@ -111,8 +111,10 @@ func Diff(args []string) error {
 	if err := recorder.ValidateFilePath(*file); err != nil {
 		return err
 	}
-	if _, err := gitutil.RepoRoot(); err != nil {
-		return fmt.Errorf("not inside a git repo: %w", err)
+	// Refuses before init like every other command but init, though diff needs
+	// only git: it is get_diff's twin, and the rule has no exceptions to track.
+	if _, err := core.InitializedRoot(); err != nil {
+		return err
 	}
 	// FileDiff validates hash with IsValidCommitish before it reaches argv.
 	diff, err := gitutil.FileDiff(*hash, *file)

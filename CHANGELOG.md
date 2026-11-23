@@ -8,6 +8,127 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+## [0.6.0] - 2026-11-22
+
+Fixes from a review of 0.5.0 and from running `githints update` for real on
+Linux and Windows: a second update on Windows with an MCP server running, a
+permission error with no way forward, a dry run that could empty the index,
+and reminders that missed edits or held up tool calls. MCP tools now refuse an
+out-of-range `limit` instead of shrinking it, `doctor` checks that each MCP
+config still starts this githints, and release builds are reproducible with
+every package attested. There is now a [threat model](docs/threat-model.md)
+and a [CI check for anchors](docs/usage.md#checking-anchors-in-ci).
+
+### Upgrade notes
+
+- **From 0.5.0:** `githints update`, then `githints upgrade` in each tracked
+  repository, then restart your MCP servers (`upgrade` asks you to). From 0.4.0
+  or older, reinstall once; see the 0.5.0 notes.
+- **MCP clients that send a `limit` above 500** (or `depth`, `max_nodes` past
+  their maximum, or 0) now get an error instead of a shortened answer. Agents
+  that follow the tool schemas are unaffected.
+- **`githints diff` refuses in a repository without `githints init`,** like
+  every other command but `init`.
+- **On Windows, 0.5.0 still performs this update.** If you already ran
+  `githints update` on 0.5.0 while an MCP server was running, stop the server
+  before updating to 0.6.0, or the update fails with "Access is denied"
+  (0.6.0 handles this itself from then on). In Windows PowerShell 5.1, write
+  `-version v0.6.0` with a space.
+
+### Added
+
+- `githints doctor` reads the command in each project MCP config githints is
+  registered in and warns when it cannot start this githints: an absolute
+  path that is gone (the binary moved or was reinstalled elsewhere), one that
+  is a different githints, or a bare `githints` with none on `PATH`. The fix
+  it names is `githints setup -update`. `upgrade` runs `doctor`, so it says so
+  too.
+
+### Security
+
+- A client name over 128 bytes was cut to length before the credential scan,
+  so a key straddling the cut no longer matched and its first part was stored
+  as the row's `agent_id`. The full name is scanned before cutting too.
+- `githints update` installed the first top-level `githints` entry in an
+  archive and ignored the rest. An archive with two such entries, or one that
+  is a link, is now refused, so what is installed cannot depend on entry
+  order. (The checksum already ties the archive to the release; this closes
+  the gap inside it.)
+- Release tags with empty pre-release parts (`v0.5.0-rc..1`, `-rc.`) are no
+  longer accepted as versions.
+- Release builds are reproducible (`-trimpath`, the commit's timestamp instead
+  of the build's), the `.deb`, `.rpm`, `.apk` and Arch packages get
+  build-provenance attestations like the archives, and a pre-release tag
+  publishes as a pre-release, never as "Latest".
+
+### Changed
+
+- MCP tools reject a `limit`, `depth` or `max_nodes` outside the range their
+  schema declares (for example `limit` 1 to 500) instead of quietly clamping
+  it, so `limit=1000` is an error rather than 500 rows. This matches the CLI's
+  `-limit` and the "never a silent truncation" rule in `AGENTS.md`; an
+  omitted value still takes its default.
+
+### Fixed
+
+- `githints upgrade` repointed githints' hooks in a hooks directory committed
+  to the repository (`core.hooksPath` set by husky, lefthook or a committed
+  `.githooks/`), which `init` refuses without `-force` because it commits this
+  machine's binary path for everyone. `upgrade` now leaves those hooks alone
+  and says so.
+- `githints diff` ran in a repository where `githints init` never ran; like
+  every other command but `init`, it now refuses there.
+- MCP errors for a missing notes or structural index said only "not
+  available"; they now say what to run (`githints index`, `githints doctor`)
+  and that the server needs a restart afterwards.
+- `index.db` set `synchronous=NORMAL` on one pooled connection only; it is now
+  part of the connection string, like `store.db`'s pragmas.
+- `doctor` and `upgrade` called a managed block in `AGENTS.md`, `CLAUDE.md` or
+  `.gitignore` out of date when only the whitespace around it differed (extra
+  blank lines at the end, no final newline). Only the block itself is compared
+  now.
+- On Windows, a second `githints update` failed with "Access is denied" while
+  an MCP server still ran the binary the first update moved aside
+  (`githints.exe.old`). The running binary now moves to the next free name
+  (`githints.exe.old-1`, ...), and every leftover is removed once nothing runs
+  it.
+- `githints update` into a directory you cannot write to (a root-owned
+  `/usr/local/bin`, `Program Files`) stopped at "permission denied". It now
+  prints the `sudo` command to run (an elevated terminal on Windows) and how to
+  reinstall into a directory you own.
+- `githints upgrade -dry-run` and `doctor` reset an index written by another
+  githints' schema version as a side effect of checking it, so a dry run could
+  empty the index it was only meant to report on. They now open the index
+  read-only and report it as needing a rebuild.
+- The first `githints upgrade` in a repository asked you to restart MCP servers
+  even when the binary that ran `init` was the one upgrading, so nothing had
+  changed. `init` now records which githints set the repository up, and
+  `upgrade` asks for a restart only when a different binary takes over.
+- Windows PowerShell 5.1 splits an unquoted `githints update -version=v0.5.0`
+  at the first dot, and `update` refused the stray `.5.0` with no
+  explanation. It now says the shell split the flag and to write
+  `-version v0.5.0`; the docs, the usage text and the downgrade message use
+  that form.
+- `githints update` messages: with `-version`, "up to date" and "newer than"
+  name the requested release instead of calling it the latest; `-yes` outside
+  a tracked repository says no upgrade ran instead of being ignored; and when
+  the `githints upgrade` it runs afterwards fails, the error says the binary
+  was updated rather than a bare "exit status 1".
+- The unrecorded-edit reminder held a lock while `git status` ran (up to 3 s),
+  so concurrent tool calls waited behind it; it no longer does, and `serve`
+  no longer waits for git before answering `initialize`. A `git status` that
+  failed made the reminder repeat a set it had already shown; it now keeps
+  its last answer. `get_session_context`, whose brief lists uncommitted work,
+  no longer carries the reminder.
+- The reminder never named a file that was already dirty when the session
+  started, even after the agent edited it; it now does once the file's size or
+  modification time changes. It also counted only the newest 500 records, so
+  in a long session an early record dropped out and its file was named again.
+- `doctor` told you to run `githints init` for a hook githints installed that
+  is out of date (written by an older githints, or pointing at a binary that is
+  gone). The fix is `githints upgrade`, which repoints and rewrites those
+  hooks; `init` is still named for a hook that is not installed.
+
 ## [0.5.0] - 2026-11-22
 
 githints updates itself: `githints update` installs a checksum-verified release

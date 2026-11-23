@@ -122,6 +122,9 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 	addTool := func(tool mcp.Tool, h server.ToolHandlerFunc) {
 		name := tool.Name
 		records := strings.HasPrefix(name, "record_")
+		// The brief already lists uncommitted work, and it is the first call
+		// of a session, when nothing can be unrecorded yet.
+		reminds := name != "get_session_context"
 		s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			defer session.MarkToolCalled(name)
 			res, err := h(ctx, req)
@@ -129,7 +132,7 @@ func newServer(root string, st *store.Store, cfg config.Config, version string) 
 				reminder.forget()
 				return res, err
 			}
-			if err == nil && res != nil && !res.IsError {
+			if reminds && err == nil && res != nil && !res.IsError {
 				if line := reminder.line(ctx); line != "" {
 					res.Content = append(res.Content, mcp.NewTextContent(line))
 				}
@@ -567,6 +570,11 @@ func clientAgentID(info mcp.Implementation) string {
 	if version != "" {
 		id += "/" + version
 	}
+	// Scan before cutting as well as after: a credential that runs past the
+	// cut no longer matches its pattern, and its first part would be kept.
+	if _, secret := secrets.Scan(id); secret {
+		return ""
+	}
 	for len(id) > recorder.MaxAgentIDLen {
 		_, size := utf8.DecodeLastRuneInString(id)
 		id = id[:len(id)-size]
@@ -645,7 +653,7 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 func handleRecordNote(root string, db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("the notes index is not available"), nil
+			return mcp.NewToolResultError(errNoNotesIndex), nil
 		}
 		title, err := req.RequireString("title")
 		if err != nil {
@@ -692,7 +700,7 @@ func handleRecordNote(root string, db *index.Store) server.ToolHandlerFunc {
 func handleSearchNotes(root string, db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("the notes index is not available"), nil
+			return mcp.NewToolResultError(errNoNotesIndex), nil
 		}
 		if name := req.GetString("name", ""); name != "" {
 			v, ok, err := notes.Get(db, root, name)
@@ -809,11 +817,15 @@ func handleRecordOutcome(root string, st *store.Store) server.ToolHandlerFunc {
 // combination of them. It replaced four tools whose arguments overlapped.
 func handleQueryChanges(st *store.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		limit, err := intArg(req, "limit", 20, 500)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		q := store.Query{
 			File:  req.GetString("file", ""),
 			Text:  req.GetString("query", ""),
 			Raw:   req.GetBool("raw", false),
-			Limit: clampLimit(req.GetInt("limit", 20), 20, 500),
+			Limit: limit,
 		}
 		if q.File != "" {
 			if err := recorder.ValidateFilePath(q.File); err != nil {
@@ -833,7 +845,6 @@ func handleQueryChanges(st *store.Store) server.ToolHandlerFunc {
 			}
 			return mcp.NewToolResultText(text), nil
 		}
-		var err error
 		if v := req.GetString("since", ""); v != "" {
 			if q.Since, err = store.ParseTimestamp(v); err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("since: %v", err)), nil
@@ -975,16 +986,31 @@ func oneLine(s string) string {
 	return textsafe.OneLine(s)
 }
 
-// clampLimit clamps a user-supplied limit to a sane range. Non-positive
-// values fall back to def; anything above max is capped at max.
-func clampLimit(n, def, max int) int {
-	if n <= 0 {
-		return def
+// Errors for a missing database say what to run next; the plain "not
+// available" they replaced left an agent nothing to do but stop.
+const (
+	errNoNotesIndex = "the notes index is not available: .githints/index.db could not be opened when the server " +
+		"started (the server's stderr says why). Run `githints doctor`, then restart the MCP server. " +
+		"The notes themselves are markdown files in .githints/notes/."
+	errNoIndex = "the structural index is not available: indexing is turned off in .githints/config.json, or " +
+		".githints/index.db is missing or could not be opened. Run `githints index` to build it " +
+		"(`githints doctor` says which), then restart the MCP server."
+)
+
+// intArg reads an optional integer argument: def when it is absent, an error
+// when it is outside 1..max. Out-of-range values used to be clamped in
+// silence, so limit=1000 quietly meant 500; AGENTS.md promises an error, never
+// a silent truncation, and the CLI's -limit already refuses (core.CheckLimit).
+// GetInt does the reading, so a string-encoded number still works.
+func intArg(req mcp.CallToolRequest, name string, def, max int) (int, error) {
+	if v, ok := req.GetArguments()[name]; !ok || v == nil {
+		return def, nil
 	}
-	if n > max {
-		return max
+	n := req.GetInt(name, def)
+	if n < 1 || n > max {
+		return 0, fmt.Errorf("%s must be between 1 and %d, got %d", name, max, n)
 	}
-	return n
+	return n, nil
 }
 
 // Index MCP tool handlers.
@@ -1001,7 +1027,10 @@ func listSymbols(db *index.Store, req mcp.CallToolRequest, file, prefix string) 
 	if err := recorder.ValidateFilePath(file); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	limit := clampLimit(req.GetInt("limit", 50), 50, 500)
+	limit, err := intArg(req, "limit", 50, 500)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	all, err := db.SymbolsForFile(file)
 	if err != nil {
@@ -1041,7 +1070,7 @@ func listSymbols(db *index.Store, req mcp.CallToolRequest, file, prefix string) 
 func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+			return mcp.NewToolResultError(errNoIndex), nil
 		}
 		name := req.GetString("name", "")
 		if len(name) > maxSymbolNameLen {
@@ -1053,7 +1082,10 @@ func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 		if name == "" {
 			return mcp.NewToolResultError("pass name (a symbol name prefix) or file (to list what it defines)"), nil
 		}
-		limit := clampLimit(req.GetInt("limit", 20), 20, 500)
+		limit, err := intArg(req, "limit", 20, 500)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		// One extra row says whether there are more than limit matches
 		// without counting the whole table.
@@ -1090,7 +1122,7 @@ func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
 	registry := lang.NewRegistryForRoot(root)
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+			return mcp.NewToolResultError(errNoIndex), nil
 		}
 		file := req.GetString("file", "")
 		if file == "" {
@@ -1126,7 +1158,10 @@ func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
 // indexSummary is get_dependents without a file: totals, languages, and the
 // most imported (hub) files.
 func indexSummary(db *index.Store, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	limit := clampLimit(req.GetInt("limit", 10), 10, 100)
+	limit, err := intArg(req, "limit", 10, 100)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	meta, err := db.Meta()
 	if err != nil {
@@ -1179,13 +1214,17 @@ func formatIndexTime(ts int64) string {
 func handleFindFacets(db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+			return mcp.NewToolResultError(errNoIndex), nil
+		}
+		limit, err := intArg(req, "limit", 50, 500)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 		filter := index.FacetFilter{
 			Facet:     req.GetString("facet", ""),
 			Framework: req.GetString("framework", ""),
 			File:      req.GetString("file", ""),
-			Limit:     clampLimit(req.GetInt("limit", 50), 50, 500),
+			Limit:     limit,
 		}
 		if filter.File != "" {
 			if err := recorder.ValidateFilePath(filter.File); err != nil {
@@ -1248,7 +1287,7 @@ func describeFacetFilter(f index.FacetFilter) string {
 func handleGetDependencyGraph(root string, db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+			return mcp.NewToolResultError(errNoIndex), nil
 		}
 		file := req.GetString("file", "")
 		if file != "" {
@@ -1260,12 +1299,18 @@ func handleGetDependencyGraph(root string, db *index.Store) server.ToolHandlerFu
 		if format != "json" && format != "mermaid" {
 			return mcp.NewToolResultError("format must be json or mermaid"), nil
 		}
+		maxNodes, err := intArg(req, "max_nodes", 100, maxGraphNodesMCP)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		opts := index.GraphOptions{
 			Focus:    filepath.ToSlash(file),
-			MaxNodes: clampLimit(req.GetInt("max_nodes", 100), 100, maxGraphNodesMCP),
+			MaxNodes: maxNodes,
 		}
 		if file != "" {
-			opts.Depth = clampLimit(req.GetInt("depth", 1), 1, maxGraphDepth)
+			if opts.Depth, err = intArg(req, "depth", 1, maxGraphDepth); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 		}
 		g, err := index.BuildGraph(db, root, opts)
 		if err != nil {

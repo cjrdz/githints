@@ -105,7 +105,8 @@ client setup are in the [usage guide](docs/usage.md).
 | [Changelog](CHANGELOG.md) | What changed in each release, and what to do when upgrading |
 | [Roadmap](docs/roadmap.md) | What is planned and what was decided against |
 | [Contributing](CONTRIBUTING.md) | Building, testing, conventions, releases |
-| [Security policy](SECURITY.md) | Reporting vulnerabilities, threat model |
+| [Threat model](docs/threat-model.md) | What githints protects, from whom, and the checks you can run |
+| [Security policy](SECURITY.md) | Reporting vulnerabilities, the threat model in detail |
 | [AGENTS.md](AGENTS.md) | The rules agents follow in this repository |
 
 ## CLI at a glance

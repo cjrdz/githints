@@ -84,11 +84,11 @@ func TestOutcomeRowsAreNotChanges(t *testing.T) {
 	if rows, _ := st.RecentChanges(10); len(rows) != 1 {
 		t.Errorf("RecentChanges = %d rows, want 1", len(rows))
 	}
-	if rows, _ := st.ChangesInRange(0, 9999, "", 10); len(rows) != 1 {
-		t.Errorf("ChangesInRange = %d rows, want 1", len(rows))
+	if rows, _ := st.QueryChanges(Query{Since: 0, Until: 9999, Limit: 10}); len(rows) != 1 {
+		t.Errorf("QueryChanges range = %d rows, want 1", len(rows))
 	}
 	// The note is indexed like any summary, but a search returns changes.
-	if rows, err := st.Search("deadlocks", 10); err != nil || len(rows) != 0 {
+	if rows, err := st.QueryChanges(Query{Text: "deadlocks", Limit: 10}); err != nil || len(rows) != 0 {
 		t.Errorf("Search matched an outcome row: %v %v", rows, err)
 	}
 	if n, _ := st.Count(); n != 1 {

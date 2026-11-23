@@ -16,10 +16,6 @@ import (
 	"github.com/cjrdz/githints/internal/managed"
 )
 
-// metaUpgradedBy records the githints version that last ran upgrade here, so
-// a later run can tell whether MCP servers are serving an older binary.
-const metaUpgradedBy = "upgraded_by"
-
 // Run refreshes the hooks, the managed blocks and the index, then runs doctor.
 func Run(args []string, version string) error {
 	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
@@ -54,7 +50,15 @@ func Run(args []string, version string) error {
 	if err != nil {
 		return fmt.Errorf("locate git hooks directory: %w", err)
 	}
-	for _, h := range managed.Hooks {
+	// A committed hooks directory (core.hooksPath inside the repository): init
+	// wrote there only with -force, and repointing would commit this machine's
+	// binary path for everyone, so the hooks are left as they are.
+	hooks := managed.Hooks
+	if rel, inside := managed.HooksInWorkTree(root, hooksDir); inside {
+		skipped = append(skipped, "hooks: git runs them from "+rel+", inside the repository; left alone (`githints init -force` rewrites them)")
+		hooks = nil
+	}
+	for _, h := range hooks {
 		path := filepath.Join(hooksDir, h.Name)
 		exists, mine, err := managed.HookExistsAndManaged(path)
 		switch {
@@ -122,10 +126,12 @@ func Run(args []string, version string) error {
 		}
 	}
 
-	previous, _ := st.MetaGet(metaUpgradedBy) // missing: no earlier upgrade, so restart to be safe
+	// Missing means a repository set up before init wrote the stamp, so by an
+	// older githints: restart to be safe.
+	previous, _ := st.MetaGet(core.MetaManagedBy)
 	newBinary := previous != version
 	if newBinary && !*dryRun {
-		if err := st.MetaSet(metaUpgradedBy, version); err != nil {
+		if err := st.MetaSet(core.MetaManagedBy, version); err != nil {
 			return err
 		}
 	}

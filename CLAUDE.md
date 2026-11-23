@@ -59,9 +59,10 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   Diagnostics go to stderr.
 - **The unrecorded-edit reminder lives in the tool result, as its own content
   block.** Appending it to a tool's text would break tools that return JSON
-  (`get_dependency_graph`). Files dirty when the server started are never
-  named, `record_*` calls drop the cached answer, and git runs at most every
-  `reminderEvery`. `TestUnrecordedReminderThroughTheServer` drives it with real
+  (`get_dependency_graph`). Files dirty when the server started are named
+  only once their size or modification time changes, `record_*` calls drop the cached answer (and any check they overlap),
+  git runs at most every `reminderEvery` and never under the reminder's lock,
+  and a failed check keeps the last answer. `TestUnrecordedReminderThroughTheServer` drives it with real
   git, on and off.
 - **Every MCP tool declares all three annotations.** mcp-go's `NewTool`
   defaults `destructiveHint` and `openWorldHint` to true, so a tool that sets
@@ -83,7 +84,10 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   hooks are compared with `managed.HookScriptFor`, and the index with
   `doctor.IndexRebuildReason`, so the two cannot disagree and `upgrade` never
   duplicates `init`. `upgrade` leaves a hook githints did not install and a
-  file without a managed block alone.
+  file without a managed block alone. Both read the index through
+  `index.OpenReadOnly`: `index.Open` resets an index from another schema
+  version, which made `upgrade -dry-run` empty it
+  (`TestDryRunLeavesAnOldSchemaIndexAlone`).
 - **A history rewrite leaves `verify` clean.** `commit_hash` is outside the HMAC
   and each anchor names its own commit; `TestHistoryRewritesKeepVerifyClean`
   runs amend, rebase, cherry-pick, a squash and `gc` through the real hooks.
@@ -161,13 +165,17 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   covers them, and a stamped receipt never applies again
   (`TestCommitUsesTheReceiptUp`). An approval never commits anything.
 - **Only `init` creates `.githints/`.** Every other command goes through
-  `core.OpenInitialized` and refuses in an uninitialized repository.
+  `core.OpenInitialized` (or `core.InitializedRoot`, when it needs no store)
+  and refuses in an uninitialized repository. `TestCommandsRequireInit` walks
+  the `commands` table: a new command is either checked there or exempted with
+  a written reason.
 - **Every `hash` argument is checked with `IsValidCommitish`** before reaching
   argv. In `ChangedFiles` and `DiffStat` the value lands *before* the `--`
   separator, so an unchecked one is parsed as a git option.
 - **Caps stay enforced in Go**, not just declared in the tool schema:
   `recorder.MaxSummaryLen`, `MaxReasonLen`, `MaxAgentIDLen`, `MaxBatchSize`,
-  `clampLimit`, `store.MaxSearchQueryLen`, `maxSearchWords`, `maxSearchWordLen`,
+  `intArg` (an out-of-range MCP `limit`, `depth` or `max_nodes` is an error,
+  as the CLI's `-limit` is), `store.MaxSearchQueryLen`, `maxSearchWords`, `maxSearchWordLen`,
   `maxSymbolNameLen`, `secrets.MaxDiffResultBytes`, `maxGraphNodesMCP`,
   `gitutil.MaxOutputBytes`, the `config.json` index ceilings, and in
   `internal/update` `maxArchiveBytes`, `maxChecksumsBytes`, `maxBinaryBytes`.
