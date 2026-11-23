@@ -121,6 +121,11 @@ func WriteHook(path, script string) error {
 	return f.Close()
 }
 
+// SameBinary reports whether a and b are the same file, by identity rather
+// than path: the same binary can be reached through a link, and a junction is
+// not resolved by EvalSymlinks on Windows.
+func SameBinary(a, b string) bool { return sameFile(a, b) }
+
 func sameFile(a, b string) bool {
 	fa, err := os.Stat(filepath.FromSlash(a))
 	if err != nil {

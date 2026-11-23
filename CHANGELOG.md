@@ -8,6 +8,15 @@ Versions are tagged from `main`; see [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a
 
 ## Unreleased
 
+### Added
+
+- `githints doctor` reads the command in each project MCP config githints is
+  registered in and warns when it cannot start this githints: an absolute
+  path that is gone (the binary moved or was reinstalled elsewhere), one that
+  is a different githints, or a bare `githints` with none on `PATH`. The fix
+  it names is `githints setup -update`. `upgrade` runs `doctor`, so it says so
+  too.
+
 ### Security
 
 - A client name over 128 bytes was cut to length before the credential scan,

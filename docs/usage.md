@@ -953,8 +953,9 @@ found problems, 10 (`update -check`) an update is available.
 Start with `githints doctor`. It checks git, the hooks (installed where git runs
 them, executable, pointing at a binary that exists and is the one you are
 running), the managed blocks, the config, the store's SQLite integrity, the
-salt, the HMAC chain, the Merkle anchors, the index and MCP registration, and
-prints a fix for each problem. After an update, most of those fixes are
+salt, the HMAC chain, the Merkle anchors, the index and MCP registration
+(including whether each project config's command still starts this githints),
+and prints a fix for each problem. After an update, most of those fixes are
 `githints upgrade`.
 
 **"githints is not set up in this repository".** Run `githints setup` (or
@@ -994,7 +995,12 @@ writes the binary's absolute path into the configs instead.
 
 **The agent does not use githints.** Check `githints doctor`'s `mcp` and
 `blocks` lines, restart the client, and make sure `AGENTS.md` / `CLAUDE.md`
-have the managed block (`githints init` adds it back).
+have the managed block (`githints init` adds it back). When githints is not on
+`PATH`, `setup` writes the binary's absolute path into the configs; once that
+binary moves or is replaced by another install, `doctor` warns that the config
+runs a binary that is gone, or not this one, and `githints setup -update`
+rewrites githints' entry (and nothing else) to the current binary. JSONC
+configs with comments and global configs are not checked.
 
 **Index links are missing after an upgrade.** Run `githints upgrade`; it
 rebuilds the index when it was built by an older version or only ever by
