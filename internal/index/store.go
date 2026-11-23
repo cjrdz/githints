@@ -51,7 +51,13 @@ func Open(path string) (*Store, error) {
 	// deferred one reads first and then asks to write, and SQLite fails that at
 	// once with SQLITE_BUSY whenever another writer got in between, timeout or
 	// not.
-	db, err := sql.Open("sqlite", path+"?_pragma=trusted_schema(0)&_pragma=busy_timeout(5000)&_txlock=immediate")
+	//
+	// synchronous is per connection too, so it rides the DSN as well (it used
+	// to be an Exec, which set it on one pooled connection only). NORMAL (1)
+	// is deliberate: the index is a derived cache, gitignored and rebuilt from
+	// source, so full durability buys nothing; the worst a lost write costs is
+	// a rescan. Do not "fix" this to FULL.
+	db, err := sql.Open("sqlite", path+"?_pragma=trusted_schema(0)&_pragma=busy_timeout(5000)&_pragma=synchronous(1)&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open index db: %w", err)
 	}
@@ -65,17 +71,6 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec("PRAGMA journal_mode = WAL;"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("set index db wal mode: %w", err)
-	}
-	// The index is a derived cache, gitignored and rebuilt from source, so
-	// full durability buys nothing: the worst a lost write costs is a rescan.
-	// Deliberate -- do not "fix" this to FULL.
-	if _, err := db.Exec("PRAGMA synchronous = NORMAL;"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set index db synchronous mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000;"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set index db busy timeout: %w", err)
 	}
 	if err := applySchema(db); err != nil {
 		_ = db.Close()

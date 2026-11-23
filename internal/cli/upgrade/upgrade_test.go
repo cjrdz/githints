@@ -220,3 +220,29 @@ func TestRestartMessageOnlyWhenTheBinaryChanged(t *testing.T) {
 		t.Errorf("init by a newer binary hid the restart:\n%s", out)
 	}
 }
+
+// Hooks in a committed directory (core.hooksPath inside the repository) were
+// written there only with init -force; upgrade must not commit this machine's
+// binary path into them, as init refuses to without -force.
+func TestUpgradeLeavesCommittedHooksAlone(t *testing.T) {
+	t.Setenv("GITHINTS_SALT_DIR", t.TempDir())
+	dir := clitest.ChdirTempRepo(t)
+	clitest.RunGit(t, dir, "config", "core.hooksPath", ".husky")
+	if err := initialize.Init([]string{"-force"}); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(dir, ".husky", "post-commit")
+	stale := managed.HookScriptFor(filepath.Join(t.TempDir(), "old-githints"), "hook-run")
+	write(t, hook, stale)
+
+	out, err := clitest.CaptureStdout(t, func() error { return Run(nil, "9.9.9") })
+	if err != nil {
+		t.Logf("upgrade: %v", err) // doctor may warn about the stale hook
+	}
+	if read(t, hook) != stale {
+		t.Error("upgrade rewrote a hook in a committed hooks directory")
+	}
+	if !strings.Contains(out, "git runs them from .husky, inside the repository; left alone") {
+		t.Errorf("output does not say why the hooks were skipped:\n%s", out)
+	}
+}

@@ -165,7 +165,10 @@ every one; if you find yourself deleting or weakening one of those tests, stop.
   covers them, and a stamped receipt never applies again
   (`TestCommitUsesTheReceiptUp`). An approval never commits anything.
 - **Only `init` creates `.githints/`.** Every other command goes through
-  `core.OpenInitialized` and refuses in an uninitialized repository.
+  `core.OpenInitialized` (or `core.InitializedRoot`, when it needs no store)
+  and refuses in an uninitialized repository. `TestCommandsRequireInit` walks
+  the `commands` table: a new command is either checked there or exempted with
+  a written reason.
 - **Every `hash` argument is checked with `IsValidCommitish`** before reaching
   argv. In `ChangedFiles` and `DiffStat` the value lands *before* the `--`
   separator, so an unchecked one is parsed as a git option.

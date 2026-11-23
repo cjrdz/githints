@@ -653,7 +653,7 @@ func handleRecordChange(root string, st *store.Store) server.ToolHandlerFunc {
 func handleRecordNote(root string, db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("the notes index is not available"), nil
+			return mcp.NewToolResultError(errNoNotesIndex), nil
 		}
 		title, err := req.RequireString("title")
 		if err != nil {
@@ -700,7 +700,7 @@ func handleRecordNote(root string, db *index.Store) server.ToolHandlerFunc {
 func handleSearchNotes(root string, db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("the notes index is not available"), nil
+			return mcp.NewToolResultError(errNoNotesIndex), nil
 		}
 		if name := req.GetString("name", ""); name != "" {
 			v, ok, err := notes.Get(db, root, name)
@@ -986,6 +986,17 @@ func oneLine(s string) string {
 	return textsafe.OneLine(s)
 }
 
+// Errors for a missing database say what to run next; the plain "not
+// available" they replaced left an agent nothing to do but stop.
+const (
+	errNoNotesIndex = "the notes index is not available: .githints/index.db could not be opened when the server " +
+		"started (the server's stderr says why). Run `githints doctor`, then restart the MCP server. " +
+		"The notes themselves are markdown files in .githints/notes/."
+	errNoIndex = "the structural index is not available: indexing is turned off in .githints/config.json, or " +
+		".githints/index.db is missing or could not be opened. Run `githints index` to build it " +
+		"(`githints doctor` says which), then restart the MCP server."
+)
+
 // intArg reads an optional integer argument: def when it is absent, an error
 // when it is outside 1..max. Out-of-range values used to be clamped in
 // silence, so limit=1000 quietly meant 500; AGENTS.md promises an error, never
@@ -1059,7 +1070,7 @@ func listSymbols(db *index.Store, req mcp.CallToolRequest, file, prefix string) 
 func handleFindSymbol(db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+			return mcp.NewToolResultError(errNoIndex), nil
 		}
 		name := req.GetString("name", "")
 		if len(name) > maxSymbolNameLen {
@@ -1111,7 +1122,7 @@ func handleGetDependents(root string, db *index.Store) server.ToolHandlerFunc {
 	registry := lang.NewRegistryForRoot(root)
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+			return mcp.NewToolResultError(errNoIndex), nil
 		}
 		file := req.GetString("file", "")
 		if file == "" {
@@ -1203,7 +1214,7 @@ func formatIndexTime(ts int64) string {
 func handleFindFacets(db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+			return mcp.NewToolResultError(errNoIndex), nil
 		}
 		limit, err := intArg(req, "limit", 50, 500)
 		if err != nil {
@@ -1276,7 +1287,7 @@ func describeFacetFilter(f index.FacetFilter) string {
 func handleGetDependencyGraph(root string, db *index.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if db == nil {
-			return mcp.NewToolResultError("structural index is not available (indexing may be disabled or the index db is missing)"), nil
+			return mcp.NewToolResultError(errNoIndex), nil
 		}
 		file := req.GetString("file", "")
 		if file != "" {

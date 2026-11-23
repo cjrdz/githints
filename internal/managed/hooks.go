@@ -148,6 +148,20 @@ func (l HookLevel) String() string {
 	return [...]string{"ok", "warn", "fail"}[l]
 }
 
+// HooksInWorkTree reports whether git runs hooks from a directory inside the
+// work tree (core.hooksPath set by husky, lefthook or a committed .githooks/)
+// rather than under .git/, and that directory relative to root. Such files
+// are committed and shared, so writing a hook carrying this machine's binary
+// path there would ship that path to everyone. init refuses without -force;
+// upgrade leaves those hooks alone.
+func HooksInWorkTree(root, hooksDir string) (string, bool) {
+	rel, err := filepath.Rel(root, hooksDir)
+	if err != nil || !filepath.IsLocal(rel) || strings.HasPrefix(filepath.ToSlash(rel), ".git/") {
+		return "", false
+	}
+	return rel, true
+}
+
 // HookStatus is the result of checking one installed hook.
 type HookStatus struct {
 	Name   string

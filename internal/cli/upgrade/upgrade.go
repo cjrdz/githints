@@ -50,7 +50,15 @@ func Run(args []string, version string) error {
 	if err != nil {
 		return fmt.Errorf("locate git hooks directory: %w", err)
 	}
-	for _, h := range managed.Hooks {
+	// A committed hooks directory (core.hooksPath inside the repository): init
+	// wrote there only with -force, and repointing would commit this machine's
+	// binary path for everyone, so the hooks are left as they are.
+	hooks := managed.Hooks
+	if rel, inside := managed.HooksInWorkTree(root, hooksDir); inside {
+		skipped = append(skipped, "hooks: git runs them from "+rel+", inside the repository; left alone (`githints init -force` rewrites them)")
+		hooks = nil
+	}
+	for _, h := range hooks {
 		path := filepath.Join(hooksDir, h.Name)
 		exists, mine, err := managed.HookExistsAndManaged(path)
 		switch {

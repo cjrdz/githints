@@ -241,7 +241,7 @@ func TestSearch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
-			rows, err := st.Search(tt.query, 10)
+			rows, err := st.QueryChanges(Query{Text: tt.query, Limit: 10})
 			if err != nil {
 				t.Fatalf("Search(%q): %v", tt.query, err)
 			}
@@ -605,9 +605,9 @@ func TestChangesInRange(t *testing.T) {
 	mustInsert(t, st, Change{FilePath: "b.go", Source: "agent", Summary: "mid", RecordedAt: 200})
 	mustInsert(t, st, Change{FilePath: "a.go", Source: "agent", Summary: "late", RecordedAt: 300})
 
-	rows, err := st.ChangesInRange(150, 350, "", 10)
+	rows, err := st.QueryChanges(Query{Since: 150, Until: 350, Limit: 10})
 	if err != nil {
-		t.Fatalf("ChangesInRange: %v", err)
+		t.Fatalf("QueryChanges range: %v", err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
@@ -616,9 +616,9 @@ func TestChangesInRange(t *testing.T) {
 		t.Errorf("unexpected order: %+v", rows)
 	}
 
-	rows, err = st.ChangesInRange(150, 350, "a.go", 10)
+	rows, err = st.QueryChanges(Query{File: "a.go", Since: 150, Until: 350, Limit: 10})
 	if err != nil {
-		t.Fatalf("ChangesInRange file filter: %v", err)
+		t.Fatalf("QueryChanges range with file: %v", err)
 	}
 	if len(rows) != 1 || rows[0].Summary != "late" {
 		t.Fatalf("expected only 'late' for a.go, got %+v", rows)
@@ -649,30 +649,6 @@ func TestAllChangesAndFilesWithHistory(t *testing.T) {
 	}
 	if len(files) != 2 {
 		t.Fatalf("got %d files, want 2", len(files))
-	}
-}
-
-func TestLastHMAC(t *testing.T) {
-	st, cleanup := openTestStore(t)
-	defer cleanup()
-
-	hmac, err := st.LastHMAC()
-	if err != nil {
-		t.Fatalf("LastHMAC empty: %v", err)
-	}
-	if hmac != "" {
-		t.Fatalf("expected empty hmac for empty store, got %q", hmac)
-	}
-
-	mustInsert(t, st, Change{FilePath: "x.go", Source: "agent", Summary: "first", HMAC: "aaa"})
-	mustInsert(t, st, Change{FilePath: "y.go", Source: "agent", Summary: "second", HMAC: "bbb"})
-
-	hmac, err = st.LastHMAC()
-	if err != nil {
-		t.Fatalf("LastHMAC: %v", err)
-	}
-	if hmac != "bbb" {
-		t.Errorf("last hmac = %q, want bbb", hmac)
 	}
 }
 
